@@ -50,19 +50,19 @@ pub use context::{Context, ContextMeta, Isolation};
 pub use effect::{AsyncDisposer, EffectHandle, EffectMeta};
 pub use error::{CordisError, ErrorCode, Result, ValidationError, ValidationIssue};
 pub use events::{
-    is_bailed, DispatchMode, Event, EventOptions, EventResult, EventValue, EventsService,
+    DispatchMode, Event, EventOptions, EventResult, EventValue, EventsService, is_bailed,
 };
 pub use fiber::{Fiber, FiberState};
 pub use logger::{
-    color_code, default_format, Exporter, ExporterConfig, FormatterFn, LogArg, Logger,
-    LoggerIntercept, LoggerLevel, LoggerService, LoggerType, Message, C16, C256,
+    C16, C256, Exporter, ExporterConfig, FormatterFn, LogArg, Logger, LoggerIntercept, LoggerLevel,
+    LoggerService, LoggerType, Message, color_code, default_format,
 };
 pub use reflect::{Accessor, Property, ReflectService, ServiceInfo};
 pub use registry::{
-    plugin_async, plugin_sync, Inject, IntoPlugin, Plugin, PluginHandle, PluginKey, PluginOutput,
-    RegistryService, RuntimeInfo,
+    Inject, IntoPlugin, Plugin, PluginHandle, PluginKey, PluginOutput, RegistryService,
+    RuntimeInfo, plugin_async, plugin_sync,
 };
-pub use service::{service_async, service_sync, Service};
+pub use service::{Service, service_async, service_sync};
 pub use value::{Config, Value};
 
 /// Build an asynchronous disposer from an async closure.

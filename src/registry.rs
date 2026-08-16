@@ -3,7 +3,7 @@
 use crate::context::Context;
 use crate::effect::AsyncDisposer;
 use crate::fiber::{Fiber, FiberInner};
-use crate::utils::{lock, BoxFuture};
+use crate::utils::{BoxFuture, lock};
 use crate::{Config, CordisError, ErrorCode, Result, Value};
 use std::fmt::{self, Debug, Formatter};
 use std::future::Future;

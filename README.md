@@ -49,7 +49,16 @@ The crate currently ports the complete **core runtime**:
 cordis = { git = "https://github.com/dshbox/cordis-rs" }
 ```
 
-The minimum supported Rust version is 1.70. The crate has no external dependencies.
+The minimum supported Rust version (MSRV) is **Rust 1.85**, and the crate uses **Rust 2024 Edition**. The crate has no external dependencies.
+
+## Rust version policy
+
+- **MSRV:** Rust 1.85. CI and releases must continue to compile and test on this exact version.
+- **Development toolchain:** the latest stable Rust release is used for formatting, Clippy, documentation, and forward-compatibility testing.
+- **Review cadence:** the MSRV is reviewed every six months, around February and August. A review does not imply an automatic version increase.
+- **Review factors:** maintainers consider the compiler shipped by stable Linux distributions, requirements of official plugins and downstream projects, useful language or standard-library improvements, dependency/security constraints, and toolchain versions actually used by downstream users.
+- **Version changes:** the MSRV is raised only when there is a concrete maintenance or ecosystem benefit. An increase is documented in the changelog and release notes and is made in a minor release, never silently in a patch release.
+- **Workspace consistency:** official Cordis crates and plugins should use one shared MSRV unless a documented platform constraint requires an exception.
 
 ## Quick start
 
@@ -308,10 +317,15 @@ src/
 ## Development
 
 ```sh
-cargo fmt --all -- --check
-cargo clippy --all-targets --all-features -- -D warnings
-cargo test --all-features
-cargo doc --no-deps
+# MSRV compatibility
+cargo +1.85 check --all-targets --all-features
+cargo +1.85 test --all-features
+
+# Latest stable quality and forward-compatibility checks
+cargo +stable fmt --all -- --check
+cargo +stable clippy --all-targets --all-features -- -D warnings
+cargo +stable test --all-features
+RUSTDOCFLAGS="-D warnings" cargo +stable doc --no-deps --all-features
 ```
 
 ## License

@@ -1,6 +1,6 @@
 use cordis::{
-    default_format, Accessor, Context, ExporterConfig, LogArg, LoggerIntercept, LoggerLevel,
-    Result, Value,
+    Accessor, Context, ExporterConfig, LogArg, LoggerIntercept, LoggerLevel, Result, Value,
+    default_format,
 };
 use std::sync::{Arc, Mutex};
 

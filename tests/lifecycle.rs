@@ -1,6 +1,6 @@
-use cordis::{plugin_sync, Context, FiberState, Inject, PluginOutput, Result};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use cordis::{Context, FiberState, Inject, PluginOutput, Result, plugin_sync};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 #[test]
 fn dependency_arrival_and_removal_reload_plugins() -> Result<()> {

@@ -2,7 +2,7 @@
 
 use crate::context::Context;
 use crate::effect::EffectHandle;
-use crate::registry::{plugin_async, plugin_sync, Inject, PluginHandle, PluginOutput};
+use crate::registry::{Inject, PluginHandle, PluginOutput, plugin_async, plugin_sync};
 use crate::{Result, Value};
 use std::future::Future;
 use std::sync::Arc;

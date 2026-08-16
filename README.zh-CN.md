@@ -49,7 +49,16 @@ Cordis 是一个基于上下文的插件框架，适用于需要显式依赖注�
 cordis = { git = "https://github.com/dshbox/cordis-rs" }
 ```
 
-最低支持 Rust 1.70。该 crate 没有外部依赖。
+最低支持 Rust 版本（MSRV）为 **Rust 1.85**，并使用 **Rust 2024 Edition**。该 crate 没有外部依赖。
+
+## Rust 版本策略
+
+- **MSRV：** Rust 1.85。CI 和发布流程必须持续使用这个确切版本完成编译和测试。
+- **开发工具链：** 使用最新 stable Rust 执行格式化、Clippy、文档生成和向前兼容性测试。
+- **评估周期：** 每六个月评估一次 MSRV，时间安排在每年 2 月和 8 月前后。评估不代表一定会提高版本。
+- **评估因素：** 维护者会考虑稳定版 Linux 发行版自带的编译器、官方插件和下游项目的要求、有价值的语言或标准库改进、依赖及安全限制，以及下游用户实际使用的工具链版本。
+- **版本变更：** 只有存在明确的维护或生态收益时才提高 MSRV。提高版本必须记录在 changelog 和 release notes 中，并通过 minor 版本发布，绝不在 patch 版本中静默变更。
+- **Workspace 一致性：** 除非存在有文档说明的平台限制，否则官方 Cordis crate 和插件应使用统一的 MSRV。
 
 ## 快速开始
 
@@ -308,10 +317,15 @@ src/
 ## 开发
 
 ```sh
-cargo fmt --all -- --check
-cargo clippy --all-targets --all-features -- -D warnings
-cargo test --all-features
-cargo doc --no-deps
+# MSRV 兼容性
+cargo +1.85 check --all-targets --all-features
+cargo +1.85 test --all-features
+
+# 最新 stable 的质量和向前兼容性检查
+cargo +stable fmt --all -- --check
+cargo +stable clippy --all-targets --all-features -- -D warnings
+cargo +stable test --all-features
+RUSTDOCFLAGS="-D warnings" cargo +stable doc --no-deps --all-features
 ```
 
 ## 许可证

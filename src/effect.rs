@@ -1,7 +1,7 @@
 //! Lifecycle-owned effects and single-shot asynchronous disposers.
 
 use crate::fiber::{Fiber, FiberInner};
-use crate::utils::{block_on, lock, BoxFuture};
+use crate::utils::{BoxFuture, block_on, lock};
 use crate::{CordisError, ErrorCode, Result};
 use std::fmt::{self, Debug, Formatter};
 use std::future::Future;

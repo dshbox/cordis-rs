@@ -1,7 +1,7 @@
 //! Cloneable, dynamically typed values used for services, events, and config.
 
 use crate::{CordisError, ErrorCode, Result};
-use std::any::{type_name, Any};
+use std::any::{Any, type_name};
 use std::fmt::{self, Debug, Formatter};
 use std::sync::Arc;
 
