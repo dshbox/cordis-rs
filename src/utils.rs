@@ -1,4 +1,4 @@
-//! Runtime-agnostic future execution and ordered disposable collections.
+//! Runtime-agnostic future execution.
 
 use std::future::Future;
 use std::pin::Pin;
@@ -108,73 +108,6 @@ pub(crate) async fn join_all<T>(futures: Vec<BoxFuture<T>>) -> Vec<T> {
         remaining: count,
     }
     .await
-}
-
-/// Ordered collection with stable numeric tokens and reverse-order clearing.
-#[derive(Debug)]
-pub struct DisposableList<T> {
-    next: u64,
-    values: Vec<(u64, T)>,
-}
-
-impl<T> Default for DisposableList<T> {
-    fn default() -> Self {
-        Self {
-            next: 0,
-            values: Vec::new(),
-        }
-    }
-}
-
-impl<T> DisposableList<T> {
-    /// Construct an empty list.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Insert a value and return its stable token.
-    pub fn push(&mut self, value: T) -> u64 {
-        self.next += 1;
-        self.values.push((self.next, value));
-        self.next
-    }
-
-    /// Insert before all current entries.
-    pub fn unshift(&mut self, value: T) -> u64 {
-        self.next += 1;
-        self.values.insert(0, (self.next, value));
-        self.next
-    }
-
-    /// Remove and return a value by token.
-    pub fn remove(&mut self, token: u64) -> Option<T> {
-        let index = self.values.iter().position(|(id, _)| *id == token)?;
-        Some(self.values.remove(index).1)
-    }
-
-    /// Number of live values.
-    pub fn len(&self) -> usize {
-        self.values.len()
-    }
-
-    /// Whether no values are registered.
-    pub fn is_empty(&self) -> bool {
-        self.values.is_empty()
-    }
-
-    /// Iterate in registration order.
-    pub fn iter(&self) -> impl Iterator<Item = &T> {
-        self.values.iter().map(|(_, value)| value)
-    }
-
-    /// Drain in reverse registration order.
-    pub fn clear_reverse(&mut self) -> Vec<T> {
-        std::mem::take(&mut self.values)
-            .into_iter()
-            .rev()
-            .map(|(_, value)| value)
-            .collect()
-    }
 }
 
 /// Recover a mutex guard even when another callback panicked while holding it.

@@ -65,8 +65,6 @@ pub enum Property {
     Service,
     /// Dynamic getter/setter.
     Accessor,
-    /// Explicit alias to another service name (Rust replacement for mixins).
-    Alias(String),
 }
 
 struct AccessorRecord {
@@ -133,23 +131,16 @@ impl ReflectRoot {
         // covers the whole lookup.
         let scope_override = ctx.scope_override(name);
         let state = lock(&self.state);
-        match state.properties.get(name).cloned() {
-            Some(Property::Accessor) => {
-                let accessor = state
-                    .accessors
-                    .get(name)
-                    .map(|record| record.accessor.clone());
-                drop(state);
-                return match accessor {
-                    Some(accessor) => (accessor.get)(ctx),
-                    None => Ok(None),
-                };
-            }
-            Some(Property::Alias(target)) => {
-                drop(state);
-                return self.value(ctx, &target, strict);
-            }
-            _ => {}
+        if state.properties.get(name) == Some(&Property::Accessor) {
+            let accessor = state
+                .accessors
+                .get(name)
+                .map(|record| record.accessor.clone());
+            drop(state);
+            return match accessor {
+                Some(accessor) => (accessor.get)(ctx),
+                None => Ok(None),
+            };
         }
 
         let Some(scope) = scope_override.or_else(|| state.default_scopes.get(name).copied()) else {

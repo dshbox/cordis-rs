@@ -64,16 +64,3 @@ pub use registry::{
 };
 pub use service::{Service, service_async, service_sync};
 pub use value::{Config, Value};
-
-/// Build an asynchronous disposer from an async closure.
-///
-/// This is primarily useful when returning a [`PluginOutput`].
-///
-/// The closure is driven by a small blocking executor while a lifecycle
-/// transition lock is held; only await work that completes on other threads.
-#[macro_export]
-macro_rules! async_disposer {
-    ($body:expr) => {
-        $crate::AsyncDisposer::from_async($body)
-    };
-}
