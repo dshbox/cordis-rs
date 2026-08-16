@@ -2,6 +2,7 @@
 
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
+use std::sync::Arc;
 
 /// Stable, machine-readable Cordis error codes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -107,11 +108,12 @@ impl Display for ValidationError {
 impl Error for ValidationError {}
 
 /// Error type used throughout the framework.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct CordisError {
     code: ErrorCode,
     message: String,
     validation: Option<ValidationError>,
+    source: Option<Arc<dyn Error + Send + Sync + 'static>>,
 }
 
 impl CordisError {
@@ -121,6 +123,7 @@ impl CordisError {
             code,
             message: code.message().to_owned(),
             validation: None,
+            source: None,
         }
     }
 
@@ -130,6 +133,21 @@ impl CordisError {
             code,
             message: message.into(),
             validation: None,
+            source: None,
+        }
+    }
+
+    /// Construct an error wrapping an underlying cause.
+    pub fn with_source(
+        code: ErrorCode,
+        message: impl Into<String>,
+        source: impl Error + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            code,
+            message: message.into(),
+            validation: None,
+            source: Some(Arc::new(source)),
         }
     }
 
@@ -140,6 +158,7 @@ impl CordisError {
             code: ErrorCode::InvalidConfig,
             message: validation.to_string(),
             validation: Some(validation),
+            source: None,
         }
     }
 
@@ -158,6 +177,12 @@ impl CordisError {
         self.message = format!("{}: {}", context.as_ref(), self.message);
         self
     }
+
+    /// Attach an underlying cause while preserving code and message.
+    pub fn caused_by(mut self, source: impl Error + Send + Sync + 'static) -> Self {
+        self.source = Some(Arc::new(source));
+        self
+    }
 }
 
 impl Display for CordisError {
@@ -166,7 +191,13 @@ impl Display for CordisError {
     }
 }
 
-impl Error for CordisError {}
+impl Error for CordisError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        self.source
+            .as_deref()
+            .map(|source| source as &(dyn Error + 'static))
+    }
+}
 
 impl From<ValidationError> for CordisError {
     fn from(value: ValidationError) -> Self {
@@ -174,6 +205,7 @@ impl From<ValidationError> for CordisError {
             code: ErrorCode::InvalidConfig,
             message: value.to_string(),
             validation: Some(value),
+            source: None,
         }
     }
 }
@@ -192,3 +224,30 @@ impl From<&str> for CordisError {
 
 /// Framework result alias.
 pub type Result<T, E = CordisError> = std::result::Result<T, E>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn source_chain_survives_construction_and_clone() {
+        let cause = std::io::Error::other("disk gone");
+        let error = CordisError::with_source(ErrorCode::Plugin, "plugin failed", cause);
+        let source = Error::source(&error).expect("source recorded");
+        assert_eq!(source.to_string(), "disk gone");
+        assert_eq!(error.code(), ErrorCode::Plugin);
+        assert_eq!(error.to_string(), "plugin failed");
+
+        let cloned = error.clone();
+        assert_eq!(
+            Error::source(&cloned).map(ToString::to_string).as_deref(),
+            Some("disk gone")
+        );
+
+        let attached = CordisError::new(ErrorCode::Event).caused_by(std::io::Error::other("inner"));
+        assert_eq!(
+            Error::source(&attached).map(ToString::to_string).as_deref(),
+            Some("inner")
+        );
+    }
+}
