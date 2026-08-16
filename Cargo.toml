@@ -7,7 +7,7 @@ description = "Runtime-agnostic Rust port of Cordis, the plugin framework at the
 license = "MIT"
 repository = "https://github.com/dshbox/cordis-rs"
 keywords = ["plugin", "dependency-injection", "events", "lifecycle", "framework"]
-categories = ["asynchronous", "config"]
+categories = ["asynchronous", "rust-patterns"]
 exclude = [".github/", "rust-toolchain.toml", ".gitignore"]
 
 [lib]
