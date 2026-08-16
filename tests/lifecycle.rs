@@ -400,6 +400,36 @@ fn dispose_during_loading_conflicts_then_await_idle() -> Result<()> {
     Ok(())
 }
 
+/// A panicking apply() propagates to the caller of the triggering lifecycle
+/// operation; the fiber stays in Loading, poisoned internal locks recover,
+/// and a later restart retries startup.
+#[test]
+fn panicking_plugin_state_is_recoverable() -> Result<()> {
+    let root = Context::new();
+    let should_panic = Arc::new(AtomicBool::new(true));
+    let plugin = plugin_sync::<(), _>("panicky", Inject::none(), {
+        let should_panic = should_panic.clone();
+        move |_, _| {
+            if should_panic.load(Ordering::SeqCst) {
+                panic!("startup panic");
+            }
+            Ok(PluginOutput::none())
+        }
+    });
+
+    let panicked =
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| root.plugin_default(plugin)));
+    assert!(panicked.is_err());
+
+    let fiber = root.registry().values()[0].fibers[0].clone();
+    assert_eq!(fiber.state(), FiberState::Loading);
+
+    should_panic.store(false, Ordering::SeqCst);
+    fiber.restart()?;
+    assert_eq!(fiber.state(), FiberState::Active);
+    Ok(())
+}
+
 /// restart() on a Failed fiber clears the failure epoch and retries startup.
 #[test]
 fn restart_retries_failed_startup() -> Result<()> {

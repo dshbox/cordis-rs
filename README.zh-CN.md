@@ -29,12 +29,15 @@ Cordis 是一个基于上下文的插件框架，适用于需要显式依赖注�
 | 上下文监听器过滤 | `with_filter()` / `emit_from()` | ✅ |
 | Logger 缓冲区/exporter/级别/格式化器 | 对应的 logger API | ✅ |
 | Standard Schema 校验 | `Plugin::validate_config` + 校验问题列表 | ✅³ |
+| `internal/plugin`、`internal/status`、`internal/service`、`internal/dispatch` | 同名元事件 | ✅⁴ |
+| 拦截元事件（`internal/get`/`set`/`config`/`update`/`listener`） | 未移植 | 未包含 |
 | 装饰器和可调用服务 | 显式 Rust trait/builder | Rust 原生实现 |
 | Loader/include/HMR 包 | 不属于 core crate | 未包含 |
 
 1. Rust 无法像 JavaScript Proxy 一样动态投影任意 struct 字段，因此 `alias()` 是常见 `mixin()` 用法的显式对应方案。
 2. Rust 插件代码会显式注册多个 effect；`EffectHandle::adopt()` 提供与原版对应的嵌套诊断和回收树。
 3. Standard Schema 是 JavaScript 协议，因此 Rust 版本采用 trait 方式进行校验。
+4. `internal/dispatch` 携带 `(mode, name, args)` 三个参数，省略了上游的第四个 `thisArg` 参数。上游 HMR 和配置注入依赖的 waterfall/bail 拦截点（`internal/get`、`internal/set`、`internal/config`、`internal/update`、`internal/listener`）不在本移植范围内，依赖这些事件的下游代码需要另找扩展点。
 
 ## 设计目标
 
@@ -52,7 +55,7 @@ cargo add cordis-rs
 
 ```toml
 [dependencies]
-cordis-rs = "0.1"
+cordis-rs = "0.2"
 ```
 
 包以 `cordis-rs` 名称发布；库 crate 名仍为 `cordis`，导入方式保持 `use cordis::...` 不变。
@@ -308,6 +311,10 @@ TypeScript 原版通过 Promise 调度生命周期任务。本 crate 特意采�
 
 即时模型带来两个后果：`Fiber::wait()` 报告的是已稳定的状态，而不是挂起等待依赖到达——对 `Pending` 或已销毁的 fiber 它会返回错误。此外，Cordis 驱动 future 时使用一个小型阻塞执行器，且持有生命周期迁移锁，因此插件的 `apply` 回调和 disposer 只能等待在其他线程上完成的工作（不得等待同线程的 channel 或 `spawn_blocking` 的 join）。
 
+`Fiber::update()` 在非活动 fiber 上与上游一致：对 `Active` fiber 它会先校验新配置、再重启，并报告启动结果；对 `Pending` 或 `Failed` fiber 它只保存配置并立即协调，不等待激活——此时 `Ok(())` 仅表示配置已被接受，激活结果需要通过 `state()`/`error()` 观察。
+
+插件 `apply`、disposer 或事件监听器中的 panic 会传播给触发生命周期操作的调用方。内部互斥锁会从 poisoning 中恢复；在迁移途中被打断的 fiber 会停留在 `Loading`/`Unloading` 状态（已注册的 effect 仍归其所有），直到下一次生命周期事件或 `dispose` 使其稳定。`Context` 和 `Fiber` 未实现 `UnwindSafe`（其内部的 trait object 无法证明该性质）；当某个插件不允许拖垮调用方时，请在调用处用 `std::panic::catch_unwind(std::panic::AssertUnwindSafe(...))` 进行隔离。
+
 ## 项目结构
 
 源码结构与上游 package 对应：
@@ -323,7 +330,7 @@ src/
 ├── service.rs   # 类型化服务和构造器适配器
 ├── effect.rs    # disposer、handle、诊断树
 ├── value.rs     # Arc<dyn Any> 动态值
-└── utils.rs     # boxed future、小型执行器、disposable list
+└── utils.rs     # boxed future、小型执行器
 ```
 
 ## 开发

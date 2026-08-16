@@ -20,6 +20,12 @@ pub struct Dependency {
 }
 
 /// Normalized plugin service dependencies.
+///
+/// Every entry must be satisfiable by a service registered with
+/// `provide`/`provide_arc`. Names declared only through
+/// [`accessor()`](crate::Context::accessor) never satisfy a dependency —
+/// matching upstream, which only consults the provide store — so depending
+/// on one keeps the fiber `Pending` forever.
 #[derive(Debug, Clone, Default)]
 pub struct Inject {
     entries: Vec<Dependency>,

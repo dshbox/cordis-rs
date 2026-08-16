@@ -29,12 +29,15 @@ The crate currently ports the complete **core runtime**:
 | Context listener filters | `with_filter()` / `emit_from()` | ✅ |
 | Logger buffer/exporters/levels/formatters | corresponding logger APIs | ✅ |
 | Standard Schema validation | `Plugin::validate_config` + validation issues | ✅³ |
+| `internal/plugin`, `internal/status`, `internal/service`, `internal/dispatch` | same meta-events | ✅⁴ |
+| Intercept meta-events (`internal/get`/`set`/`config`/`update`/`listener`) | not ported | Not included |
 | Decorators and callable services | explicit Rust traits/builders | Rust-native |
 | Loader/include/HMR packages | outside the core crate | Not included |
 
 1. Rust cannot dynamically project arbitrary struct fields like a JavaScript Proxy, so `alias()` is the explicit counterpart to common `mixin()` usage.
 2. Rust plugin code registers multiple effects explicitly; `EffectHandle::adopt()` provides the original nested diagnostic/disposal tree.
 3. Validation is trait-based because Standard Schema is a JavaScript protocol.
+4. `internal/dispatch` carries `(mode, name, args)`; the upstream fourth `thisArg` argument is omitted. The waterfall/bail interception points used by upstream HMR and config injection (`internal/get`, `internal/set`, `internal/config`, `internal/update`, `internal/listener`) are not part of this port, so downstream code relying on them needs a different extension point.
 
 ## Design goals
 
@@ -52,7 +55,7 @@ cargo add cordis-rs
 
 ```toml
 [dependencies]
-cordis-rs = "0.1"
+cordis-rs = "0.2"
 ```
 
 The package is published as `cordis-rs`; the library crate is still named `cordis`, so imports remain `use cordis::...`.
@@ -308,6 +311,10 @@ Executor-independent futures work everywhere. If a future creates runtime-specif
 
 Two consequences of the eager model: `Fiber::wait()` reports the settled state instead of suspending until dependencies arrive — it returns an error for `Pending` or disposed fibers. And futures driven by Cordis run on a small blocking executor while a lifecycle transition lock is held, so plugin `apply` callbacks and disposers must only await work that completes on other threads (never same-thread channels or `spawn_blocking` joins).
 
+`Fiber::update()` mirrors upstream on inactive fibers: on an `Active` fiber it validates the new config, restarts, and reports the startup outcome; on a `Pending` or `Failed` fiber it stores the config and reconciles without waiting, so `Ok(())` only means the config was accepted — inspect `state()`/`error()` for the outcome of the activation it schedules.
+
+A panic in a plugin `apply`, disposer, or event listener propagates to the caller of the lifecycle operation that triggered it. Internal mutexes recover from poisoning, and a fiber interrupted mid-transition stays in `Loading`/`Unloading` — with already-registered effects still owned — until the next lifecycle event or `dispose` settles it. `Context` and `Fiber` do not implement `UnwindSafe` because their trait objects cannot prove it; when a plugin must not take down its caller, isolate it with `std::panic::catch_unwind(std::panic::AssertUnwindSafe(...))`.
+
 ## Project layout
 
 The source mirrors the upstream package:
@@ -323,7 +330,7 @@ src/
 ├── service.rs   # typed service and constructor adapters
 ├── effect.rs    # disposers, handles, diagnostic trees
 ├── value.rs     # Arc<dyn Any> values
-└── utils.rs     # boxed futures, small executor, disposable list
+└── utils.rs     # boxed futures, small executor
 ```
 
 ## Development

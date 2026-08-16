@@ -193,6 +193,11 @@ impl Context {
 
     /// Create a child context using a supplied scope label. Reusing the label
     /// joins otherwise separate context branches to the same service scope.
+    ///
+    /// A scope holds one implementation per slot, and every name isolated
+    /// with the same label maps to that one slot: only one of those names
+    /// can be provided there, and providing a second fails with
+    /// [`DuplicateService`](crate::ErrorCode::DuplicateService).
     pub fn isolate_with(&self, name: impl Into<String>, label: Isolation) -> Context {
         let mut isolates = (*self.meta.isolates).clone();
         isolates.insert(name.into(), label);
@@ -202,6 +207,14 @@ impl Context {
     }
 
     /// Create a child context with several service names isolated together.
+    ///
+    /// All `names` share one scope label and therefore one implementation
+    /// slot, matching the upstream single-slot scope model: provide exactly
+    /// one of them in this branch — providing a second name fails with
+    /// [`DuplicateService`](crate::ErrorCode::DuplicateService) — and inject
+    /// only that name from sibling plugins. Use separate labels (or
+    /// [`isolate`](Self::isolate)) when several of the names need independent
+    /// implementations.
     pub fn isolate_many(
         &self,
         names: impl IntoIterator<Item = impl Into<String>>,
