@@ -116,7 +116,7 @@ impl Context {
         root.root_fiber
             .set(fiber.clone())
             .unwrap_or_else(|_| unreachable!("new root has no fiber"));
-        fiber.context()
+        fiber.context().expect("fresh root is alive")
     }
 
     /// Return whether two contexts belong to the same root application.
@@ -131,6 +131,7 @@ impl Context {
             .get()
             .expect("root fiber initialized")
             .context()
+            .expect("root context has a live root")
     }
 
     /// Return this context's owning plugin fiber.

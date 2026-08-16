@@ -595,8 +595,7 @@ impl RootInner {
             }
         }
 
-        if let Some(root_fiber) = self.root_fiber.get() {
-            let root = root_fiber.context();
+        if let Some(root) = self.root_fiber.get().and_then(Fiber::context) {
             let mut args = vec![Value::new(name.to_owned())];
             if let Ok(Some(value)) = self.reflect.value(&root, name, false) {
                 args.push(value);

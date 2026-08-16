@@ -184,20 +184,12 @@ impl Fiber {
     }
 
     /// Context in which this plugin runs.
-    pub fn context(&self) -> Context {
-        Context {
-            root: self.inner.root.upgrade().expect("live fiber has a root"),
-            fiber: Arc::downgrade(&self.inner),
-            meta: self.inner.meta.clone(),
-        }
-    }
-
-    /// [`context`](Self::context) that tolerates a dropped root.
     ///
-    /// Internal notification and logging paths skip their work when every
-    /// `Context` is gone and only this fiber handle remains, rather than
-    /// panicking.
-    fn try_context(&self) -> Option<Context> {
+    /// Returns `None` when every `Context` of the application has been
+    /// dropped and only fiber handles remain: without a live root there is
+    /// nothing to bind the context to. Lifecycle operations tolerate that
+    /// situation; callers holding the last context should drop fibers first.
+    pub fn context(&self) -> Option<Context> {
         Some(Context {
             root: self.inner.root.upgrade()?,
             fiber: Arc::downgrade(&self.inner),
@@ -308,7 +300,7 @@ impl Fiber {
 
         // The root may be gone when only fiber handles remain; the state
         // still changes, but notifications need somewhere to go.
-        if let Some(ctx) = self.try_context() {
+        if let Some(ctx) = self.context() {
             if let Err(error) = ctx.events().emit(
                 "internal/status",
                 [Value::new(self.clone()), Value::new(old)],
@@ -331,7 +323,7 @@ impl Fiber {
         };
         for effect in effects.into_iter().rev() {
             if let Err(error) = EffectHandle::new(effect).dispose() {
-                if let Some(ctx) = self.try_context() {
+                if let Some(ctx) = self.context() {
                     ctx.log_error(error);
                 }
             }
@@ -340,10 +332,17 @@ impl Fiber {
 
     fn dependency_epoch(&self) -> Option<Vec<u64>> {
         let root = self.inner.root.upgrade()?;
-        root.dependency_epoch(&self.context(), &self.inner.inject)
+        root.dependency_epoch(&self.context()?, &self.inner.inject)
     }
 
     fn activate(&self, epoch: Vec<u64>) {
+        let Some(ctx) = self.context() else {
+            // The root vanished between the dependency check and this
+            // activation; without it no dependency can stay resolved, so
+            // fall back to Pending instead of panicking.
+            self.set_state(FiberState::Pending);
+            return;
+        };
         self.set_state(FiberState::Loading);
 
         let plugin = self.inner.plugin.as_ref().expect("plugin fiber").clone();
@@ -363,7 +362,7 @@ impl Fiber {
             None => plugin.plugin().validate_config(raw_config),
         }
         .and_then(|config| {
-            let output = block_on(plugin.plugin().apply(self.context(), config.clone()))?;
+            let output = block_on(plugin.plugin().apply(ctx, config.clone()))?;
             for (label, disposer) in output.disposers {
                 self.register_effect(label, disposer)?;
             }
@@ -382,7 +381,7 @@ impl Fiber {
                 self.set_state(FiberState::Active);
             }
             Err(error) => {
-                if let Some(ctx) = self.try_context() {
+                if let Some(ctx) = self.context() {
                     ctx.log_error(&error);
                 }
                 self.set_state(FiberState::Unloading);
@@ -673,7 +672,7 @@ impl Fiber {
             root.registry.remove_fiber(key, old_uid);
         }
 
-        if let Some(ctx) = self.try_context() {
+        if let Some(ctx) = self.context() {
             if let Err(error) = ctx
                 .events()
                 .emit("internal/plugin", [Value::new(self.clone())])
