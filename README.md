@@ -306,6 +306,8 @@ The original TypeScript implementation schedules lifecycle work through promises
 
 Executor-independent futures work everywhere. If a future creates runtime-specific resources (for example `tokio::time::sleep`), call Cordis while that runtime is entered.
 
+Two consequences of the eager model: `Fiber::wait()` reports the settled state instead of suspending until dependencies arrive — it returns an error for `Pending` or disposed fibers. And futures driven by Cordis run on a small blocking executor while a lifecycle transition lock is held, so plugin `apply` callbacks and disposers must only await work that completes on other threads (never same-thread channels or `spawn_blocking` joins).
+
 ## Project layout
 
 The source mirrors the upstream package:

@@ -297,6 +297,12 @@ where
 }
 
 /// Adapt a typed asynchronous closure to a Cordis plugin.
+///
+/// The future is driven by a small blocking executor while the fiber's
+/// transition mutex is held. Do not await futures that require the current
+/// thread to make progress (for example `tokio::task::spawn_blocking` joins
+/// or channels filled by the calling thread); park only on work completing
+/// on other threads.
 pub fn plugin_async<C, F, Fut>(name: impl Into<String>, inject: Inject, callback: F) -> PluginHandle
 where
     C: Send + Sync + 'static,

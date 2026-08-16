@@ -306,6 +306,8 @@ TypeScript 原版通过 Promise 调度生命周期任务。本 crate 特意采�
 
 与执行器无关的 future 可以在任何环境中运行。如果 future 会创建特定运行时资源（例如 `tokio::time::sleep`），请在对应运行时已经进入的情况下调用 Cordis。
 
+即时模型带来两个后果：`Fiber::wait()` 报告的是已稳定的状态，而不是挂起等待依赖到达——对 `Pending` 或已销毁的 fiber 它会返回错误。此外，Cordis 驱动 future 时使用一个小型阻塞执行器，且持有生命周期迁移锁，因此插件的 `apply` 回调和 disposer 只能等待在其他线程上完成的工作（不得等待同线程的 channel 或 `spawn_blocking` 的 join）。
+
 ## 项目结构
 
 源码结构与上游 package 对应：
