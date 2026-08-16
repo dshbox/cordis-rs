@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/dshbox/cordis-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/dshbox/cordis-rs/actions/workflows/ci.yml)
 
-[`@deepseek-ai/cordis` 4.x](https://github.com/deepseek-ai/deepseek-harness/tree/master/vendor/cordis) 的运行时无关 Rust 移植。
+[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 底座插件框架 Cordis 4.x 的运行时无关 Rust 移植（在其仓库中内置为 [`@deepseek-ai/cordis`](https://github.com/deepseek-ai/deepseek-harness/tree/master/vendor/cordis)）。
 
 > 本实现以 DeepSeek Harness 中的 Cordis 4.0.1 为原版，核心结构与原版的 `Context / Events / Fiber / Logger / Reflect / Registry / Service` 模块对应，并在 Rust 语言能力允许的范围内，尽量保留依赖到达时自动激活、依赖消失时自动卸载、作用域隔离、effect 回收，以及全部五种事件分发模式。
 
@@ -46,10 +46,16 @@ Cordis 是一个基于上下文的插件框架，适用于需要显式依赖注�
 
 ## 安装
 
+```sh
+cargo add cordis-rs
+```
+
 ```toml
 [dependencies]
-cordis = { git = "https://github.com/dshbox/cordis-rs" }
+cordis-rs = "0.1"
 ```
+
+包以 `cordis-rs` 名称发布；库 crate 名仍为 `cordis`，导入方式保持 `use cordis::...` 不变。
 
 最低支持 Rust 版本（MSRV）为 **Rust 1.85**，并使用 **Rust 2024 Edition**。该 crate 没有外部依赖。
 

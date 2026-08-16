@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/dshbox/cordis-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/dshbox/cordis-rs/actions/workflows/ci.yml)
 
-A runtime-agnostic Rust port of [`@deepseek-ai/cordis` 4.x](https://github.com/deepseek-ai/deepseek-harness/tree/master/vendor/cordis).
+A runtime-agnostic Rust port of Cordis 4.x — the plugin framework at the core of [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness), vendored there as [`@deepseek-ai/cordis`](https://github.com/deepseek-ai/deepseek-harness/tree/master/vendor/cordis).
 
 > This implementation is based on Cordis 4.0.1 from DeepSeek Harness. Its core structure mirrors the original `Context / Events / Fiber / Logger / Reflect / Registry / Service` modules and preserves automatic activation when dependencies arrive, automatic unloading when dependencies disappear, scoped isolation, effect cleanup, and all five event dispatch modes as closely as Rust allows.
 
@@ -46,10 +46,16 @@ The crate currently ports the complete **core runtime**:
 
 ## Install
 
+```sh
+cargo add cordis-rs
+```
+
 ```toml
 [dependencies]
-cordis = { git = "https://github.com/dshbox/cordis-rs" }
+cordis-rs = "0.1"
 ```
+
+The package is published as `cordis-rs`; the library crate is still named `cordis`, so imports remain `use cordis::...`.
 
 The minimum supported Rust version (MSRV) is **Rust 1.85**, and the crate uses **Rust 2024 Edition**. The crate has no external dependencies.
 
