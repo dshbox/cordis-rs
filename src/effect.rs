@@ -157,6 +157,13 @@ impl EffectCell {
     }
 
     fn adopt(self: &Arc<Self>, child: Arc<EffectCell>) -> Result<()> {
+        // Serialize against dispose()/cancel(): they swap `disposed` before
+        // draining `children`, so re-checking `disposed` while holding the
+        // children lock guarantees that a child pushed after a passing check
+        // is always seen by a concurrent disposal. Without this, a child
+        // adopted mid-disposal is detached from its fiber's list but never
+        // cleaned up — a silent leak.
+        let mut children = lock(&self.children);
         if self.disposed.load(Ordering::Acquire) {
             return Err(CordisError::new(ErrorCode::InactiveEffect));
         }
@@ -167,7 +174,7 @@ impl EffectCell {
             owner.remove_effect(child.id);
         }
         lock(&self.meta).children.push(lock(&child.meta).clone());
-        lock(&self.children).push(child);
+        children.push(child);
         Ok(())
     }
 }
@@ -233,5 +240,51 @@ impl Debug for EffectHandle {
             .field("meta", &self.meta())
             .field("disposed", &self.is_disposed())
             .finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::thread;
+    use std::time::Duration;
+
+    /// Regression: adopt checked `disposed` outside the children lock, so a
+    /// child adopted while the parent was mid-disposal ended up detached from
+    /// its owner but never cleaned up. The children lock is the gate: the
+    /// adopting thread must observe the disposal and back off.
+    #[test]
+    fn adopt_racing_parent_disposal_is_rejected() {
+        let parent = EffectCell::new(
+            1,
+            Weak::new(),
+            "parent",
+            AsyncDisposer::from_sync(|| Ok(())),
+        );
+        let child_ran = Arc::new(AtomicBool::new(false));
+        let child_ran_in_disposer = child_ran.clone();
+        let child = EffectCell::new(
+            2,
+            Weak::new(),
+            "child",
+            AsyncDisposer::from_sync(move || {
+                child_ran_in_disposer.store(true, Ordering::SeqCst);
+                Ok(())
+            }),
+        );
+
+        // Hold the adoption gate so the ordering is deterministic.
+        let gate = lock(&parent.children);
+        let adopting_parent = parent.clone();
+        let adopt_handle = thread::spawn(move || adopting_parent.adopt(child));
+        thread::sleep(Duration::from_millis(50));
+        let disposing_parent = parent.clone();
+        let dispose_handle = thread::spawn(move || block_on(disposing_parent.dispose()));
+        thread::sleep(Duration::from_millis(50));
+        drop(gate);
+
+        assert!(adopt_handle.join().unwrap().is_err());
+        dispose_handle.join().unwrap().unwrap();
+        assert!(!child_ran.load(Ordering::SeqCst));
     }
 }

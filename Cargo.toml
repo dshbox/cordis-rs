@@ -1,6 +1,6 @@
 [package]
 name = "cordis-rs"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 rust-version = "1.85"
 description = "Runtime-agnostic Rust port of Cordis, the plugin framework at the core of DeepSeek Harness"
@@ -8,7 +8,14 @@ license = "MIT"
 repository = "https://github.com/dshbox/cordis-rs"
 keywords = ["plugin", "dependency-injection", "events", "lifecycle", "framework"]
 categories = ["asynchronous", "rust-patterns"]
-exclude = [".github/", "rust-toolchain.toml", ".gitignore"]
+exclude = [
+    ".github/",
+    "rust-toolchain.toml",
+    ".gitignore",
+    ".agents/",
+    ".claude/",
+    "skills-lock.json",
+]
 
 [lib]
 name = "cordis"
