@@ -254,7 +254,12 @@ mod tests {
     #[test]
     fn dispose_runs_adopted_children_in_reverse_order() {
         let runs = Arc::new(Mutex::new(Vec::new()));
-        let parent = EffectCell::new(1, Weak::new(), "parent", AsyncDisposer::from_sync(|| Ok(())));
+        let parent = EffectCell::new(
+            1,
+            Weak::new(),
+            "parent",
+            AsyncDisposer::from_sync(|| Ok(())),
+        );
         for id in [2_u64, 3] {
             let runs = runs.clone();
             let child = EffectCell::new(
@@ -277,7 +282,8 @@ mod tests {
     /// its owner but never cleaned up. The children lock is the gate: the
     /// adopting thread must observe the disposal and back off.
     #[test]
-    fn adopt_racing_parent_disposal_is_rejected() {        let parent = EffectCell::new(
+    fn adopt_racing_parent_disposal_is_rejected() {
+        let parent = EffectCell::new(
             1,
             Weak::new(),
             "parent",
