@@ -1,0 +1,76 @@
+//! Cordis is a context-based plugin framework with scoped dependency injection,
+//! lifecycle-owned effects, events, configuration interception, and structured
+//! logging.
+//!
+//! This crate is a Rust port of `@deepseek-ai/cordis` 4.x.  The JavaScript
+//! implementation relies heavily on proxies, prototype chains, callable
+//! objects, and decorators.  The Rust API keeps the same runtime model while
+//! replacing those language features with explicit, typed methods.
+//!
+//! # Quick start
+//!
+//! ```
+//! use cordis::{plugin_sync, Context, Inject, PluginOutput};
+//! use std::sync::atomic::{AtomicUsize, Ordering};
+//! use std::sync::Arc;
+//!
+//! let root = Context::new();
+//! let counter = Arc::new(AtomicUsize::new(0));
+//! let _counter_effect = root.provide_arc("counter", counter.clone()).unwrap();
+//!
+//! let greeter = plugin_sync::<(), _>("greeter", Inject::new(["counter"]),
+//!     |ctx, _config| {
+//!         let counter = ctx.require::<AtomicUsize>("counter")?;
+//!         counter.fetch_add(1, Ordering::SeqCst);
+//!         Ok(PluginOutput::default())
+//!     });
+//!
+//! let fiber = root.plugin(greeter, ());
+//! fiber.wait().unwrap();
+//! assert_eq!(counter.load(Ordering::SeqCst), 1);
+//! fiber.dispose().unwrap();
+//! ```
+
+#![forbid(unsafe_code)]
+#![warn(missing_docs)]
+
+pub mod context;
+pub mod effect;
+pub mod error;
+pub mod events;
+pub mod fiber;
+pub mod logger;
+pub mod reflect;
+pub mod registry;
+pub mod service;
+pub mod utils;
+pub mod value;
+
+pub use context::{Context, ContextMeta, Isolation};
+pub use effect::{AsyncDisposer, EffectHandle, EffectMeta};
+pub use error::{CordisError, ErrorCode, Result, ValidationError, ValidationIssue};
+pub use events::{
+    is_bailed, DispatchMode, Event, EventOptions, EventResult, EventValue, EventsService,
+};
+pub use fiber::{Fiber, FiberState};
+pub use logger::{
+    color_code, default_format, Exporter, ExporterConfig, FormatterFn, LogArg, Logger,
+    LoggerIntercept, LoggerLevel, LoggerService, LoggerType, Message, C16, C256,
+};
+pub use reflect::{Accessor, Property, ReflectService, ServiceInfo};
+pub use registry::{
+    plugin_async, plugin_sync, Inject, IntoPlugin, Plugin, PluginHandle, PluginKey, PluginOutput,
+    RegistryService, RuntimeInfo,
+};
+pub use service::{service_async, service_sync, Service};
+pub use value::{Config, Value};
+
+/// Build an asynchronous disposer from an async closure.
+///
+/// This is primarily useful when returning a [`PluginOutput`].
+#[macro_export]
+macro_rules! async_disposer {
+    ($body:expr) => {
+        $crate::AsyncDisposer::from_async($body)
+    };
+}
