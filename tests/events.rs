@@ -1,5 +1,5 @@
 use cordis::utils::block_on;
-use cordis::{Context, EventOptions, Result, Value};
+use cordis::{Context, CordisError, ErrorCode, EventOptions, Result, Value};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -123,6 +123,24 @@ fn dispatch_filter_and_global_listener() -> Result<()> {
     root.events().emit_from(rejected, "filtered", [])?;
     assert_eq!(local.load(Ordering::SeqCst), 0);
     assert_eq!(global.load(Ordering::SeqCst), 1);
+    Ok(())
+}
+
+/// parallel() aggregates all listener failures into one error instead of
+/// stopping at the first.
+#[test]
+fn parallel_aggregates_listener_errors() -> Result<()> {
+    let root = Context::new();
+    root.on_async("fail", |_| async {
+        Err(CordisError::with_message(ErrorCode::Event, "boom-a"))
+    })?;
+    root.on_async("fail", |_| async {
+        Err(CordisError::with_message(ErrorCode::Event, "boom-b"))
+    })?;
+    let error = block_on(root.events().parallel("fail", [])).unwrap_err();
+    let message = error.to_string();
+    assert!(message.contains("boom-a"), "missing boom-a: {message}");
+    assert!(message.contains("boom-b"), "missing boom-b: {message}");
     Ok(())
 }
 

@@ -1,4 +1,8 @@
-use cordis::{Context, FiberState, Inject, PluginOutput, Result, plugin_sync};
+use cordis::{
+    Context, CordisError, ErrorCode, FiberState, Inject, PluginOutput, Result, plugin_async,
+    plugin_sync,
+};
+use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
@@ -228,6 +232,180 @@ fn dispose_orphaned_fiber_does_not_panic() -> Result<()> {
 fn update_on_root_fiber_errors_instead_of_panicking() -> Result<()> {
     let root = Context::new();
     assert!(root.fiber()?.update(()).is_err());
+    Ok(())
+}
+
+/// A manually gated future for driving apply() into a controlled park.
+#[derive(Clone)]
+struct Gate {
+    state: Arc<std::sync::Mutex<GateState>>,
+}
+
+struct GateState {
+    open: bool,
+    entered: bool,
+    waker: Option<std::task::Waker>,
+}
+
+impl Gate {
+    fn new() -> Self {
+        Self {
+            state: Arc::new(std::sync::Mutex::new(GateState {
+                open: false,
+                entered: false,
+                waker: None,
+            })),
+        }
+    }
+
+    fn open(&self) {
+        let mut state = self.state.lock().unwrap();
+        state.open = true;
+        if let Some(waker) = state.waker.take() {
+            waker.wake();
+        }
+    }
+
+    fn entered(&self) -> bool {
+        self.state.lock().unwrap().entered
+    }
+}
+
+impl Future for Gate {
+    type Output = ();
+
+    fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<()> {
+        let mut state = self.state.lock().unwrap();
+        state.entered = true;
+        if state.open {
+            std::task::Poll::Ready(())
+        } else {
+            state.waker = Some(cx.waker().clone());
+            std::task::Poll::Pending
+        }
+    }
+}
+
+/// A concurrent dispose during a parked apply() must report the in-flight
+/// transition instead of deadlocking; await_idle() then waits it out.
+#[test]
+fn dispose_during_loading_conflicts_then_await_idle() -> Result<()> {
+    let root = Context::new();
+    let gate = Gate::new();
+    let gate_in_plugin = gate.clone();
+    let plugin = plugin_async::<(), _, _>("gated", Inject::none(), move |_, _| {
+        let gate = gate_in_plugin.clone();
+        async move {
+            gate.await;
+            Ok(PluginOutput::default())
+        }
+    });
+
+    // The internal/plugin event fires before the first refresh, so the fiber
+    // handle is available while apply() is still parked.
+    let slot = Arc::new(std::sync::Mutex::new(None));
+    let slot_in_listener = slot.clone();
+    root.on("internal/plugin", move |event| {
+        if let Some(first) = event.args().first() {
+            if let Ok(fiber) = first.downcast::<cordis::Fiber>() {
+                *slot_in_listener.lock().unwrap() = Some(fiber);
+            }
+        }
+        Ok(None)
+    })?;
+
+    let worker = std::thread::spawn({
+        let root = root.clone();
+        move || root.plugin_default(plugin)
+    });
+    for _ in 0..100 {
+        if gate.entered() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(gate.entered(), "apply() never parked");
+    let fiber = slot.lock().unwrap().clone().unwrap();
+
+    assert!(fiber.dispose().is_err(), "dispose raced the transition");
+    gate.open();
+    fiber.await_idle();
+    assert_eq!(fiber.state(), FiberState::Active);
+    fiber.dispose()?;
+    assert_eq!(fiber.state(), FiberState::Disposed);
+    let _ = worker.join().unwrap();
+    Ok(())
+}
+
+/// restart() on a Failed fiber clears the failure epoch and retries startup.
+#[test]
+fn restart_retries_failed_startup() -> Result<()> {
+    let root = Context::new();
+    let attempts = Arc::new(AtomicUsize::new(0));
+    let attempts_in_plugin = attempts.clone();
+    let fiber = root.plugin_default(plugin_sync::<(), _>(
+        "flaky",
+        Inject::none(),
+        move |_, _| {
+            if attempts_in_plugin.fetch_add(1, Ordering::SeqCst) == 0 {
+                Err(CordisError::new(ErrorCode::Plugin))
+            } else {
+                Ok(PluginOutput::default())
+            }
+        },
+    ));
+    assert_eq!(fiber.state(), FiberState::Failed);
+    fiber.restart()?;
+    assert_eq!(fiber.state(), FiberState::Active);
+    assert_eq!(attempts.load(Ordering::SeqCst), 2);
+    Ok(())
+}
+
+/// Disposing a Pending fiber goes straight to Disposed and cleans the
+/// registry without running any plugin code.
+#[test]
+fn dispose_pending_fiber() -> Result<()> {
+    let root = Context::new();
+    let fiber = root.plugin_default(plugin_sync::<(), _>(
+        "needy",
+        Inject::new(["unavailable"]),
+        |_, _| Ok(PluginOutput::default()),
+    ));
+    assert_eq!(fiber.state(), FiberState::Pending);
+    fiber.dispose()?;
+    assert_eq!(fiber.state(), FiberState::Disposed);
+    assert!(root.registry().is_empty());
+    Ok(())
+}
+
+/// A fiber with several dependencies stays Pending until every one is
+/// provided, and unloads when any is removed.
+#[test]
+fn partial_dependencies_keep_fiber_pending() -> Result<()> {
+    let root = Context::new();
+    let fiber = root.plugin_default(plugin_sync::<(), _>(
+        "multi",
+        Inject::new(["a", "b"]),
+        |_, _| Ok(PluginOutput::default()),
+    ));
+    let effect_a = root.provide_arc("a", Arc::new(1_u32))?;
+    assert_eq!(fiber.state(), FiberState::Pending);
+    let _effect_b = root.provide_arc("b", Arc::new(2_u32))?;
+    fiber.await_idle();
+    assert_eq!(fiber.state(), FiberState::Active);
+    effect_a.dispose()?;
+    fiber.await_idle();
+    assert_eq!(fiber.state(), FiberState::Pending);
+    Ok(())
+}
+
+/// Providing an occupied service name is rejected with DuplicateService.
+#[test]
+fn duplicate_provide_is_rejected() -> Result<()> {
+    let root = Context::new();
+    let _first = root.provide_arc("dup", Arc::new(1_u32))?;
+    let second = root.provide_arc("dup", Arc::new(2_u32));
+    assert_eq!(second.unwrap_err().code(), ErrorCode::DuplicateService);
     Ok(())
 }
 
