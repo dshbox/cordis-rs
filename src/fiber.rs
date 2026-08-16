@@ -68,6 +68,20 @@ pub struct Fiber {
     pub(crate) inner: Arc<FiberInner>,
 }
 
+/// Test-only hook armed by regression tests to stretch the lost-wakeup
+/// window in [`Fiber::refresh`] — the few instructions between the final
+/// dirty-flag check and the transition lock release — so a notification can
+/// be landed inside it deterministically.
+#[cfg(test)]
+static REFRESH_WINDOW_STRETCH: AtomicBool = AtomicBool::new(false);
+
+#[cfg(test)]
+fn stretch_refresh_window() {
+    if REFRESH_WINDOW_STRETCH.load(Ordering::Relaxed) {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+}
+
 impl Fiber {
     pub(crate) fn from_inner(inner: Arc<FiberInner>) -> Self {
         Self { inner }
@@ -464,16 +478,30 @@ impl Fiber {
     }
 
     pub(crate) fn refresh(&self) {
-        self.inner.dirty.store(true, Ordering::Release);
-        let guard = match self.inner.transition.try_lock() {
-            Ok(guard) => guard,
-            Err(std::sync::TryLockError::Poisoned(error)) => error.into_inner(),
-            Err(std::sync::TryLockError::WouldBlock) => return,
-        };
-        while self.inner.dirty.swap(false, Ordering::AcqRel) {
-            self.reconcile();
+        loop {
+            self.inner.dirty.store(true, Ordering::Release);
+            let guard = match self.inner.transition.try_lock() {
+                Ok(guard) => guard,
+                Err(std::sync::TryLockError::Poisoned(error)) => error.into_inner(),
+                // Another thread holds the transition lock. Whoever releases
+                // it re-checks the dirty flag below and drains on our behalf,
+                // so deferring to the holder loses nothing.
+                Err(std::sync::TryLockError::WouldBlock) => return,
+            };
+            while self.inner.dirty.swap(false, Ordering::AcqRel) {
+                self.reconcile();
+            }
+            #[cfg(test)]
+            stretch_refresh_window();
+            // A notification landing between the final swap above and this
+            // drop only sets the dirty flag: its own try_lock fails, so no
+            // one would consume it. Re-check after releasing the lock and
+            // take another turn instead of losing the wakeup.
+            drop(guard);
+            if !self.inner.dirty.load(Ordering::Acquire) {
+                return;
+            }
         }
-        drop(guard);
     }
 
     /// Lock the transition mutex, failing instead of deadlocking when the
@@ -520,7 +548,16 @@ impl Fiber {
     /// plugin apply) on the same thread: the transition mutex is held while
     /// those run, and blocking on it here would deadlock.
     pub fn await_idle(&self) {
-        let _guard = lock(&self.inner.transition);
+        {
+            let _guard = lock(&self.inner.transition);
+        }
+        // A concurrent refresh whose try_lock lost to the guard above only
+        // set the dirty flag. Unlike refresh/restart/dispose, the guard here
+        // protects no reconcile pass, so drain the flag explicitly or the
+        // fiber would stay stale until the next event.
+        if self.inner.dirty.load(Ordering::Acquire) {
+            self.refresh();
+        }
     }
 
     /// Async equivalent of [`wait`](Self::wait).
@@ -647,5 +684,59 @@ impl Debug for Fiber {
             .field("name", &self.name())
             .field("state", &self.state())
             .finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::registry::plugin_sync;
+    use crate::{Inject, PluginOutput};
+    use std::sync::atomic::AtomicUsize;
+    use std::time::{Duration, Instant};
+
+    /// Regression: a notification landing between refresh()'s final
+    /// `dirty.swap(false)` and the transition lock release used to be lost —
+    /// the notifier's try_lock failed and the holder had already stopped
+    /// draining, leaving the fiber stale (and `dirty` set) until the next
+    /// unrelated event. The armed stretch hook makes that window wide
+    /// enough for the main thread to land a notification inside it.
+    #[test]
+    fn notify_between_final_check_and_unlock_is_not_lost() {
+        let root = Context::new();
+        let starts = Arc::new(AtomicUsize::new(0));
+        let fiber = root.plugin_default(plugin_sync::<(), _>("consumer", Inject::new(["svc"]), {
+            let starts = starts.clone();
+            move |_, _| {
+                starts.fetch_add(1, Ordering::SeqCst);
+                Ok(PluginOutput::none())
+            }
+        }));
+        let provider = root.provide("svc", 1_u32).unwrap();
+        fiber.wait().unwrap();
+        assert_eq!(starts.load(Ordering::SeqCst), 1);
+
+        REFRESH_WINDOW_STRETCH.store(true, Ordering::Relaxed);
+        // The disposal notifies the consumer and drives refresh() on this
+        // thread; the armed hook parks it inside the window while still
+        // holding the transition lock.
+        let unloader = std::thread::spawn(move || provider.dispose());
+        // Wait until the unload is visible: the worker is then inside the
+        // stretched window, still holding the lock.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while fiber.state() != FiberState::Pending {
+            assert!(Instant::now() < deadline, "unload did not start");
+            std::thread::yield_now();
+        }
+        // Land a notification inside the window: this store(dirty) +
+        // try_lock(fail) + return is exactly the previously lost wakeup.
+        let _provider = root.provide("svc", 2_u32).unwrap();
+        unloader.join().unwrap().unwrap();
+        REFRESH_WINDOW_STRETCH.store(false, Ordering::Relaxed);
+
+        // The re-provide must have been consumed without any further event.
+        assert!(!fiber.inner.dirty.load(Ordering::Acquire));
+        assert_eq!(fiber.state(), FiberState::Active);
+        assert_eq!(starts.load(Ordering::SeqCst), 2);
     }
 }
