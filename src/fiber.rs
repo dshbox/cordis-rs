@@ -488,21 +488,39 @@ impl Fiber {
             Err(std::sync::TryLockError::Poisoned(error)) => Ok(error.into_inner()),
             Err(std::sync::TryLockError::WouldBlock) => Err(CordisError::with_message(
                 ErrorCode::Other,
-                "reentrant lifecycle transition on the same fiber",
+                "lifecycle transition already in progress on this fiber",
             )),
         }
     }
 
     /// Wait for the current lifecycle transition and rethrow startup errors.
     ///
-    /// This port drives transitions eagerly, so this method does not require a
-    /// particular async runtime.
+    /// This port drives transitions eagerly, so this method does not require
+    /// a particular async runtime. It reports the settled state instead of
+    /// suspending: `Ok` only when `Active`; a startup failure is rethrown;
+    /// `Pending` (dependencies missing), in-flight, and `Disposed` fibers
+    /// yield an error rather than a false success. It never blocks, so it is
+    /// safe to call from lifecycle callbacks.
     pub fn wait(&self) -> Result<Fiber> {
-        if let Some(error) = self.error() {
-            Err(error)
-        } else {
-            Ok(self.clone())
+        match self.state() {
+            FiberState::Active => Ok(self.clone()),
+            FiberState::Failed => Err(self
+                .error()
+                .unwrap_or_else(|| CordisError::new(ErrorCode::Plugin))),
+            state => Err(CordisError::with_message(
+                ErrorCode::Other,
+                format!("fiber is not ready (state: {state:?})"),
+            )),
         }
+    }
+
+    /// Block until no lifecycle transition is in progress on this fiber.
+    ///
+    /// Never call this from a lifecycle callback (status listener, disposer,
+    /// plugin apply) on the same thread: the transition mutex is held while
+    /// those run, and blocking on it here would deadlock.
+    pub fn await_idle(&self) {
+        let _guard = lock(&self.inner.transition);
     }
 
     /// Async equivalent of [`wait`](Self::wait).
@@ -513,6 +531,12 @@ impl Fiber {
     /// Dispose and immediately reload this plugin with its current config.
     pub fn restart(&self) -> Result<()> {
         self.assert_active()?;
+        if self.inner.plugin.is_none() {
+            return Err(CordisError::with_message(
+                ErrorCode::Other,
+                "cannot restart the root fiber",
+            ));
+        }
         {
             let _guard = self.try_transition()?;
             {

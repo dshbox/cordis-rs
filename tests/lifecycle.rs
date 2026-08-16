@@ -231,6 +231,37 @@ fn update_on_root_fiber_errors_instead_of_panicking() -> Result<()> {
     Ok(())
 }
 
+/// Regression: wait() only checked the stored error and reported success for
+/// Pending (dependency-starved) fibers. It must report the settled state.
+#[test]
+fn wait_reports_pending_as_not_ready() -> Result<()> {
+    let root = Context::new();
+    let fiber = root.plugin_default(plugin_sync::<(), _>(
+        "needy",
+        Inject::new(["missing-service"]),
+        |_, _| Ok(PluginOutput::default()),
+    ));
+    assert_eq!(fiber.state(), FiberState::Pending);
+    assert!(fiber.wait().is_err());
+    Ok(())
+}
+
+/// Regression: restart() on the root fiber disposed every root-owned effect
+/// (including all top-level plugin parent effects) and left the root stuck in
+/// Pending while reporting success. It must fail without side effects.
+#[test]
+fn restart_on_root_fiber_errors_without_side_effects() -> Result<()> {
+    let root = Context::new();
+    let fiber = root.plugin_default(plugin_sync::<(), _>("alive", Inject::none(), |_, _| {
+        Ok(PluginOutput::default())
+    }));
+    fiber.wait()?;
+    assert!(root.fiber()?.restart().is_err());
+    assert_eq!(root.fiber()?.state(), FiberState::Active);
+    assert_eq!(fiber.state(), FiberState::Active);
+    Ok(())
+}
+
 /// update() on an Active fiber pre-validates so a bad config cannot tear down
 /// a running plugin; the validated result must be reused by the restart
 /// instead of running the validator twice.
