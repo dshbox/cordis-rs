@@ -55,7 +55,7 @@ cargo add cordis-rs
 
 ```toml
 [dependencies]
-cordis-rs = "0.2"
+cordis-rs = "0.3"
 ```
 
 The package is published as `cordis-rs`; the library crate is still named `cordis`, so imports remain `use cordis::...`.

@@ -55,7 +55,7 @@ cargo add cordis-rs
 
 ```toml
 [dependencies]
-cordis-rs = "0.2"
+cordis-rs = "0.3"
 ```
 
 包以 `cordis-rs` 名称发布；库 crate 名仍为 `cordis`，导入方式保持 `use cordis::...` 不变。
