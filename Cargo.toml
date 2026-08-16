@@ -1,6 +1,6 @@
 [package]
 name = "cordis-rs"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 rust-version = "1.85"
 description = "Runtime-agnostic Rust port of Cordis, the plugin framework at the core of DeepSeek Harness"
