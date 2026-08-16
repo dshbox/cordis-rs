@@ -249,13 +249,35 @@ mod tests {
     use std::thread;
     use std::time::Duration;
 
+    /// Disposing a parent recurses into adopted children (reverse adoption
+    /// order) — this exercises the boxed recursive dispose path at runtime.
+    #[test]
+    fn dispose_runs_adopted_children_in_reverse_order() {
+        let runs = Arc::new(Mutex::new(Vec::new()));
+        let parent = EffectCell::new(1, Weak::new(), "parent", AsyncDisposer::from_sync(|| Ok(())));
+        for id in [2_u64, 3] {
+            let runs = runs.clone();
+            let child = EffectCell::new(
+                id,
+                Weak::new(),
+                "child",
+                AsyncDisposer::from_sync(move || {
+                    runs.lock().unwrap().push(id);
+                    Ok(())
+                }),
+            );
+            parent.adopt(child).unwrap();
+        }
+        block_on(parent.dispose()).unwrap();
+        assert_eq!(*runs.lock().unwrap(), vec![3, 2]);
+    }
+
     /// Regression: adopt checked `disposed` outside the children lock, so a
     /// child adopted while the parent was mid-disposal ended up detached from
     /// its owner but never cleaned up. The children lock is the gate: the
     /// adopting thread must observe the disposal and back off.
     #[test]
-    fn adopt_racing_parent_disposal_is_rejected() {
-        let parent = EffectCell::new(
+    fn adopt_racing_parent_disposal_is_rejected() {        let parent = EffectCell::new(
             1,
             Weak::new(),
             "parent",
