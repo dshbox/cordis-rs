@@ -177,8 +177,11 @@ pub trait Plugin: Send + Sync + 'static {
     fn name(&self) -> &str;
 
     /// Required services. Startup waits in `Pending` until all are active.
-    fn inject(&self) -> Inject {
-        Inject::default()
+    fn inject(&self) -> &Inject {
+        static EMPTY: Inject = Inject {
+            entries: Vec::new(),
+        };
+        &EMPTY
     }
 
     /// Validate and optionally normalize raw config before startup.
@@ -259,8 +262,8 @@ impl Plugin for FunctionPlugin {
         &self.name
     }
 
-    fn inject(&self) -> Inject {
-        self.inject.clone()
+    fn inject(&self) -> &Inject {
+        &self.inject
     }
 
     fn apply(&self, ctx: Context, config: Config) -> BoxFuture<Result<PluginOutput>> {

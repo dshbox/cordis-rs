@@ -55,7 +55,7 @@ fn effects_are_lifo_and_single_shot() -> Result<()> {
             order.lock().unwrap().push(value);
         })?;
     }
-    assert_eq!(root.fiber()?.get_effects().len(), 3);
+    assert_eq!(root.fiber()?.effects().len(), 3);
     root.fiber()?.dispose()?;
     assert_eq!(*order.lock().unwrap(), vec![3, 2, 1]);
     Ok(())

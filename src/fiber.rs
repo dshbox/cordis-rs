@@ -100,7 +100,7 @@ impl Fiber {
     }
 
     pub(crate) fn new_plugin(parent_ctx: &Context, plugin: PluginHandle, config: Config) -> Self {
-        let inject = plugin.plugin().inject();
+        let inject = plugin.plugin().inject().clone();
         let mut meta = parent_ctx.meta.clone();
         if !inject.is_empty() {
             let mut intercepts = (*meta.intercepts).clone();
@@ -255,7 +255,7 @@ impl Fiber {
     }
 
     /// Metadata for all currently live top-level effects.
-    pub fn get_effects(&self) -> Vec<EffectMeta> {
+    pub fn effects(&self) -> Vec<EffectMeta> {
         lock(&self.inner.effects)
             .iter()
             .map(|effect| EffectHandle::new(effect.clone()).meta())
@@ -369,7 +369,7 @@ impl Fiber {
             }
             Err(error) => {
                 if let Some(ctx) = self.try_context() {
-                    ctx.log_error(error.clone());
+                    ctx.log_error(&error);
                 }
                 self.set_state(FiberState::Unloading);
                 self.dispose_effects();
