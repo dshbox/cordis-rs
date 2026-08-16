@@ -2,6 +2,8 @@
 
 **English** | [简体中文](README.zh-CN.md)
 
+[![CI](https://github.com/dshbox/cordis-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/dshbox/cordis-rs/actions/workflows/ci.yml)
+
 A runtime-agnostic Rust port of [`@deepseek-ai/cordis` 4.x](https://github.com/deepseek-ai/deepseek-harness/tree/master/vendor/cordis).
 
 > This implementation is based on Cordis 4.0.1 from DeepSeek Harness. Its core structure mirrors the original `Context / Events / Fiber / Logger / Reflect / Registry / Service` modules and preserves automatic activation when dependencies arrive, automatic unloading when dependencies disappear, scoped isolation, effect cleanup, and all five event dispatch modes as closely as Rust allows.

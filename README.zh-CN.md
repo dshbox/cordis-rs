@@ -2,6 +2,8 @@
 
 [English](README.md) | **简体中文**
 
+[![CI](https://github.com/dshbox/cordis-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/dshbox/cordis-rs/actions/workflows/ci.yml)
+
 [`@deepseek-ai/cordis` 4.x](https://github.com/deepseek-ai/deepseek-harness/tree/master/vendor/cordis) 的运行时无关 Rust 移植。
 
 > 本实现以 DeepSeek Harness 中的 Cordis 4.0.1 为原版，核心结构与原版的 `Context / Events / Fiber / Logger / Reflect / Registry / Service` 模块对应，并在 Rust 语言能力允许的范围内，尽量保留依赖到达时自动激活、依赖消失时自动卸载、作用域隔离、effect 回收，以及全部五种事件分发模式。
