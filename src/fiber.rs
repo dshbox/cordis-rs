@@ -409,6 +409,23 @@ impl Fiber {
         drop(guard);
     }
 
+    /// Lock the transition mutex, failing instead of deadlocking when the
+    /// caller is already inside a transition on this fiber — directly or
+    /// through a lifecycle callback such as an `internal/status` listener or
+    /// a disposer. [`refresh`](Self::refresh) already degrades to a dirty flag
+    /// in that situation; `restart`/`dispose` have no deferrable semantics,
+    /// so they report the reentrancy as an error.
+    fn try_transition(&self) -> Result<std::sync::MutexGuard<'_, ()>> {
+        match self.inner.transition.try_lock() {
+            Ok(guard) => Ok(guard),
+            Err(std::sync::TryLockError::Poisoned(error)) => Ok(error.into_inner()),
+            Err(std::sync::TryLockError::WouldBlock) => Err(CordisError::with_message(
+                ErrorCode::Other,
+                "reentrant lifecycle transition on the same fiber",
+            )),
+        }
+    }
+
     /// Wait for the current lifecycle transition and rethrow startup errors.
     ///
     /// This port drives transitions eagerly, so this method does not require a
@@ -430,7 +447,7 @@ impl Fiber {
     pub fn restart(&self) -> Result<()> {
         self.assert_active()?;
         {
-            let _guard = lock(&self.inner.transition);
+            let _guard = self.try_transition()?;
             {
                 let mut data = lock(&self.inner.data);
                 data.failed_epoch = None;
@@ -474,10 +491,13 @@ impl Fiber {
 
     /// Permanently dispose this plugin fiber. Repeated calls are no-ops.
     pub fn dispose(&self) -> Result<()> {
+        // Take the transition lock up front: reentrant calls from lifecycle
+        // callbacks fail fast instead of deadlocking, and no partial teardown
+        // is left behind.
+        let _guard = self.try_transition()?;
         if self.inner.plugin.is_none() {
             // Root disposal unloads all root-owned effects but leaves the root
             // context usable, matching the original root fiber's restart.
-            let _guard = lock(&self.inner.transition);
             self.set_state(FiberState::Unloading);
             self.dispose_effects();
             self.set_state(FiberState::Active);
@@ -508,7 +528,6 @@ impl Fiber {
             ctx.log_error(error);
         }
 
-        let _guard = lock(&self.inner.transition);
         self.unload_to(FiberState::Disposed);
         Ok(())
     }

@@ -18,11 +18,14 @@ struct Parker {
 
 impl Wake for Parker {
     fn wake(self: Arc<Self>) {
-        self.notified.store(true, Ordering::Release);
-        self.ready.notify_one();
+        self.wake_by_ref();
     }
 
     fn wake_by_ref(self: &Arc<Self>) {
+        // Hold the mutex so set-and-notify is serialized against the waiter's
+        // check-and-wait in block_on. Without it a wake landing between the
+        // `notified` check and `wait` is lost and block_on never returns.
+        let _guard = lock(&self.lock);
         self.notified.store(true, Ordering::Release);
         self.ready.notify_one();
     }
@@ -177,4 +180,37 @@ impl<T> DisposableList<T> {
 /// Recover a mutex guard even when another callback panicked while holding it.
 pub(crate) fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(|error| error.into_inner())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::thread;
+    use std::time::Duration;
+
+    /// A wake landing between the waiter's `notified` check and its block on
+    /// the condvar must not be lost. Holding the mutex across the wake widens
+    /// that window deterministically: pre-fix `wake_by_ref` completes without
+    /// the mutex and its notification evaporates, so the wait below times out.
+    #[test]
+    fn wake_between_check_and_wait_is_not_lost() {
+        let parker = Arc::new(Parker::default());
+        let waker = Waker::from(parker.clone());
+
+        // Simulate the waiter in block_on: holding the mutex, it has just
+        // observed `notified == false` and is about to wait.
+        let guard = lock(&parker.lock);
+        assert!(!parker.notified.swap(false, Ordering::AcqRel));
+
+        // Fire the wake from another thread, inside that window.
+        let waker_thread = thread::spawn(move || waker.wake_by_ref());
+        thread::sleep(Duration::from_millis(100));
+
+        let (_guard, timeout) = parker
+            .ready
+            .wait_timeout(guard, Duration::from_secs(2))
+            .unwrap_or_else(|error| error.into_inner());
+        assert!(!timeout.timed_out(), "lost wakeup: block_on would hang");
+        waker_thread.join().unwrap();
+    }
 }

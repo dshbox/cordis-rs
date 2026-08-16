@@ -174,3 +174,47 @@ fn root_disposal_recursively_disposes_child_plugins() -> Result<()> {
     assert_eq!(root.fiber()?.state(), FiberState::Active);
     Ok(())
 }
+
+/// Regression: restart()/dispose() took a blocking lock on the transition
+/// mutex that refresh() holds across user callbacks (status listeners,
+/// disposers), so a listener restarting its own fiber deadlocked the thread.
+#[test]
+fn restart_from_status_listener_does_not_deadlock() -> Result<()> {
+    let root = Context::new();
+    let fiber = root.plugin_default(plugin_sync::<(), _>("reentrant", Inject::none(), |_, _| {
+        Ok(PluginOutput::default())
+    }));
+    fiber.wait()?;
+    let target_uid = fiber.uid();
+
+    let fired = Arc::new(AtomicBool::new(false));
+    let fired_in_listener = fired.clone();
+    root.on("internal/status", move |event| {
+        if fired_in_listener.load(Ordering::SeqCst) {
+            return Ok(None);
+        }
+        let Some(first) = event.args().first() else {
+            return Ok(None);
+        };
+        let Ok(observed) = first.downcast::<cordis::Fiber>() else {
+            return Ok(None);
+        };
+        if observed.uid() != target_uid {
+            return Ok(None);
+        }
+        fired_in_listener.store(true, Ordering::SeqCst);
+        // Reentrant restart on a fiber mid-transition: must fail fast,
+        // not deadlock.
+        let _ = observed.restart();
+        Ok(None)
+    })?;
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(fiber.restart());
+    });
+    rx.recv_timeout(std::time::Duration::from_secs(2))
+        .expect("deadlock: reentrant restart from internal/status listener")?;
+    assert!(fired.load(Ordering::SeqCst));
+    Ok(())
+}

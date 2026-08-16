@@ -125,3 +125,53 @@ fn dispatch_filter_and_global_listener() -> Result<()> {
     assert_eq!(global.load(Ordering::SeqCst), 1);
     Ok(())
 }
+
+/// Regression: dispatch invoked user ContextFilters while holding the events
+/// state lock, so a filter re-entering any events API deadlocked the thread.
+#[test]
+fn filter_may_reenter_events_api() -> Result<()> {
+    let root = Context::new();
+    root.on("reentry", |_| Ok(None))?;
+
+    let filtered = root.with_filter(|owner| {
+        // Re-entering the events API from a filter must not deadlock.
+        let _ = owner.events().listener_count("reentry");
+        true
+    });
+
+    let events = root.events();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(events.emit_from(filtered, "reentry", []));
+    });
+    rx.recv_timeout(std::time::Duration::from_secs(2))
+        .expect("deadlock: ContextFilter re-entering the events API")?;
+    Ok(())
+}
+
+/// Upstream parity: a once listener is removed on invocation, so an earlier
+/// bail must not unregister listeners that never ran.
+#[test]
+fn once_survives_earlier_bail() -> Result<()> {
+    let root = Context::new();
+    let bailing = root.on("stop", |_| Ok(Some(Value::new(1_u32))))?;
+    let hits = Arc::new(AtomicUsize::new(0));
+    let hits_in_listener = hits.clone();
+    root.once("stop", move |_| {
+        hits_in_listener.fetch_add(1, Ordering::SeqCst);
+        Ok(None)
+    })?;
+
+    // The earlier listener bails; the once listener never runs and stays
+    // registered.
+    root.events().bail("stop", [])?;
+    assert_eq!(hits.load(Ordering::SeqCst), 0);
+    assert_eq!(root.events().listener_count("stop"), 2);
+
+    // With the bailing listener gone, the once listener fires exactly once.
+    bailing.dispose()?;
+    root.events().bail("stop", [])?;
+    assert_eq!(hits.load(Ordering::SeqCst), 1);
+    assert_eq!(root.events().listener_count("stop"), 0);
+    Ok(())
+}

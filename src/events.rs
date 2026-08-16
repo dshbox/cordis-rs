@@ -8,7 +8,7 @@ use crate::{CordisError, ErrorCode, Result, Value};
 use std::collections::HashMap;
 use std::fmt::{self, Debug, Formatter};
 use std::future::Future;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 
 /// Event argument and listener bail value.
@@ -160,8 +160,6 @@ struct Hook {
     ctx: HookContext,
     callback: Callback,
     options: EventOptions,
-    once: bool,
-    effect: Option<Weak<crate::effect::EffectCell>>,
 }
 
 #[derive(Default)]
@@ -222,24 +220,9 @@ impl EventsService {
         let fiber = self.ctx.fiber()?;
         fiber.assert_active()?;
         let id = self.ctx.root.events.next_id();
-        {
-            let mut state = lock(&self.ctx.root.events.state);
-            let hooks = state.hooks.entry(name.clone()).or_default();
-            let hook = Hook {
-                id,
-                ctx: HookContext::capture(&self.ctx),
-                callback,
-                options,
-                once,
-                effect: None,
-            };
-            if options.prepend {
-                hooks.insert(0, hook);
-            } else {
-                hooks.push(hook);
-            }
-        }
 
+        // Register the owning effect first: failure leaves no hook behind,
+        // and a `once` wrapper can capture the effect's weak handle up front.
         let root = Arc::downgrade(&self.ctx.root);
         let effect_name = name.clone();
         let effect = fiber.register_effect(
@@ -250,23 +233,55 @@ impl EventsService {
                 }
                 Ok(())
             }),
-        );
-        match effect {
-            Ok(effect) => {
-                if let Some(hook) = lock(&self.ctx.root.events.state)
-                    .hooks
-                    .get_mut(&name)
-                    .and_then(|hooks| hooks.iter_mut().find(|hook| hook.id == id))
-                {
-                    hook.effect = Some(Arc::downgrade(&effect.cell));
+        )?;
+
+        let callback = if once {
+            let fired = AtomicBool::new(false);
+            let effect = Arc::downgrade(&effect.cell);
+            let listener = callback;
+            Arc::new(move |event| {
+                // Upstream parity: a once listener removes itself when it is
+                // invoked, not when it is dispatched. Listeners skipped by an
+                // earlier bail or error stay registered, and the atomic claim
+                // serializes concurrent dispatches without any list mutation.
+                if fired.swap(true, Ordering::SeqCst) {
+                    return Box::pin(async { Ok(None) }) as BoxFuture<EventResult>;
                 }
-                Ok(effect)
-            }
-            Err(error) => {
-                self.ctx.root.events.remove(&name, id);
-                Err(error)
+                if let Some(cell) = effect.upgrade() {
+                    let _ = EffectHandle::new(cell).dispose();
+                }
+                listener(event)
+            }) as Callback
+        } else {
+            callback
+        };
+
+        {
+            let mut state = lock(&self.ctx.root.events.state);
+            let hooks = state.hooks.entry(name.clone()).or_default();
+            let hook = Hook {
+                id,
+                ctx: HookContext::capture(&self.ctx),
+                callback,
+                options,
+            };
+            if options.prepend {
+                hooks.insert(0, hook);
+            } else {
+                hooks.push(hook);
             }
         }
+
+        // The fiber may have unloaded between effect registration and hook
+        // insertion; its disposer then never runs, so roll back by hand
+        // instead of leaking a live hook for a dead plugin.
+        if fiber.uid().is_none() {
+            self.ctx.root.events.remove(&name, id);
+            effect.dispose()?;
+            return Err(CordisError::new(ErrorCode::InactiveEffect));
+        }
+
+        Ok(effect)
     }
 
     /// Register a synchronous event listener owned by the current fiber.
@@ -311,7 +326,11 @@ impl EventsService {
         )
     }
 
-    /// Register a synchronous listener removed before its first invocation.
+    /// Register a synchronous listener removed when it is first invoked.
+    ///
+    /// Matches upstream cordis: removal happens at invocation time, so a
+    /// listener skipped because an earlier listener bailed or failed stays
+    /// registered until it actually runs.
     pub fn once<F>(
         &self,
         name: impl Into<String>,
@@ -354,35 +373,43 @@ impl EventsService {
             );
         }
 
-        let mut state = lock(&self.ctx.root.events.state);
-        let Some(hooks) = state.hooks.get_mut(event.name()) else {
-            return Vec::new();
-        };
-        let mut callbacks = Vec::new();
-        let mut retained = Vec::with_capacity(hooks.len());
-        for hook in std::mem::take(hooks) {
-            let Some(owner) = hook.ctx.get() else {
-                continue;
+        // Snapshot under the lock; user filters run outside it. The hook list
+        // is never mutated here: once listeners remove themselves on
+        // invocation, so concurrent dispatches cannot double-fire them, and a
+        // filter re-entering the events API cannot deadlock on the state lock.
+        let filter = event.target().and_then(Context::filter);
+        let snapshot = {
+            let state = lock(&self.ctx.root.events.state);
+            let Some(hooks) = state.hooks.get(event.name()) else {
+                return Vec::new();
             };
-            let accepted = hook.options.global
-                || event
-                    .target()
-                    .and_then(Context::filter)
-                    .map(|filter| filter(&owner))
-                    .unwrap_or(true);
+            hooks
+                .iter()
+                .map(|hook| {
+                    (
+                        hook.options.global,
+                        hook.callback.clone(),
+                        if filter.is_some() {
+                            hook.ctx.get()
+                        } else {
+                            None
+                        },
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+
+        let mut callbacks = Vec::with_capacity(snapshot.len());
+        for (global, callback, owner) in snapshot {
+            let accepted = global
+                || match filter {
+                    None => true,
+                    Some(filter) => owner.as_ref().is_some_and(|owner| filter(owner)),
+                };
             if accepted {
-                callbacks.push(hook.callback.clone());
-                if hook.once {
-                    if let Some(effect) = hook.effect.as_ref().and_then(Weak::upgrade) {
-                        EffectHandle::new(effect).cancel();
-                    }
-                }
-            }
-            if !hook.once || !accepted {
-                retained.push(hook);
+                callbacks.push(callback);
             }
         }
-        *hooks = retained;
         callbacks
     }
 
