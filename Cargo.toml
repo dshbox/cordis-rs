@@ -1,0 +1,19 @@
+[package]
+name = "cordis"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "A faithful, runtime-agnostic Rust port of the Cordis plugin framework"
+license = "MIT"
+repository = "https://github.com/dshbox/cordis-rs"
+keywords = ["plugin", "dependency-injection", "events", "lifecycle", "framework"]
+categories = ["asynchronous", "config"]
+
+[lib]
+name = "cordis"
+path = "src/lib.rs"
+
+[features]
+default = []
+
+[dependencies]
