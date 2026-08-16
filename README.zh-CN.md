@@ -279,11 +279,13 @@ root.named_logger("app").info("listening on %d", [LogArg::from(8080)]);
 use cordis::utils::BoxFuture;
 use cordis::{Config, Context, Inject, Plugin, PluginOutput, Result};
 
-struct Worker;
+struct Worker {
+    inject: Inject,
+}
 
 impl Plugin for Worker {
     fn name(&self) -> &str { "worker" }
-    fn inject(&self) -> Inject { Inject::new(["queue"]) }
+    fn inject(&self) -> &Inject { &self.inject }
 
     fn apply(&self, ctx: Context, _config: Config)
         -> BoxFuture<Result<PluginOutput>>
