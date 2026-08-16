@@ -134,6 +134,69 @@ fn failed_startup_rolls_back_effects_and_update_can_recover() -> Result<()> {
     Ok(())
 }
 
+/// Upstream parity: update() on a Pending fiber stores the config without
+/// waiting for dependencies; activation later uses the new config.
+#[test]
+fn update_on_pending_fiber_applies_config_on_activation() -> Result<()> {
+    let root = Context::new();
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let plugin = plugin_sync::<String, _>("configurable", Inject::new(["database"]), {
+        let seen = seen.clone();
+        move |_ctx, config| {
+            seen.lock().unwrap().push(config.as_str().to_owned());
+            Ok(PluginOutput::none())
+        }
+    });
+    let fiber = root.plugin(plugin, String::from("first"));
+    assert_eq!(fiber.state(), FiberState::Pending);
+
+    fiber.update(String::from("second"))?;
+    assert_eq!(fiber.state(), FiberState::Pending);
+    assert!(seen.lock().unwrap().is_empty());
+
+    let _database = root.provide("database", 7_u32)?;
+    assert_eq!(fiber.state(), FiberState::Active);
+    assert_eq!(*seen.lock().unwrap(), vec!["second"]);
+    Ok(())
+}
+
+/// Upstream parity: update() on a Failed fiber clears the failure, retries
+/// startup with the new config, and reports acceptance rather than the
+/// outcome — a config that still fails leaves the fiber Failed with the new
+/// error observable through error().
+#[test]
+fn update_on_failed_fiber_accepts_config_without_waiting() -> Result<()> {
+    let root = Context::new();
+    let attempts = Arc::new(AtomicUsize::new(0));
+    let plugin = plugin_sync::<bool, _>("fallible", Inject::none(), {
+        let attempts = attempts.clone();
+        move |_, succeeds| {
+            attempts.fetch_add(1, Ordering::SeqCst);
+            if *succeeds {
+                Ok(PluginOutput::none())
+            } else {
+                Err(CordisError::with_message(
+                    ErrorCode::Plugin,
+                    "startup failed",
+                ))
+            }
+        }
+    });
+
+    let fiber = root.plugin(plugin, false);
+    assert_eq!(fiber.state(), FiberState::Failed);
+
+    fiber.update(false)?;
+    assert_eq!(fiber.state(), FiberState::Failed);
+    assert!(fiber.error().is_some());
+    assert_eq!(attempts.load(Ordering::SeqCst), 2);
+
+    fiber.update(true)?;
+    assert_eq!(fiber.state(), FiberState::Active);
+    assert_eq!(attempts.load(Ordering::SeqCst), 3);
+    Ok(())
+}
+
 #[test]
 fn availability_checks_can_be_explicitly_refreshed() -> Result<()> {
     let root = Context::new();

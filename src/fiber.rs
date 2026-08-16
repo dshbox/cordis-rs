@@ -588,6 +588,17 @@ impl Fiber {
     }
 
     /// Validate and apply new config, then restart when dependencies are active.
+    ///
+    /// An `Active` fiber is validated first — a validation failure keeps the
+    /// running plugin untouched — then restarted, so the returned result
+    /// reflects the new startup.
+    ///
+    /// A `Pending` or `Failed` fiber instead stores the new config, clears
+    /// any previous startup error, and reconciles: it activates with the new
+    /// config once its dependencies are (or become) available. Matching
+    /// upstream Cordis, `Ok(())` then only means the config was accepted, not
+    /// that startup succeeded; inspect [`state`](Self::state) or call
+    /// [`wait`](Self::wait) when the outcome matters.
     pub fn update<C>(&self, config: C) -> Result<()>
     where
         C: Send + Sync + 'static,
@@ -622,8 +633,12 @@ impl Fiber {
         if self.state() == FiberState::Active {
             self.restart()
         } else {
+            // Match Cordis: a config update on an inactive fiber is stored
+            // and reconciled, not awaited. The refresh above may already
+            // have re-run a failed startup; the outcome is observable
+            // through state()/error() rather than this return value.
             self.refresh();
-            self.wait().map(|_| ())
+            Ok(())
         }
     }
 
