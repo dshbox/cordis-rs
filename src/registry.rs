@@ -327,6 +327,9 @@ pub(crate) struct RuntimeRecord {
 #[derive(Default)]
 pub(crate) struct RegistryState {
     pub(crate) runtimes: std::collections::BTreeMap<PluginKey, RuntimeRecord>,
+    /// Service name → fibers injecting it, so service notifications scan only
+    /// interested fibers instead of upgrading the whole registry.
+    pub(crate) injectors: std::collections::HashMap<String, Vec<Weak<FiberInner>>>,
 }
 
 pub(crate) struct RegistryRoot {
@@ -338,22 +341,6 @@ impl RegistryRoot {
         Self {
             state: Mutex::new(RegistryState::default()),
         }
-    }
-
-    pub(crate) fn all_fibers(&self) -> Vec<Fiber> {
-        let mut output = Vec::new();
-        let mut state = lock(&self.state);
-        for runtime in state.runtimes.values_mut() {
-            runtime.fibers.retain(|fiber| {
-                if let Some(fiber) = fiber.upgrade() {
-                    output.push(Fiber::from_inner(fiber));
-                    true
-                } else {
-                    false
-                }
-            });
-        }
-        output
     }
 
     pub(crate) fn remove_fiber(&self, key: PluginKey, uid: u64) {
@@ -372,6 +359,39 @@ impl RegistryRoot {
         if remove_runtime {
             state.runtimes.remove(&key);
         }
+        // The uid is cleared before removal, so the target matches via the
+        // same None-collapse as above; dead weaks are pruned along the way.
+        for weaks in state.injectors.values_mut() {
+            weaks.retain(|weak| {
+                weak.upgrade()
+                    .and_then(|fiber| fiber.uid_value())
+                    .map(|fiber_uid| fiber_uid != uid)
+                    .unwrap_or(false)
+            });
+        }
+        state.injectors.retain(|_, weaks| !weaks.is_empty());
+    }
+
+    /// Live fibers injecting `name`; prunes dead weak references as a side
+    /// effect.
+    pub(crate) fn fibers_injecting(&self, name: &str) -> Vec<Fiber> {
+        let mut state = lock(&self.state);
+        let Some(weaks) = state.injectors.get_mut(name) else {
+            return Vec::new();
+        };
+        let mut fibers = Vec::with_capacity(weaks.len());
+        weaks.retain(|weak| {
+            if let Some(fiber) = weak.upgrade() {
+                fibers.push(Fiber::from_inner(fiber));
+                true
+            } else {
+                false
+            }
+        });
+        if weaks.is_empty() {
+            state.injectors.remove(name);
+        }
+        fibers
     }
 }
 
@@ -453,7 +473,14 @@ impl RegistryService {
                     fibers: Vec::new(),
                 })
                 .fibers
-                .push(weak);
+                .push(weak.clone());
+            for dependency in fiber.inject().iter() {
+                state
+                    .injectors
+                    .entry(dependency.name.clone())
+                    .or_default()
+                    .push(weak.clone());
+            }
         }
 
         // Parent ownership mirrors the `ctx.plugin()` structural effect in

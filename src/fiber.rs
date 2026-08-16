@@ -1,6 +1,6 @@
 //! Plugin fiber lifecycle, dependency epochs, and effect cleanup.
 
-use crate::context::{Context, ContextMeta, RootInner};
+use crate::context::{Context, ContextMeta, Isolation, RootInner};
 use crate::effect::{AsyncDisposer, EffectCell, EffectHandle, EffectMeta};
 use crate::registry::{Inject, PluginHandle, PluginKey};
 use crate::utils::{block_on, lock};
@@ -30,9 +30,12 @@ struct FiberData {
     state: FiberState,
     raw_config: Config,
     config: Config,
+    /// Validated config stashed by update_value's pre-check, keyed by the raw
+    /// config's Arc identity so activate can skip re-validation.
+    validated: Option<(Config, Config)>,
     error: Option<CordisError>,
-    active_epoch: Option<Vec<(String, u64)>>,
-    failed_epoch: Option<Vec<(String, u64)>>,
+    active_epoch: Option<Vec<u64>>,
+    failed_epoch: Option<Vec<u64>>,
 }
 
 pub(crate) struct FiberInner {
@@ -83,6 +86,7 @@ impl Fiber {
                     state: FiberState::Active,
                     raw_config: Config::default(),
                     config: Config::default(),
+                    validated: None,
                     error: None,
                     active_epoch: Some(Vec::new()),
                     failed_epoch: None,
@@ -123,6 +127,7 @@ impl Fiber {
                     state: FiberState::Pending,
                     raw_config: config.clone(),
                     config,
+                    validated: None,
                     error: None,
                     active_epoch: None,
                     failed_epoch: None,
@@ -173,9 +178,28 @@ impl Fiber {
         }
     }
 
+    /// [`context`](Self::context) that tolerates a dropped root.
+    ///
+    /// Internal notification and logging paths skip their work when every
+    /// `Context` is gone and only this fiber handle remains, rather than
+    /// panicking.
+    fn try_context(&self) -> Option<Context> {
+        Some(Context {
+            root: self.inner.root.upgrade()?,
+            fiber: Arc::downgrade(&self.inner),
+            meta: self.inner.meta.clone(),
+        })
+    }
+
     /// Normalized service dependency declaration.
     pub fn inject(&self) -> &Inject {
         &self.inner.inject
+    }
+
+    /// Isolation override for `name` from this fiber's own metadata, without
+    /// constructing a context or touching the reflect lock.
+    pub(crate) fn scope_override(&self, name: &str) -> Option<Isolation> {
+        self.inner.meta.isolates.get(name).copied()
     }
 
     /// Validated config from the latest successful activation.
@@ -243,7 +267,15 @@ impl Fiber {
     }
 
     pub(crate) fn reject(&self, error: CordisError) {
-        *lock(&self.inner.uid) = None;
+        // A rejected fiber never starts, so nothing else will remove the
+        // registry record pushed before its parent-effect registration
+        // failed. Remove it here or len()/contains() misreport forever.
+        let uid = lock(&self.inner.uid).take();
+        if let (Some(root), Some(key), Some(uid)) =
+            (self.inner.root.upgrade(), self.plugin_key(), uid)
+        {
+            root.registry.remove_fiber(key, uid);
+        }
         let mut data = lock(&self.inner.data);
         data.error = Some(error);
         data.state = FiberState::Disposed;
@@ -260,12 +292,15 @@ impl Fiber {
             old
         };
 
-        let ctx = self.context();
-        if let Err(error) = ctx.events().emit(
-            "internal/status",
-            [Value::new(self.clone()), Value::new(old)],
-        ) {
-            ctx.log_error(error);
+        // The root may be gone when only fiber handles remain; the state
+        // still changes, but notifications need somewhere to go.
+        if let Some(ctx) = self.try_context() {
+            if let Err(error) = ctx.events().emit(
+                "internal/status",
+                [Value::new(self.clone()), Value::new(old)],
+            ) {
+                ctx.log_error(error);
+            }
         }
 
         if old == FiberState::Active || state == FiberState::Active {
@@ -282,36 +317,45 @@ impl Fiber {
         };
         for effect in effects.into_iter().rev() {
             if let Err(error) = EffectHandle::new(effect).dispose() {
-                self.context().log_error(error);
+                if let Some(ctx) = self.try_context() {
+                    ctx.log_error(error);
+                }
             }
         }
     }
 
-    fn dependency_epoch(&self) -> Option<Vec<(String, u64)>> {
+    fn dependency_epoch(&self) -> Option<Vec<u64>> {
         let root = self.inner.root.upgrade()?;
         root.dependency_epoch(&self.context(), &self.inner.inject)
     }
 
-    fn activate(&self, epoch: Vec<(String, u64)>) {
+    fn activate(&self, epoch: Vec<u64>) {
         self.set_state(FiberState::Loading);
-        {
-            let mut data = lock(&self.inner.data);
-            data.active_epoch = Some(epoch.clone());
-        }
 
         let plugin = self.inner.plugin.as_ref().expect("plugin fiber").clone();
-        let raw_config = lock(&self.inner.data).raw_config.clone();
-        let result = plugin
-            .plugin()
-            .validate_config(raw_config)
-            .and_then(|config| {
-                let output = block_on(plugin.plugin().apply(self.context(), config.clone()))?;
-                for (label, disposer) in output.disposers {
-                    self.register_effect(label, disposer)?;
-                }
-                lock(&self.inner.data).config = config;
-                Ok(())
-            });
+        let (raw_config, validated) = {
+            let mut data = lock(&self.inner.data);
+            let raw_config = data.raw_config.clone();
+            // Consume the update_value pre-validation only when it belongs to
+            // this exact raw config allocation.
+            let validated = match data.validated.take() {
+                Some((raw, config)) if raw.ptr_eq(&raw_config) => Some(config),
+                _ => None,
+            };
+            (raw_config, validated)
+        };
+        let result = match validated {
+            Some(config) => Ok(config),
+            None => plugin.plugin().validate_config(raw_config),
+        }
+        .and_then(|config| {
+            let output = block_on(plugin.plugin().apply(self.context(), config.clone()))?;
+            for (label, disposer) in output.disposers {
+                self.register_effect(label, disposer)?;
+            }
+            lock(&self.inner.data).config = config;
+            Ok(())
+        });
 
         match result {
             Ok(()) => {
@@ -319,11 +363,14 @@ impl Fiber {
                     let mut data = lock(&self.inner.data);
                     data.error = None;
                     data.failed_epoch = None;
+                    data.active_epoch = Some(epoch);
                 }
                 self.set_state(FiberState::Active);
             }
             Err(error) => {
-                self.context().log_error(error.clone());
+                if let Some(ctx) = self.try_context() {
+                    ctx.log_error(error.clone());
+                }
                 self.set_state(FiberState::Unloading);
                 self.dispose_effects();
                 {
@@ -359,39 +406,59 @@ impl Fiber {
             return;
         }
         let desired = self.dependency_epoch();
-        let (active, failed, state) = {
+        enum Then {
+            Stay,
+            SetPending,
+            Activate,
+        }
+        // Decide under one data lock instead of cloning both epoch snapshots.
+        let (unload, then) = {
             let data = lock(&self.inner.data);
-            (
-                data.active_epoch.clone(),
-                data.failed_epoch.clone(),
-                data.state,
-            )
+            match desired.as_ref() {
+                None => {
+                    if data.active_epoch.is_some()
+                        || matches!(
+                            data.state,
+                            FiberState::Active | FiberState::Loading | FiberState::Failed
+                        )
+                    {
+                        (true, Then::SetPending)
+                    } else if data.state != FiberState::Pending {
+                        (false, Then::SetPending)
+                    } else {
+                        (false, Then::Stay)
+                    }
+                }
+                Some(epoch) => {
+                    let unchanged = (data.active_epoch.as_ref() == Some(epoch)
+                        && data.state == FiberState::Active)
+                        || (data.failed_epoch.as_ref() == Some(epoch)
+                            && data.state == FiberState::Failed);
+                    if unchanged {
+                        (false, Then::Stay)
+                    } else {
+                        (
+                            data.active_epoch.is_some() || data.state == FiberState::Active,
+                            Then::Activate,
+                        )
+                    }
+                }
+            }
         };
-
-        match desired {
-            None => {
-                if active.is_some()
-                    || matches!(
-                        state,
-                        FiberState::Active | FiberState::Loading | FiberState::Failed
-                    )
-                {
-                    self.unload_to(FiberState::Pending);
-                } else if state != FiberState::Pending {
+        if unload {
+            self.unload_to(FiberState::Pending);
+        }
+        match then {
+            Then::Stay => {}
+            Then::SetPending => {
+                if !unload {
                     self.set_state(FiberState::Pending);
                 }
             }
-            Some(epoch) => {
-                if active.as_ref() == Some(&epoch) && state == FiberState::Active {
-                    return;
+            Then::Activate => {
+                if let Some(epoch) = desired {
+                    self.activate(epoch);
                 }
-                if failed.as_ref() == Some(&epoch) && state == FiberState::Failed {
-                    return;
-                }
-                if active.is_some() || state == FiberState::Active {
-                    self.unload_to(FiberState::Pending);
-                }
-                self.activate(epoch);
             }
         }
     }
@@ -470,13 +537,23 @@ impl Fiber {
     /// Type-erased variant of [`update`](Self::update).
     pub fn update_value(&self, config: Config) -> Result<()> {
         self.assert_active()?;
-        let plugin = self.inner.plugin.as_ref().expect("plugin fiber");
-        // Match Cordis: validation happens before an active plugin is torn down.
-        if self.state() == FiberState::Active {
-            plugin.plugin().validate_config(config.clone())?;
-        }
+        let Some(plugin) = self.inner.plugin.as_ref() else {
+            return Err(CordisError::with_message(
+                ErrorCode::Other,
+                "cannot update config on the root fiber",
+            ));
+        };
+        // Match Cordis: validation happens before an active plugin is torn
+        // down. The validated result is stashed so activate() does not run
+        // the validator twice for the same raw config.
+        let validated = if self.state() == FiberState::Active {
+            Some(plugin.plugin().validate_config(config.clone())?)
+        } else {
+            None
+        };
         {
             let mut data = lock(&self.inner.data);
+            data.validated = validated.map(|valid| (config.clone(), valid));
             data.raw_config = config;
             data.failed_epoch = None;
             data.error = None;
@@ -520,12 +597,13 @@ impl Fiber {
             root.registry.remove_fiber(key, old_uid);
         }
 
-        let ctx = self.context();
-        if let Err(error) = ctx
-            .events()
-            .emit("internal/plugin", [Value::new(self.clone())])
-        {
-            ctx.log_error(error);
+        if let Some(ctx) = self.try_context() {
+            if let Err(error) = ctx
+                .events()
+                .emit("internal/plugin", [Value::new(self.clone())])
+            {
+                ctx.log_error(error);
+            }
         }
 
         self.unload_to(FiberState::Disposed);

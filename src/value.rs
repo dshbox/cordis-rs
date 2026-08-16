@@ -69,6 +69,11 @@ impl Value {
     pub fn as_any(&self) -> &(dyn Any + Send + Sync) {
         self.inner.as_ref()
     }
+
+    /// Whether two values share the same allocation.
+    pub(crate) fn ptr_eq(&self, other: &Value) -> bool {
+        Arc::ptr_eq(&self.inner, &other.inner)
+    }
 }
 
 impl Default for Value {

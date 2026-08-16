@@ -221,6 +221,14 @@ pub trait Exporter: Send + Sync + 'static {
         ExporterConfig::default()
     }
 
+    /// Borrow the config without cloning, when the exporter stores it.
+    ///
+    /// The logger hot path prefers this over [`config`](Self::config), which
+    /// deep-clones the level and formatter maps for closure exporters.
+    fn config_ref(&self) -> Option<&ExporterConfig> {
+        None
+    }
+
     /// Receive one message.
     fn export(&self, message: &Message);
 }
@@ -236,6 +244,10 @@ where
 {
     fn config(&self) -> ExporterConfig {
         self.config.clone()
+    }
+
+    fn config_ref(&self) -> Option<&ExporterConfig> {
+        Some(&self.config)
     }
 
     fn export(&self, message: &Message) {
@@ -256,8 +268,13 @@ struct LoggerState {
     sequence: u64,
     next_exporter: u64,
     buffer_size: usize,
-    buffer: VecDeque<Message>,
+    buffer: VecDeque<Arc<Message>>,
     exporters: BTreeMap<u64, Arc<dyn Exporter>>,
+    exporter_snapshot: Arc<Vec<Arc<dyn Exporter>>>,
+}
+
+fn refresh_exporter_snapshot(state: &mut LoggerState) {
+    state.exporter_snapshot = Arc::new(state.exporters.values().cloned().collect());
 }
 
 pub(crate) struct LoggerRoot {
@@ -273,6 +290,7 @@ impl LoggerRoot {
                 buffer_size: 1_000,
                 buffer: VecDeque::new(),
                 exporters: BTreeMap::new(),
+                exporter_snapshot: Arc::new(Vec::new()),
             }),
         }
     }
@@ -305,6 +323,7 @@ impl LoggerRoot {
                 fiber_name,
             };
             let buffer_threshold = default_level.unwrap_or(LoggerLevel::Info);
+            let message = Arc::new(message);
             if buffer_threshold >= message.level && state.buffer_size > 0 {
                 state.buffer.push_back(message.clone());
                 while state.buffer.len() > state.buffer_size {
@@ -313,12 +332,18 @@ impl LoggerRoot {
             } else if state.buffer_size == 0 {
                 state.buffer.clear();
             }
-            let exporters = state.exporters.values().cloned().collect::<Vec<_>>();
-            (message, exporters)
+            (message, state.exporter_snapshot.clone())
         };
 
-        for exporter in exporters {
-            let config = exporter.config();
+        for exporter in exporters.iter() {
+            let owned_config;
+            let config = match exporter.config_ref() {
+                Some(config) => config,
+                None => {
+                    owned_config = exporter.config();
+                    &owned_config
+                }
+            };
             let threshold = config
                 .levels
                 .get(&message.name)
@@ -578,6 +603,7 @@ impl LoggerService {
             state.next_exporter += 1;
             let id = state.next_exporter;
             state.exporters.insert(id, exporter);
+            refresh_exporter_snapshot(&mut state);
             id
         };
         let root = Arc::downgrade(&self.ctx.root);
@@ -585,13 +611,17 @@ impl LoggerService {
             "ctx.logger.exporter()",
             AsyncDisposer::from_sync(move || {
                 if let Some(root) = root.upgrade() {
-                    lock(&root.logger.state).exporters.remove(&id);
+                    let mut state = lock(&root.logger.state);
+                    state.exporters.remove(&id);
+                    refresh_exporter_snapshot(&mut state);
                 }
                 Ok(())
             }),
         );
         if effect.is_err() {
-            lock(&self.ctx.root.logger.state).exporters.remove(&id);
+            let mut state = lock(&self.ctx.root.logger.state);
+            state.exporters.remove(&id);
+            refresh_exporter_snapshot(&mut state);
         }
         effect
     }
@@ -601,7 +631,7 @@ impl LoggerService {
         lock(&self.ctx.root.logger.state)
             .buffer
             .iter()
-            .cloned()
+            .map(|message| message.as_ref().clone())
             .collect()
     }
 

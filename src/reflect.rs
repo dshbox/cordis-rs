@@ -129,39 +129,43 @@ impl ReflectRoot {
     }
 
     fn value(&self, ctx: &Context, name: &str, strict: bool) -> Result<Option<Value>> {
-        let property = lock(&self.state).properties.get(name).cloned();
-        match property {
+        // Scope overrides live in the lock-free context meta, so one guard
+        // covers the whole lookup.
+        let scope_override = ctx.scope_override(name);
+        let state = lock(&self.state);
+        match state.properties.get(name).cloned() {
             Some(Property::Accessor) => {
-                let accessor = lock(&self.state)
+                let accessor = state
                     .accessors
                     .get(name)
                     .map(|record| record.accessor.clone());
+                drop(state);
                 return match accessor {
                     Some(accessor) => (accessor.get)(ctx),
                     None => Ok(None),
                 };
             }
-            Some(Property::Alias(target)) => return self.value(ctx, &target, strict),
+            Some(Property::Alias(target)) => {
+                drop(state);
+                return self.value(ctx, &target, strict);
+            }
             _ => {}
         }
 
-        let Some(scope) = self.scope_for(ctx, name) else {
+        let Some(scope) = scope_override.or_else(|| state.default_scopes.get(name).copied()) else {
             return Ok(None);
         };
-        let (value, provider, provider_uid) = {
-            let state = lock(&self.state);
-            let Some(implementation) = state.implementations.get(&scope) else {
-                return Ok(None);
-            };
-            if implementation.name != name {
-                return Ok(None);
-            }
-            (
-                implementation.value.clone(),
-                implementation.fiber.upgrade(),
-                implementation.provider_uid,
-            )
+        let Some(implementation) = state.implementations.get(&scope) else {
+            return Ok(None);
         };
+        if implementation.name != name {
+            return Ok(None);
+        }
+        let value = implementation.value.clone();
+        let provider = implementation.fiber.upgrade();
+        let provider_uid = implementation.provider_uid;
+        drop(state);
+
         let Some(provider) = provider else {
             return Ok(None);
         };
@@ -176,31 +180,38 @@ impl ReflectRoot {
         Ok(Some(value))
     }
 
-    fn implementation_epoch(&self, ctx: &Context, name: &str) -> Option<(u64, Value)> {
-        let scope = self.scope_for(ctx, name)?;
-        let (generation, value, provider, check) = {
+    fn implementation_epoch(&self, ctx: &Context, name: &str) -> Option<u64> {
+        let scope_override = ctx.scope_override(name);
+        let (generation, provider, check, value) = {
             let state = lock(&self.state);
+            let scope = scope_override.or_else(|| state.default_scopes.get(name).copied())?;
             let implementation = state.implementations.get(&scope)?;
             if implementation.name != name {
                 return None;
             }
             (
                 implementation.generation,
-                implementation.value.clone(),
                 implementation.fiber.upgrade(),
                 implementation.check.clone(),
+                // The value only serves the availability check; cloning it
+                // when no check is registered is a wasted Arc round-trip per
+                // dependency per fiber reconcile.
+                implementation
+                    .check
+                    .as_ref()
+                    .map(|_| implementation.value.clone()),
             )
         };
         let provider = provider?;
         if Fiber::from_inner(provider).state() != FiberState::Active {
             return None;
         }
-        if let Some(check) = check {
+        if let (Some(check), Some(value)) = (check, value) {
             if !check(&value) {
                 return None;
             }
         }
-        Some((generation, value))
+        Some(generation)
     }
 
     fn services_owned_by(&self, uid: u64) -> Vec<(String, Isolation)> {
@@ -374,8 +385,9 @@ impl ReflectService {
         let value = Value::new(value);
         let check = Arc::new(move |value: &Value| {
             value
-                .downcast::<T>()
-                .map(|value| check(value.as_ref()))
+                .as_any()
+                .downcast_ref::<T>()
+                .map(&check)
                 .unwrap_or(false)
         });
         self.provide_value(name.into(), value, Some(check))
@@ -383,29 +395,25 @@ impl ReflectService {
 
     /// Replace a service or computed property value.
     pub fn set_value(&self, name: &str, value: Value) -> Result<()> {
-        let property = lock(&self.ctx.root.reflect.state)
-            .properties
-            .get(name)
-            .cloned();
-        if property == Some(Property::Accessor) {
-            let setter = lock(&self.ctx.root.reflect.state)
+        let scope_override = self.ctx.scope_override(name);
+        let mut state = lock(&self.ctx.root.reflect.state);
+        if state.properties.get(name) == Some(&Property::Accessor) {
+            let setter = state
                 .accessors
                 .get(name)
-                .and_then(|record| record.accessor.set.clone())
-                .ok_or_else(|| {
-                    CordisError::with_message(
-                        ErrorCode::AccessDenied,
-                        format!("property \"{name}\" is read-only"),
-                    )
-                })?;
+                .and_then(|record| record.accessor.set.clone());
+            drop(state);
+            let setter = setter.ok_or_else(|| {
+                CordisError::with_message(
+                    ErrorCode::AccessDenied,
+                    format!("property \"{name}\" is read-only"),
+                )
+            })?;
             return setter(&self.ctx, value);
         }
 
-        let scope = self
-            .ctx
-            .root
-            .reflect
-            .scope_for(&self.ctx, name)
+        let scope = scope_override
+            .or_else(|| state.default_scopes.get(name).copied())
             .ok_or_else(|| {
                 CordisError::with_message(
                     ErrorCode::MissingService,
@@ -413,7 +421,6 @@ impl ReflectService {
                 )
             })?;
         let uid = self.ctx.fiber()?.uid();
-        let mut state = lock(&self.ctx.root.reflect.state);
         let implementation = state.implementations.get_mut(&scope).ok_or_else(|| {
             CordisError::with_message(
                 ErrorCode::MissingService,
@@ -523,21 +530,16 @@ impl ReflectService {
                     .map(|scope| (name, scope))
             })
             .collect::<Vec<_>>();
-        let affected = self
-            .ctx
-            .root
-            .registry
-            .all_fibers()
-            .into_iter()
-            .filter(|fiber| {
-                scoped_names.iter().any(|(name, scope)| {
-                    fiber.inject().contains(name)
-                        && self.ctx.root.reflect.scope_for(&fiber.context(), name) == Some(*scope)
-                })
-            })
-            .collect::<Vec<_>>();
+        let mut affected: Vec<Fiber> = Vec::new();
         for (name, scope) in scoped_names {
-            self.ctx.root.notify_service(&name, scope);
+            for fiber in self.ctx.root.notify_service(&name, scope) {
+                if !affected
+                    .iter()
+                    .any(|seen| Arc::ptr_eq(&seen.inner, &fiber.inner))
+                {
+                    affected.push(fiber);
+                }
+            }
         }
         affected
     }
@@ -570,28 +572,26 @@ impl ReflectService {
 }
 
 impl RootInner {
-    pub(crate) fn dependency_epoch(
-        &self,
-        ctx: &Context,
-        inject: &Inject,
-    ) -> Option<Vec<(String, u64)>> {
+    pub(crate) fn dependency_epoch(&self, ctx: &Context, inject: &Inject) -> Option<Vec<u64>> {
+        // Generations aligned with inject order. Names are never read, only
+        // compared for equality, so cloning them per refresh is pure waste.
         let mut epoch = Vec::with_capacity(inject.len());
         for dependency in inject.iter() {
-            let (generation, _) = self.reflect.implementation_epoch(ctx, &dependency.name)?;
-            epoch.push((dependency.name.clone(), generation));
+            epoch.push(self.reflect.implementation_epoch(ctx, &dependency.name)?);
         }
         Some(epoch)
     }
 
-    pub(crate) fn notify_service(&self, name: &str, scope: Isolation) {
-        let fibers = self.registry.all_fibers();
-        for fiber in fibers {
-            if !fiber.inject().contains(name) {
-                continue;
-            }
-            let same_scope = self.reflect.scope_for(&fiber.context(), name) == Some(scope);
+    pub(crate) fn notify_service(&self, name: &str, scope: Isolation) -> Vec<Fiber> {
+        let mut refreshed = Vec::new();
+        for fiber in self.registry.fibers_injecting(name) {
+            let same_scope = fiber
+                .scope_override(name)
+                .or_else(|| lock(&self.reflect.state).default_scopes.get(name).copied())
+                == Some(scope);
             if same_scope {
                 fiber.refresh();
+                refreshed.push(fiber);
             }
         }
 
@@ -605,6 +605,7 @@ impl RootInner {
                 root.log_error(error);
             }
         }
+        refreshed
     }
 
     pub(crate) fn notify_fiber_services(&self, fiber: &Fiber) {

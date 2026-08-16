@@ -362,7 +362,9 @@ impl EventsService {
     }
 
     fn dispatch(&self, mode: DispatchMode, event: &Event) -> Vec<Callback> {
-        if !event.name().starts_with("internal/") {
+        // Upstream gates this meta-event on listener presence; skip the
+        // argument construction entirely when nobody listens.
+        if !event.name().starts_with("internal/") && self.listener_count("internal/dispatch") > 0 {
             let _ = self.emit(
                 "internal/dispatch",
                 [

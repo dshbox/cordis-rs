@@ -40,7 +40,8 @@ impl Context {
         let value = Value::from_arc(service);
         let check = Arc::new(|value: &Value| {
             value
-                .downcast::<S>()
+                .as_any()
+                .downcast_ref::<S>()
                 .map(|service| service.is_available())
                 .unwrap_or(false)
         });
@@ -52,7 +53,7 @@ impl Context {
     /// merge operation.
     pub fn resolve_service_config<T, F>(&self, name: &str, base: T, mut merge: F) -> Result<T>
     where
-        T: Clone + Send + Sync + 'static,
+        T: Send + Sync + 'static,
         F: FnMut(T, &T) -> T,
     {
         let mut output = base;

@@ -126,6 +126,30 @@ fn dispatch_filter_and_global_listener() -> Result<()> {
     Ok(())
 }
 
+/// Upstream parity: the internal/dispatch meta-event is gated on listener
+/// presence; with a listener registered it carries the dispatch details.
+#[test]
+fn internal_dispatch_meta_event() -> Result<()> {
+    let root = Context::new();
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let seen_in_listener = seen.clone();
+    root.on("internal/dispatch", move |event| {
+        seen_in_listener
+            .lock()
+            .unwrap()
+            .push(event.arg::<String>(1)?);
+        Ok(None)
+    })?;
+    root.emit("user-event", [])?;
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.len(), 1);
+    assert_eq!(
+        seen[0].as_ref().map(|name| name.as_str()),
+        Some("user-event")
+    );
+    Ok(())
+}
+
 /// Regression: dispatch invoked user ContextFilters while holding the events
 /// state lock, so a filter re-entering any events API deadlocked the thread.
 #[test]
