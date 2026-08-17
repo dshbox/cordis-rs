@@ -14,8 +14,11 @@ readme = "README.md"
 default = []
 # Hot reload of the entry file through cordis-include's watcher.
 watch = ["cordis-include/watch"]
+# Dynamic-library plugins: resolve entry names from .so/.dylib/.dll files.
+dynamic = ["dep:libloading"]
 
 [dependencies]
 cordis-group.workspace = true
 cordis-include.workspace = true
 cordis-rs.workspace = true
+libloading = { workspace = true, optional = true }

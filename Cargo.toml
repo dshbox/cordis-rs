@@ -16,6 +16,7 @@ cordis-include = { version = "0.0.7", path = "crates/cordis-include" }
 cordis-loader = { version = "0.0.6", path = "crates/cordis-loader" }
 cordis-rs = { version = "0.4.4", path = "crates/cordis" }
 indexmap = { version = "2", features = ["serde"] }
+libloading = "0.8"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml_ng = "0.10"

@@ -88,6 +88,57 @@ Reloads compose all involved files into one tree diff; write-back always
 routes mounted entries back to the file they came from (generated ids
 included). Import cycles are reported via `last_error()` and skipped.
 
+## Dynamic library plugins
+
+With the `dynamic` feature, entries can also resolve to plugins compiled
+as `cdylib` libraries — Rust has no stable ABI, so this is gated on a
+strict build fingerprint (cordis-rs version, exact rustc including commit
+hash, target triple, panic strategy): a library built by anything other
+than the loading process' own toolchain is rejected instead of causing
+undefined behavior.
+
+On the plugin side, a `crate-type = ["cdylib"]` crate depending on
+`cordis-loader` with the `dynamic` feature implements `Plugin` and ends
+with the export macro (file name decides the plugin name):
+
+```rust,ignore
+// greeter-plugin/src/lib.rs — builds libgreeter.so / libgreeter.dylib /
+// greeter.dll
+use cordis_loader::dynamic::{BoxFuture, Config, Context, Plugin, PluginOutput, Result};
+
+pub struct Greeter;
+
+impl Plugin for Greeter {
+    fn name(&self) -> &str { "greeter" }
+
+    fn apply(&self, _ctx: Context, _config: Config) -> BoxFuture<Result<PluginOutput>> {
+        Box::pin(async { Ok(PluginOutput::none()) })
+    }
+}
+
+cordis_loader::dynamic::export_plugin!(Greeter);
+```
+
+On the loading side, attach directories to the registry; names missing
+from the static registry resolve from `lib<name>.so` (`.dylib` on macOS,
+`<name>.dll` on Windows) there:
+
+```rust
+# use cordis_loader::PluginRegistry;
+let registry = PluginRegistry::new().with_dynamic_dirs(["/usr/lib/cordis-plugins"]);
+# assert!(registry.names().any(|name| name == "group"));
+```
+
+Each resolve asks the library for a fresh plugin instance in a fresh
+handle. Panics are contained on the plugin side — a `cdylib` links its
+own std, so the export macro wraps every callback in a guard that turns
+panics into errors and fallback values before they can cross the
+boundary. Libraries are never unloaded within a process, and a replaced
+library file requires a fresh process — which is exactly the HMR flow
+`cordis-cli` drives with `cordis run --plugin-dir <dir>`: it watches the
+directories and hot-restarts the worker (exit code 51) when a library
+changes. See the `dynamic` module docs for the full safety model.
+
 ## What the state machine does
 
 - **open** — read (or create) the entry file, build the tree, start every
@@ -129,6 +180,10 @@ let loader = Loader::open(&root, config)?;
 
 - **`watch`** — hot reload: wires `LoaderFile`'s debounced watcher to
   [`Loader::reload`]. Reload errors are recorded in `last_error()`.
+- **`dynamic`** — resolve entries from dynamic-library plugins
+  (`libloading`): fingerprint-checked loading through
+  `PluginRegistry::with_dynamic_dirs`, the `export_plugin!` macro for
+  plugin crates, and panic containment on the plugin side.
 
 The [`cordis-cli`](https://crates.io/crates/cordis-cli) runner builds its
 `cordis run` command on top of this crate.

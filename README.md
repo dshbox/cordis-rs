@@ -324,14 +324,14 @@ crates that build on it:
 | --- | --- |
 | [`cordis-include`](../crates/cordis-include) | Config entry trees, YAML/JSON loader files, `${{ env.NAME }}` interpolation, atomic and debounced writes |
 | [`cordis-group`](../crates/cordis-group) | Group plugin: nested entries with cascading disable |
-| [`cordis-loader`](../crates/cordis-loader) | Plugin registry + entry↔fiber state machine, cross-file `import` entries, hot reload, lifecycle events, debounced write-backs |
-| [`cordis-cli`](../crates/cordis-cli) | `cordis run` executable: daemon/worker exit-code protocol, signals, dotenv |
+| [`cordis-loader`](../crates/cordis-loader) | Plugin registry + entry↔fiber state machine, cross-file `import` entries, hot reload, lifecycle events, debounced write-backs, dynamic-library plugins (`dynamic` feature) |
+| [`cordis-cli`](../crates/cordis-cli) | `cordis run` executable: daemon/worker exit-code protocol, signals, dotenv, plugin-library hot restarts |
 
 Ported so far: static plugin registry, groups, `import` sub-files, self-kill
 detection, entry-level inject, config hot reload, the `loader/*` event
-family, debounced writes, and the daemon/worker runner. Not yet ported:
-dynamic library plugins (and the HMR flow built on them) and isolate /
-service migration.
+family, debounced writes, the daemon/worker runner, and dynamic-library
+plugins with worker-restart HMR (`cordis-loader`'s `dynamic` feature plus
+`cordis run --plugin-dir`). Not yet ported: isolate / service migration.
 
 ## Project layout
 
