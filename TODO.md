@@ -19,21 +19,24 @@ test-only nit).
   more loudly or removing.
 - `Value` (and thus `Config`) has no `PartialEq`/`Display`; plugin config
   comparison in `update_value` relies on `Arc` pointer identity (`ptr_eq`).
-  Two structurally equal configs are treated as different allocations. Fine
-  today; revisit if config diffing is ever exposed.
+  Two structurally equal configs are treated as different allocations.
+  Resolution (2026-08-17): keep as-is. The loader stack passes
+  `cordis_include::Node` as config, which carries structural `PartialEq`,
+  so entry-level config diffing never depends on `Value` identity.
 
 ## Behavior gaps (parity questions)
 
 - `ReflectService::set_value` replaces a service value without advancing its
   generation or notifying injecting fibers (documented since the review).
-  Upstream cordis may re-evaluate dependents on set; verify against 4.x and
-  decide whether to notify automatically.
-- `Fiber::await_idle` blocks on the transition mutex and documents a
-  same-thread deadlock hazard. A try-based variant (`idle()` returning bool)
-  would give lifecycle callbacks a safe probe.
+  Resolution (2026-08-17): verified against upstream 4.x
+  (`vendor/cordis/src/reflect.ts`, `ReflectService.set`): upstream also only
+  assigns `impl.value = value` with no re-evaluation. Keep the current
+  semantics and the manual `notify()` escape hatch; the loader wraps
+  entry-level `inject` into plugin `Inject` declarations, so service
+  add/remove already reconciles dependents through the core fiber machinery.
 
 ## Test hygiene
 
-- `src/effect.rs` tests use bare `.lock().unwrap()` (lines ~270, ~276)
-  instead of the poison-tolerant `utils::lock` used everywhere else.
-  Test-only; align for consistency.
+- ~~`src/effect.rs` tests use bare `.lock().unwrap()` (lines ~270, ~276)
+  instead of the poison-tolerant `utils::lock` used everywhere else.~~
+  Fixed 2026-08-17 alongside the `Fiber::idle` addition.

@@ -267,14 +267,14 @@ mod tests {
                 Weak::new(),
                 "child",
                 AsyncDisposer::from_sync(move || {
-                    runs.lock().unwrap().push(id);
+                    lock(&runs).push(id);
                     Ok(())
                 }),
             );
             parent.adopt(child).unwrap();
         }
         block_on(parent.dispose()).unwrap();
-        assert_eq!(*runs.lock().unwrap(), vec![3, 2]);
+        assert_eq!(*lock(&runs), vec![3, 2]);
     }
 
     /// Regression: adopt checked `disposed` outside the children lock, so a
