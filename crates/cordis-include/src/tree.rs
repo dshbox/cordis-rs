@@ -205,6 +205,9 @@ impl EntryTree {
             .map(|child| (child.id().to_string(), child.clone()))
             .collect();
         let mut reserved = self.ids();
+        // The entry's own id is identity, not a duplicate; reuse and
+        // subtree ids are already excluded above.
+        reserved.remove(entry.id());
         for key in pool.keys() {
             reserved.remove(key);
         }

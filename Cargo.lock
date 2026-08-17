@@ -9,6 +9,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b588b76d00fde79687d7646a9b5bdf3cc0f655e0bbd080335a95d7e96f3587da"
 
 [[package]]
+name = "cordis-group"
+version = "0.0.1"
+dependencies = [
+ "cordis-rs",
+]
+
+[[package]]
 name = "cordis-include"
 version = "0.0.2"
 dependencies = [
@@ -18,6 +25,15 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml_ng",
+]
+
+[[package]]
+name = "cordis-loader"
+version = "0.0.1"
+dependencies = [
+ "cordis-group",
+ "cordis-include",
+ "cordis-rs",
 ]
 
 [[package]]

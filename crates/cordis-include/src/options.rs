@@ -73,4 +73,14 @@ impl EntryOptions {
         self.disabled = disabled;
         self
     }
+
+    /// Declare services that must be active before this entry starts.
+    pub fn with_inject<I, S>(mut self, inject: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.inject = inject.into_iter().map(Into::into).collect();
+        self
+    }
 }
