@@ -96,6 +96,30 @@ fn cdylib_file_name(crate_name: &str) -> String {
     }
 }
 
+/// Output directories of build scripts (`target/debug/build/*/out`),
+/// which hold the native libraries (`-sys` crates) the fixture must link
+/// against on Windows; cargo passes these to rustc, a manual invocation
+/// has to add them itself.
+fn native_search_dirs() -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(target_dir().join("debug/build")) {
+        for entry in entries.flatten() {
+            let out = entry.path().join("out");
+            if out.is_dir() {
+                dirs.push(out);
+            }
+        }
+    }
+    dirs
+}
+
+/// A path usable inside a JSON string literal: Windows separators are
+/// backslashes, which JSON would treat as invalid escapes. Rust's Windows
+/// file APIs accept forward slashes.
+fn json_path(path: &Path) -> String {
+    path.display().to_string().replace('\\', "/")
+}
+
 /// Compile `tests/fixtures/<fixture>.rs` into a `cdylib` in `out_dir`.
 fn compile_fixture(out_dir: &Path, fixture: &str, cfgs: &[&str]) -> PathBuf {
     std::fs::create_dir_all(out_dir).unwrap();
@@ -119,6 +143,9 @@ fn compile_fixture(out_dir: &Path, fixture: &str, cfgs: &[&str]) -> PathBuf {
             "cordis_loader={}",
             find_rlib("cordis_loader").display()
         ));
+    for dir in native_search_dirs() {
+        command.arg("-L").arg(format!("native={}", dir.display()));
+    }
     for cfg in cfgs {
         command.arg(format!("--cfg={cfg}"));
     }
@@ -156,7 +183,7 @@ fn resolves_and_applies_dynamic_plugins_end_to_end() {
         &config,
         format!(
             r#"{{"entries":[{{"id":"w","name":"file_writer","config":{{"out":"{}"}}}}]}}"#,
-            out.display()
+            json_path(&out)
         ),
     )
     .unwrap();
