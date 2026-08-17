@@ -1,0 +1,13 @@
+[package]
+name = "cordis-group"
+version = "0.0.1"
+description = "Nested plugin groups with cascading disable for the cordis-rs plugin framework"
+keywords = ["cordis", "plugin", "group", "lifecycle"]
+categories = ["rust-patterns"]
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+cordis-rs.workspace = true
