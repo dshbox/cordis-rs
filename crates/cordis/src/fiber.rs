@@ -559,6 +559,20 @@ impl Fiber {
         }
     }
 
+    /// Whether no lifecycle transition is in progress on this fiber.
+    ///
+    /// The non-blocking counterpart of [`await_idle`](Self::await_idle):
+    /// lifecycle callbacks and plugin `apply` run on the fiber's own thread
+    /// with the transition mutex held, so they can probe `idle()` safely but
+    /// must never block on `await_idle`. This is a pure probe — it does not
+    /// drain the dirty flag or trigger a reconcile.
+    pub fn idle(&self) -> bool {
+        matches!(
+            self.inner.transition.try_lock(),
+            Ok(_) | Err(std::sync::TryLockError::Poisoned(_))
+        )
+    }
+
     /// Async equivalent of [`try_wait`](Self::try_wait): also never suspends.
     pub async fn await_ready(&self) -> Result<Fiber> {
         self.try_wait()
@@ -708,6 +722,24 @@ mod tests {
     use crate::{Inject, PluginOutput};
     use std::sync::atomic::AtomicUsize;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn idle_reflects_and_probes_transitions() {
+        let root = Context::new();
+        let observed = Arc::new(std::sync::Mutex::new(Vec::<bool>::new()));
+        let fiber = root.plugin_default(plugin_sync::<(), _>("probe", Inject::default(), {
+            let observed = observed.clone();
+            move |ctx, _| {
+                // apply() runs inside the fiber's own transition: the probe
+                // must report busy where await_idle would deadlock.
+                lock(&observed).push(ctx.fiber()?.idle());
+                Ok(PluginOutput::none())
+            }
+        }));
+        fiber.try_wait().unwrap();
+        assert_eq!(*lock(&observed), vec![false]);
+        assert!(fiber.idle());
+    }
 
     /// Regression: a notification landing between refresh()'s final
     /// `dirty.swap(false)` and the transition lock release used to be lost —
