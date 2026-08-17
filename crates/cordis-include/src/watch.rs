@@ -55,6 +55,7 @@ impl LoaderFile {
         let stop_flag = Arc::clone(&stop);
         let file = self.clone();
         let path = self.path().to_path_buf();
+        let watched_dir = watched.clone();
         let thread = std::thread::Builder::new()
             .name(format!("cordis-watch-{}", path.display()))
             .spawn(move || {
@@ -66,7 +67,13 @@ impl LoaderFile {
                     }
                     match rx.recv_timeout(Duration::from_millis(100)) {
                         Ok(Ok(event)) => {
-                            if event.paths.iter().any(|event_path| event_path == &path) {
+                            // Match the file itself or the watched directory:
+                            // some backends (macOS FSEvents) report events on
+                            // the directory rather than the changed file.
+                            let relevant = event.paths.iter().any(|event_path| {
+                                event_path == &path || event_path == &watched_dir
+                            });
+                            if relevant {
                                 pending = true;
                             }
                         }

@@ -153,7 +153,7 @@ fn update_entry_moves_and_rejects_cycles() {
     // Move `outer` beneath its own child: must fail.
     assert!(matches!(
         tree.update_entry("outer", EntryOptions::new("group"), Some(&inner), None),
-        Err(IncludeError::Cycle { .. })
+        Err(IncludeError::Cycle)
     ));
 
     // Move `inner` (nested under `outer`) to the top level and rename it.
