@@ -3,16 +3,16 @@ resolver = "3"
 members = ["crates/*"]
 
 [workspace.package]
-version = "0.4.1"
+version = "0.4.2"
 edition = "2024"
 rust-version = "1.85"
 license = "MIT"
 repository = "https://github.com/dshbox/cordis-rs"
 
 [workspace.dependencies]
-cordis-rs = { version = "0.4.1", path = "crates/cordis" }
-cordis-group = { version = "0.0.1", path = "crates/cordis-group" }
-cordis-include = { version = "0.0.2", path = "crates/cordis-include" }
+cordis-rs = { version = "0.4.2", path = "crates/cordis" }
+cordis-group = { version = "0.0.2", path = "crates/cordis-group" }
+cordis-include = { version = "0.0.3", path = "crates/cordis-include" }
 indexmap = { version = "2", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.3](https://github.com/dshbox/cordis-rs/compare/cordis-include-v0.0.2...cordis-include-v0.0.3) - 2026-08-17
+
+### Added
+
+- add EntryOptions::with_inject builder
+
+### Fixed
+
+- allow update_entry to keep the entry's own id
+
 ## [0.0.2](https://github.com/dshbox/cordis-rs/compare/cordis-include-v0.0.1...cordis-include-v0.0.2) - 2026-08-17
 
 ### Added
