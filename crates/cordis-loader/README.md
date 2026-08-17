@@ -106,6 +106,25 @@ included). Import cycles are reported via `last_error()` and skipped.
 - **update_config** — the runtime entry point for changing config: updates
   the fiber and persists to the file.
 
+## Events and write coalescing
+
+The loader emits `loader/entry-init`, `loader/before-patch`,
+`loader/after-patch`, `loader/partial-dispose`, and
+`loader/config-update` on the root context's event bus — every listener
+gets the affected entry, `config-update` also the new config node. Write
+debouncing coalesces rapid write-backs:
+
+```rust
+# use cordis_loader::{Loader, LoaderConfig};
+# use std::time::Duration;
+# let root = cordis::Context::new();
+# let config = LoaderConfig::new("cordis.yml").with_write_debounce(Duration::from_millis(300));
+let loader = Loader::open(&root, config)?;
+// loader.update_config(...) calls now merge into one disk write
+// after 300ms of quiet; loader.file().flush_deferred() waits it out.
+# Ok::<(), cordis_loader::LoaderError>(())
+```
+
 ## Feature flags
 
 - **`watch`** — hot reload: wires `LoaderFile`'s debounced watcher to
