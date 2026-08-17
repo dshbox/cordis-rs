@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.5](https://github.com/dshbox/cordis-rs/compare/cordis-loader-v0.0.4...cordis-loader-v0.0.5) - 2026-08-17
+
+### Added
+
+- loader event family and debounced write-backs
+
+### Other
+
+- Merge pull request #16 from dshbox/feat/loader-events-debounce
+- drop a stray trailing blank line
+
 ## [0.0.4](https://github.com/dshbox/cordis-rs/compare/cordis-loader-v0.0.3...cordis-loader-v0.0.4) - 2026-08-17
 
 ### Added
