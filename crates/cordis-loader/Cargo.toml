@@ -1,6 +1,6 @@
 [package]
 name = "cordis-loader"
-version = "0.0.2"
+version = "0.0.3"
 description = "Config-file driven plugin loader for the cordis-rs plugin framework"
 keywords = ["cordis", "plugin", "loader", "config", "lifecycle"]
 categories = ["config", "rust-patterns"]
