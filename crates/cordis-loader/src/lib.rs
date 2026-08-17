@@ -62,15 +62,24 @@
 //! [`Loader::last_error`] instead of recursing. With the `watch` feature,
 //! import files are watched like the main file.
 //!
+//! # Events and write coalescing
+//!
+//! Lifecycle transitions are observable through the [`events`] module's
+//! event names on the root context's bus; listener failures are recorded,
+//! never propagated. Write-backs can be debounced via
+//! [`LoaderConfig::with_write_debounce`] or
+//! [`Loader::set_write_debounce`]: rapid successive writes coalesce into
+//! one physical write after the quiet window.
+//!
 //! # Not in scope yet
 //!
-//! Isolate/service migration, the `loader/entry-init`-style event family,
-//! and debounced merged writes are future work.
+//! Isolate/service migration and dynamic library plugins are future work.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
 pub mod error;
+pub mod events;
 pub mod loader;
 pub mod registry;
 

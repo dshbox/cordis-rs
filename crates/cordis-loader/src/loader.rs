@@ -3,11 +3,12 @@
 use crate::error::{LoaderError, Result};
 use crate::lock;
 use crate::registry::{PluginRegistry, WithInject};
-use cordis::{Config, Context, EffectHandle, EventOptions, Fiber, FiberState, PluginHandle};
+use cordis::{Config, Context, EffectHandle, EventOptions, Fiber, FiberState, PluginHandle, Value};
 use cordis_include::{Entry, EntryOptions, EntryTree, LoaderFile, Node, PluginResolver, TreeDiff};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, Weak};
+use std::time::Duration;
 
 /// Where the loader reads and writes its entry file.
 #[derive(Clone, Default)]
@@ -19,6 +20,9 @@ pub struct LoaderConfig {
     /// Plugin registry used to resolve entry names; defaults to a fresh
     /// [`PluginRegistry`] with only the `group` builtin.
     pub registry: Option<PluginRegistry>,
+    /// Debounce window for coalesced config writes; `None` (default)
+    /// persists every write synchronously.
+    pub write_debounce: Option<Duration>,
 }
 
 impl LoaderConfig {
@@ -28,6 +32,7 @@ impl LoaderConfig {
             filename: filename.into(),
             initial: None,
             registry: None,
+            write_debounce: None,
         }
     }
 
@@ -40,6 +45,13 @@ impl LoaderConfig {
     /// Provide the plugin registry entries resolve against.
     pub fn with_registry(mut self, registry: PluginRegistry) -> Self {
         self.registry = Some(registry);
+        self
+    }
+
+    /// Coalesce config writes: rapid write-backs merge and land once after
+    /// this much quiet time.
+    pub fn with_write_debounce(mut self, delay: Duration) -> Self {
+        self.write_debounce = Some(delay);
         self
     }
 }
@@ -77,6 +89,8 @@ pub(crate) struct LoaderInner {
     /// Import-file watchers kept alive for hot reload (watch feature).
     #[cfg(feature = "watch")]
     watchers: Mutex<Vec<cordis_include::FileWatcher>>,
+    /// Debounce window for coalesced writes; `None` writes synchronously.
+    write_debounce: Mutex<Option<Duration>>,
 }
 
 /// Weak service handle injected as `loader`, avoiding a reference cycle
@@ -124,6 +138,7 @@ impl Loader {
             watched: Mutex::new(HashSet::new()),
             #[cfg(feature = "watch")]
             watchers: Mutex::new(Vec::new()),
+            write_debounce: Mutex::new(config.write_debounce),
         });
         let mut errors = Vec::new();
         let (composed, _dirty) = compose(
@@ -207,6 +222,12 @@ impl Loader {
     /// The last background error recorded by the loader, if any.
     pub fn last_error(&self) -> Option<String> {
         lock(&self.inner.state).last_error.clone()
+    }
+
+    /// Set (or clear, with `None`) the debounce window for coalesced
+    /// config writes.
+    pub fn set_write_debounce(&self, delay: Option<Duration>) {
+        *lock(&self.inner.write_debounce) = delay;
     }
 
     /// The entry whose fiber is `fiber`, if the loader started it.
@@ -294,11 +315,17 @@ impl Loader {
             fiber.update_value(Config::new(config.clone()))?;
         }
         let mut options = entry_options_with_children(&entry);
-        options.config = Some(config);
+        options.config = Some(config.clone());
         inner
             .tree
             .update_entry(&entry.path(), options, None, None)?;
-        write_back(inner)
+        write_back(inner)?;
+        emit(
+            inner,
+            crate::events::CONFIG_UPDATE,
+            vec![Value::new(entry), Value::new(config)],
+        );
+        Ok(())
     }
 
     /// Stop every entry and clear the fiber map. The root context itself
@@ -383,6 +410,14 @@ impl Drop for OperatingGuard<'_> {
     }
 }
 
+/// Emit a loader event; listener failures are recorded, never propagated
+/// into the state machine.
+fn emit(inner: &LoaderInner, name: &str, args: Vec<Value>) {
+    if let Err(error) = inner.root.events().emit(name, args) {
+        lock(&inner.state).last_error = Some(format!("{name} listener failed: {error}"));
+    }
+}
+
 /// Start one entry's fiber beneath its parent group's context.
 fn start_entry(inner: &LoaderInner, entry: &Entry) -> Result<()> {
     if !entry.enabled() || entry.fiber().is_some() {
@@ -405,6 +440,11 @@ fn start_entry(inner: &LoaderInner, entry: &Entry) -> Result<()> {
     if let Some(uid) = fiber.uid() {
         lock(&inner.state).entries.insert(uid, entry.clone());
     }
+    emit(
+        inner,
+        crate::events::ENTRY_INIT,
+        vec![Value::new(entry.clone())],
+    );
     Ok(())
 }
 
@@ -449,7 +489,17 @@ fn patch_entry(inner: &LoaderInner, entry: &Entry) -> Result<()> {
         .ok()
         .map(|node| (*node).clone());
     if current.as_ref() != Some(&new_config) {
+        emit(
+            inner,
+            crate::events::BEFORE_PATCH,
+            vec![Value::new(entry.clone())],
+        );
         fiber.update_value(Config::new(new_config))?;
+        emit(
+            inner,
+            crate::events::AFTER_PATCH,
+            vec![Value::new(entry.clone())],
+        );
     }
     Ok(())
 }
@@ -487,10 +537,14 @@ fn write_back(inner: &LoaderInner) -> Result<()> {
             }
         }
     }
+    let debounce = *lock(&inner.write_debounce);
     for (file, entries) in jobs {
         let mut document = file.read()?;
         document.entries = entries;
-        file.write(&document)?;
+        match debounce {
+            Some(delay) => file.write_deferred(document, delay),
+            None => file.write(&document)?,
+        }
     }
     Ok(())
 }
@@ -630,5 +684,11 @@ fn persist_self_dispose(inner: &LoaderInner, entry: &Entry) -> Result<()> {
     inner
         .tree
         .update_entry(&entry.path(), options, None, None)?;
-    write_back(inner)
+    write_back(inner)?;
+    emit(
+        inner,
+        crate::events::PARTIAL_DISPOSE,
+        vec![Value::new(entry.clone())],
+    );
+    Ok(())
 }
