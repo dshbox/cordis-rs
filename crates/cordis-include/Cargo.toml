@@ -1,6 +1,6 @@
 [package]
 name = "cordis-include"
-version = "0.0.7"
+version = "0.0.8"
 description = "Config entry trees and YAML/JSON loader files for the cordis-rs plugin framework"
 keywords = ["cordis", "plugin", "config", "yaml", "loader"]
 categories = ["config", "rust-patterns"]

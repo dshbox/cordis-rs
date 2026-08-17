@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.6](https://github.com/dshbox/cordis-rs/compare/cordis-cli-v0.0.5...cordis-cli-v0.0.6) - 2026-08-17
+
+### Added
+
+- hot-restart workers when plugin libraries change
+
+### Other
+
+- also search registry windows_* lib dirs for fixture linking
+- build dynamic fixtures portably on windows
+
 ## [0.0.5](https://github.com/dshbox/cordis-rs/compare/cordis-cli-v0.0.4...cordis-cli-v0.0.5) - 2026-08-17
 
 ### Other
