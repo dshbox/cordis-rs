@@ -1,0 +1,24 @@
+[package]
+name = "cordis-include"
+version = "0.0.1"
+description = "Config entry trees and YAML/JSON loader files for the cordis-rs plugin framework"
+keywords = ["cordis", "plugin", "config", "yaml", "loader"]
+categories = ["config", "rust-patterns"]
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = []
+# File watching via `notify`. Off by default so the core include layer stays
+# dependency-light; the `cordis-cli` runner enables it.
+watch = ["notify"]
+
+[dependencies]
+cordis-rs.workspace = true
+indexmap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml_ng.workspace = true
+notify = { version = "8", optional = true }
