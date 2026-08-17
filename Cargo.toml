@@ -1,27 +1,17 @@
-[package]
-name = "cordis-rs"
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
 version = "0.4.0"
 edition = "2024"
 rust-version = "1.85"
-description = "Runtime-agnostic Rust port of Cordis, the plugin framework at the core of DeepSeek Harness"
 license = "MIT"
 repository = "https://github.com/dshbox/cordis-rs"
-keywords = ["plugin", "dependency-injection", "events", "lifecycle", "framework"]
-categories = ["asynchronous", "rust-patterns"]
-exclude = [
-    ".github/",
-    "rust-toolchain.toml",
-    ".gitignore",
-    ".agents/",
-    ".claude/",
-    "skills-lock.json",
-]
 
-[lib]
-name = "cordis"
-path = "src/lib.rs"
-
-[features]
-default = []
-
-[dependencies]
+[workspace.dependencies]
+cordis-rs = { version = "0.4.0", path = "crates/cordis" }
+indexmap = { version = "2", features = ["serde"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml_ng = "0.10"

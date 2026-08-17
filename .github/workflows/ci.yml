@@ -29,10 +29,10 @@ jobs:
         uses: dtolnay/rust-toolchain@1.85.0
 
       - name: Check all targets and features
-        run: cargo check --locked --all-targets --all-features
+        run: cargo check --locked --workspace --all-targets --all-features
 
       - name: Run tests
-        run: cargo test --locked --all-features
+        run: cargo test --locked --workspace --all-features
 
   test:
     name: Test stable (${{ matrix.os }})
@@ -53,7 +53,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Run tests
-        run: cargo test --locked --all-features
+        run: cargo test --locked --workspace --all-features
 
   quality:
     name: Formatting, Clippy, and docs
@@ -72,15 +72,15 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Run Clippy
-        run: cargo clippy --locked --all-targets --all-features -- -D warnings
+        run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
 
       - name: Build API documentation
-        run: cargo doc --locked --no-deps --all-features
+        run: cargo doc --locked --workspace --no-deps --all-features
         env:
           RUSTDOCFLAGS: -D warnings
 
       - name: Build library for README tests
-        run: cargo build --locked --all-features
+        run: cargo build --locked --workspace --all-features
 
       - name: Test English README examples
         run: >-
