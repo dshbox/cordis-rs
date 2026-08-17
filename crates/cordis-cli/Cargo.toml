@@ -15,6 +15,7 @@ name = "cordis"
 path = "src/main.rs"
 
 [dependencies]
-cordis-loader = { workspace = true, features = ["watch"] }
+cordis-loader = { workspace = true, features = ["watch", "dynamic"] }
 cordis-rs.workspace = true
 ctrlc = { version = "3", features = ["termination"] }
+notify = "8"
