@@ -265,7 +265,23 @@ impl IntoPlugin for PluginHandle {
 struct FunctionPlugin {
     name: String,
     inject: Inject,
+    validate: fn(Config) -> Result<Config>,
     callback: Arc<dyn Fn(Context, Config) -> BoxFuture<Result<PluginOutput>> + Send + Sync>,
+}
+
+/// Pre-check that `config` holds a `C`, so a wrong-typed update fails
+/// validation instead of tearing down the running instance first.
+fn config_validator<C>() -> fn(Config) -> Result<Config>
+where
+    C: Send + Sync + 'static,
+{
+    fn validate<C>(config: Config) -> Result<Config>
+    where
+        C: Send + Sync + 'static,
+    {
+        config.downcast::<C>().map(|_| config)
+    }
+    validate::<C>
 }
 
 impl Plugin for FunctionPlugin {
@@ -275,6 +291,10 @@ impl Plugin for FunctionPlugin {
 
     fn inject(&self) -> &Inject {
         &self.inject
+    }
+
+    fn validate_config(&self, config: Config) -> Result<Config> {
+        (self.validate)(config)
     }
 
     fn apply(&self, ctx: Context, config: Config) -> BoxFuture<Result<PluginOutput>> {
@@ -292,6 +312,7 @@ where
     PluginHandle::new(FunctionPlugin {
         name: name.into(),
         inject,
+        validate: config_validator::<C>(),
         callback: Arc::new(move |ctx, config| {
             let callback = callback.clone();
             Box::pin(async move {
@@ -324,6 +345,7 @@ where
     PluginHandle::new(FunctionPlugin {
         name: name.into(),
         inject,
+        validate: config_validator::<C>(),
         callback: Arc::new(move |ctx, config| {
             let callback = callback.clone();
             Box::pin(async move {

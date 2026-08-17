@@ -62,6 +62,29 @@ impl FiberInner {
     }
 }
 
+// Fibers whose transition mutex the current thread holds, keyed by
+// `FiberInner` address. Presence means "called from inside a lifecycle
+// callback on this fiber" — reentrancy, which must fail fast rather than
+// deadlock.
+thread_local! {
+    static HELD_TRANSITIONS: std::cell::RefCell<std::collections::HashSet<usize>> =
+        std::cell::RefCell::new(std::collections::HashSet::new());
+}
+
+/// A transition-mutex guard that unregisters its fiber from
+/// [`HELD_TRANSITIONS`] when dropped, including on unwind.
+struct TransitionGuard<'a> {
+    /// Held purely for the lock; the guard itself is never touched.
+    _guard: std::sync::MutexGuard<'a, ()>,
+    key: usize,
+}
+
+impl Drop for TransitionGuard<'_> {
+    fn drop(&mut self) {
+        HELD_TRANSITIONS.with(|held| held.borrow_mut().remove(&self.key));
+    }
+}
+
 /// Cloneable handle to one plugin lifecycle instance.
 #[derive(Clone)]
 pub struct Fiber {
@@ -237,6 +260,13 @@ impl Fiber {
     }
 
     /// Register a boxed cleanup operation.
+    ///
+    /// Registration is serialized against disposal: `dispose`/`restart`
+    /// mark the fiber dead (uid cleared or `Unloading`) *before* draining
+    /// the effect list, so re-checking liveness while holding the list lock
+    /// guarantees every accepted effect is seen by a concurrent drain. An
+    /// effect that lands after the drain is undone on the spot instead of
+    /// leaking with a disposer that never runs.
     pub fn register_effect(
         &self,
         label: impl Into<String>,
@@ -257,7 +287,21 @@ impl Fiber {
             label,
             disposer,
         );
-        lock(&self.inner.effects).push(cell.clone());
+        {
+            let mut effects = lock(&self.inner.effects);
+            effects.push(cell.clone());
+            let dead = self.uid().is_none()
+                || matches!(self.state(), FiberState::Disposed | FiberState::Unloading);
+            if dead {
+                // The drain already ran (or marked the fiber dead and will
+                // not see this push after the removal): undo the
+                // registration atomically instead of leaking it.
+                effects.retain(|effect| effect.id != cell.id);
+                drop(effects);
+                cell.cancel();
+                return Err(CordisError::new(ErrorCode::InactiveEffect));
+            }
+        }
         Ok(EffectHandle::new(cell))
     }
 
@@ -512,21 +556,31 @@ impl Fiber {
         }
     }
 
-    /// Lock the transition mutex, failing instead of deadlocking when the
-    /// caller is already inside a transition on this fiber — directly or
-    /// through a lifecycle callback such as an `internal/status` listener or
-    /// a disposer. [`refresh`](Self::refresh) already degrades to a dirty flag
-    /// in that situation; `restart`/`dispose` have no deferrable semantics,
-    /// so they report the reentrancy as an error.
-    fn try_transition(&self) -> Result<std::sync::MutexGuard<'_, ()>> {
-        match self.inner.transition.try_lock() {
-            Ok(guard) => Ok(guard),
-            Err(std::sync::TryLockError::Poisoned(error)) => Ok(error.into_inner()),
-            Err(std::sync::TryLockError::WouldBlock) => Err(CordisError::with_message(
+    /// Lock the transition mutex, telling reentrancy apart from contention.
+    ///
+    /// When the *current thread* already holds the lock — directly or
+    /// through a lifecycle callback such as an `internal/status` listener
+    /// or a disposer — the call is reentrant and fails fast instead of
+    /// deadlocking; [`refresh`](Self::refresh) degrades to a dirty flag in
+    /// that situation, while `restart`/`dispose` have no deferrable
+    /// semantics and report the reentrancy as an error. When a *different
+    /// thread* holds the lock, the call waits for the in-flight transition
+    /// to finish instead of silently dropping the operation.
+    fn try_transition(&self) -> Result<TransitionGuard<'_>> {
+        let key = Arc::as_ptr(&self.inner) as usize;
+        if HELD_TRANSITIONS.with(|held| held.borrow().contains(&key)) {
+            return Err(CordisError::with_message(
                 ErrorCode::Other,
                 "lifecycle transition already in progress on this fiber",
-            )),
+            ));
         }
+        let guard = match self.inner.transition.try_lock() {
+            Ok(guard) => guard,
+            Err(std::sync::TryLockError::Poisoned(error)) => error.into_inner(),
+            Err(std::sync::TryLockError::WouldBlock) => lock(&self.inner.transition),
+        };
+        HELD_TRANSITIONS.with(|held| held.borrow_mut().insert(key));
+        Ok(TransitionGuard { _guard: guard, key })
     }
 
     /// Report the fiber's settled lifecycle state without blocking.
@@ -665,10 +719,14 @@ impl Fiber {
     }
 
     /// Permanently dispose this plugin fiber. Repeated calls are no-ops.
+    ///
+    /// A dispose from another thread waits for an in-flight transition on
+    /// this fiber to finish; a reentrant call from inside a lifecycle
+    /// callback fails fast instead of deadlocking.
     pub fn dispose(&self) -> Result<()> {
-        // Take the transition lock up front: reentrant calls from lifecycle
-        // callbacks fail fast instead of deadlocking, and no partial teardown
-        // is left behind.
+        // Take the transition lock up front: reentrant calls fail fast, no
+        // partial teardown is left behind, and concurrent callers queue
+        // behind the in-flight transition.
         let _guard = self.try_transition()?;
         if self.inner.plugin.is_none() {
             // Root disposal unloads all root-owned effects but leaves the root
