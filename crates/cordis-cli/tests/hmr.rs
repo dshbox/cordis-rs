@@ -93,10 +93,12 @@ fn cdylib_file_name(crate_name: &str) -> String {
     }
 }
 
-/// Output directories of build scripts (`target/debug/build/*/out`),
-/// which hold the native libraries (`-sys` crates) the plugin must link
-/// against on Windows; cargo passes these to rustc, a manual invocation
-/// has to add them itself.
+/// Native library directories a manual rustc invocation must add: cargo
+/// derives them from build scripts, but a plain rustc call does not see
+/// those directives. Two shapes exist: build-script output directories
+/// (`target/debug/build/*/out`), and the `lib/` folders that `windows_*`
+/// helper crates ship inside their registry sources (windows-targets-era
+/// import libraries like `windows.0.53.0.lib` live there, not in OUT_DIR).
 fn native_search_dirs() -> Vec<PathBuf> {
     let mut dirs = Vec::new();
     if let Ok(entries) = std::fs::read_dir(target_dir().join("debug/build")) {
@@ -104,6 +106,29 @@ fn native_search_dirs() -> Vec<PathBuf> {
             let out = entry.path().join("out");
             if out.is_dir() {
                 dirs.push(out);
+            }
+        }
+    }
+    let cargo_home = std::env::var_os("CARGO_HOME")
+        .map(PathBuf::from)
+        .or_else(|| {
+            ["HOME", "USERPROFILE"].iter().find_map(|key| {
+                std::env::var_os(key).map(|home| PathBuf::from(home).join(".cargo"))
+            })
+        });
+    if let Some(registry) = cargo_home.map(|home| home.join("registry/src")) {
+        if let Ok(indices) = std::fs::read_dir(&registry) {
+            for index in indices.flatten() {
+                if let Ok(crates) = std::fs::read_dir(index.path()) {
+                    for krate in crates.flatten() {
+                        let lib = krate.path().join("lib");
+                        if krate.file_name().to_string_lossy().starts_with("windows_")
+                            && lib.is_dir()
+                        {
+                            dirs.push(lib);
+                        }
+                    }
+                }
             }
         }
     }
