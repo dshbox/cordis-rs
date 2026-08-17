@@ -232,4 +232,3 @@ fn debounced_write_back_coalesces_updates() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
-
