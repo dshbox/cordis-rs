@@ -1,0 +1,7 @@
+# The workspace default tag format is `{{ package }}-v{{ version }}`, which the
+# new crates use unchanged. `cordis-rs` keeps its historical `v{{ version }}`
+# tags (v0.1.0..v0.4.0) so release-plz continues from the published lineage.
+[[package]]
+name = "cordis-rs"
+git_tag_name = "v{{ version }}"
+git_release_name = "v{{ version }}"

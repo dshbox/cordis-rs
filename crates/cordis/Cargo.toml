@@ -1,0 +1,20 @@
+[package]
+name = "cordis-rs"
+description = "Runtime-agnostic Rust port of Cordis, the plugin framework at the core of DeepSeek Harness"
+keywords = ["plugin", "dependency-injection", "events", "lifecycle", "framework"]
+categories = ["asynchronous", "rust-patterns"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "../../README.md"
+
+[lib]
+name = "cordis"
+path = "src/lib.rs"
+
+[features]
+default = []
+
+[dependencies]
