@@ -23,7 +23,7 @@ Cordis 是一个基于上下文的插件框架，适用于需要显式依赖注�
 | Accessor 和 mixin 反射 | `accessor()` 和显式 `alias()` | ✅¹ |
 | 函数/对象/类插件 | `Plugin`、`plugin_sync`、`plugin_async`、service 适配器 | ✅ |
 | `inject` 依赖 epoch | `Inject` 和自动卸载/重载 | ✅ |
-| `FiberState`、`wait`、`restart`、`update`、`dispose` | 对应的生命周期操作 | ✅ |
+| `FiberState`、`try_wait`、`restart`、`update`、`dispose` | 对应的生命周期操作 | ✅ |
 | 同步/异步/generator effect | 同步/异步 disposer 和嵌套 effect handle | ✅² |
 | `emit/parallel/serial/bail/waterfall` | 相同的五种分发模式 | ✅ |
 | 上下文监听器过滤 | `with_filter()` / `emit_from()` | ✅ |
@@ -309,7 +309,7 @@ TypeScript 原版通过 Promise 调度生命周期任务。本 crate 特意采�
 
 与执行器无关的 future 可以在任何环境中运行。如果 future 会创建特定运行时资源（例如 `tokio::time::sleep`），请在对应运行时已经进入的情况下调用 Cordis。
 
-即时模型带来两个后果：`Fiber::wait()` 报告的是已稳定的状态，而不是挂起等待依赖到达——对 `Pending` 或已销毁的 fiber 它会返回错误。此外，Cordis 驱动 future 时使用一个小型阻塞执行器，且持有生命周期迁移锁，因此插件的 `apply` 回调和 disposer 只能等待在其他线程上完成的工作（不得等待同线程的 channel 或 `spawn_blocking` 的 join）。
+即时模型带来两个后果：`Fiber::try_wait()` 报告的是已稳定的状态，而不是挂起等待依赖到达——对 `Pending` 或已销毁的 fiber 它会返回错误。此外，Cordis 驱动 future 时使用一个小型阻塞执行器，且持有生命周期迁移锁，因此插件的 `apply` 回调和 disposer 只能等待在其他线程上完成的工作（不得等待同线程的 channel 或 `spawn_blocking` 的 join）。
 
 `Fiber::update()` 在非活动 fiber 上与上游一致：对 `Active` fiber 它会先校验新配置、再重启，并报告启动结果；对 `Pending` 或 `Failed` fiber 它只保存配置并立即协调，不等待激活——此时 `Ok(())` 仅表示配置已被接受，激活结果需要通过 `state()`/`error()` 观察。
 

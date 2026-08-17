@@ -597,7 +597,7 @@ impl Fiber {
     /// config once its dependencies are (or become) available. Matching
     /// upstream Cordis, `Ok(())` then only means the config was accepted, not
     /// that startup succeeded; inspect [`state`](Self::state) or call
-    /// [`wait`](Self::wait) when the outcome matters.
+    /// [`try_wait`](Self::try_wait) when the outcome matters.
     pub fn update<C>(&self, config: C) -> Result<()>
     where
         C: Send + Sync + 'static,
