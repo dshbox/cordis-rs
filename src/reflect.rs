@@ -287,6 +287,7 @@ impl ReflectService {
         let scope = self.ctx.root.reflect.ensure_scope(&self.ctx, &name);
         let generation = self.ctx.root.reflect.next_generation();
 
+        let mut inserted_property = false;
         {
             let mut state = lock(&self.ctx.root.reflect.state);
             if let Some(property) = state.properties.get(&name) {
@@ -296,6 +297,8 @@ impl ReflectService {
                         format!("property \"{name}\" is already declared as {property:?}"),
                     ));
                 }
+            } else {
+                inserted_property = true;
             }
             if let Some(existing) = state.implementations.get(&scope) {
                 let provider_name = existing
@@ -354,9 +357,14 @@ impl ReflectService {
                 Ok(effect)
             }
             Err(error) => {
-                lock(&self.ctx.root.reflect.state)
-                    .implementations
-                    .remove(&scope);
+                let mut state = lock(&self.ctx.root.reflect.state);
+                state.implementations.remove(&scope);
+                // Only the declaration inserted above is rolled back: an entry
+                // left by an earlier successful provide of the same name in
+                // another scope must survive.
+                if inserted_property {
+                    state.properties.remove(&name);
+                }
                 Err(error)
             }
         }

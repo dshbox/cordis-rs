@@ -443,10 +443,23 @@ impl RegistryService {
     }
 
     /// Whether a plugin handle has at least one live fiber.
+    ///
+    /// Dead weak references are pruned as a side effect, so a runtime whose
+    /// fibers were all dropped without `dispose()` stops being reported here.
     pub fn contains(&self, plugin: &PluginHandle) -> bool {
-        lock(&self.ctx.root.registry.state)
-            .runtimes
-            .contains_key(&plugin.key())
+        let mut state = lock(&self.ctx.root.registry.state);
+        let Some(runtime) = state.runtimes.get_mut(&plugin.key()) else {
+            return false;
+        };
+        runtime
+            .fibers
+            .retain(|weak| weak.upgrade().and_then(|fiber| fiber.uid_value()).is_some());
+        if runtime.fibers.is_empty() {
+            state.runtimes.remove(&plugin.key());
+            false
+        } else {
+            true
+        }
     }
 
     /// Return runtime snapshots.
