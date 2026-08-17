@@ -1,0 +1,20 @@
+[package]
+name = "cordis-loader"
+version = "0.0.1"
+description = "Config-file driven plugin loader for the cordis-rs plugin framework"
+keywords = ["cordis", "plugin", "loader", "config", "lifecycle"]
+categories = ["config", "rust-patterns"]
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = []
+# Hot reload of the entry file through cordis-include's watcher.
+watch = ["cordis-include/watch"]
+
+[dependencies]
+cordis-group.workspace = true
+cordis-include.workspace = true
+cordis-rs.workspace = true
