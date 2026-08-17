@@ -151,16 +151,29 @@ pub(crate) struct WithInject {
 }
 
 impl WithInject {
-    /// Wrap `handle` unless `inject` is empty (nothing to add).
+    /// Wrap `handle`, merging an entry's `inject` declaration into the
+    /// plugin's own dependencies — the plugin's names first, then the
+    /// entry's extras, deduplicated. An empty entry list adds nothing and
+    /// keeps the bare handle.
     pub fn wrap(handle: PluginHandle, inject: Vec<String>) -> PluginHandle {
         if inject.is_empty() {
-            handle
-        } else {
-            PluginHandle::new(WithInject {
-                handle,
-                inject: Inject::new(inject),
-            })
+            return handle;
         }
+        let mut names: Vec<String> = handle
+            .plugin()
+            .inject()
+            .names()
+            .map(ToString::to_string)
+            .collect();
+        for name in inject {
+            if !names.contains(&name) {
+                names.push(name);
+            }
+        }
+        PluginHandle::new(WithInject {
+            handle,
+            inject: Inject::new(names),
+        })
     }
 }
 
