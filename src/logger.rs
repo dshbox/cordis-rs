@@ -329,8 +329,6 @@ impl LoggerRoot {
                 while state.buffer.len() > state.buffer_size {
                     state.buffer.pop_front();
                 }
-            } else if state.buffer_size == 0 {
-                state.buffer.clear();
             }
             (message, state.exporter_snapshot.clone())
         };
