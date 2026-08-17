@@ -54,10 +54,9 @@ impl LoaderFile {
         let stop = Arc::new(AtomicBool::new(false));
         let stop_flag = Arc::clone(&stop);
         let file = self.clone();
-        let path = self.path().to_path_buf();
-        let watched_dir = watched.clone();
+        let relevant_paths = relevant_paths(self.path(), &watched);
         let thread = std::thread::Builder::new()
-            .name(format!("cordis-watch-{}", path.display()))
+            .name(format!("cordis-watch-{}", self.path().display()))
             .spawn(move || {
                 let _watcher = watcher; // keep the watch alive for the thread's lifetime
                 let mut pending = false;
@@ -67,12 +66,14 @@ impl LoaderFile {
                     }
                     match rx.recv_timeout(Duration::from_millis(100)) {
                         Ok(Ok(event)) => {
-                            // Match the file itself or the watched directory:
-                            // some backends (macOS FSEvents) report events on
-                            // the directory rather than the changed file.
-                            let relevant = event.paths.iter().any(|event_path| {
-                                event_path == &path || event_path == &watched_dir
-                            });
+                            // Some backends report the watched directory instead
+                            // of the changed file, and macOS FSEvents returns
+                            // realpaths, so accept canonical forms too (e.g.
+                            // /tmp vs /private/tmp).
+                            let relevant = event
+                                .paths
+                                .iter()
+                                .any(|event_path| relevant_paths.contains(event_path));
                             if relevant {
                                 pending = true;
                             }
@@ -104,4 +105,23 @@ impl Drop for FileWatcher {
             let _ = thread.join();
         }
     }
+}
+
+/// Paths whose events are relevant: the file, the watched directory, and
+/// their canonicalized forms. Symlinked prefixes (macOS `/tmp`) make backends
+/// report paths that differ textually from the configured ones.
+fn relevant_paths(file: &std::path::Path, watched: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut candidates = vec![file.to_path_buf(), watched.to_path_buf()];
+    if let Ok(canonical) = std::fs::canonicalize(file) {
+        candidates.push(canonical);
+    } else if let (Some(name), Some(parent)) = (file.file_name(), file.parent()) {
+        // The file may not exist yet; canonicalize the parent instead.
+        if let Ok(canonical_parent) = std::fs::canonicalize(parent) {
+            candidates.push(canonical_parent.join(name));
+        }
+    }
+    if let Ok(canonical) = std::fs::canonicalize(watched) {
+        candidates.push(canonical);
+    }
+    candidates
 }
