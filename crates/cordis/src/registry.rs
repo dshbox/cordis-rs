@@ -231,7 +231,12 @@ impl PluginHandle {
         self.plugin.name()
     }
 
-    pub(crate) fn plugin(&self) -> &Arc<dyn Plugin> {
+    /// Return the wrapped dynamically dispatched plugin.
+    ///
+    /// Intended for delegation wrappers (adding inject declarations,
+    /// intercepting validate/apply) that forward to the inner plugin while
+    /// keeping their own [`PluginHandle`] identity.
+    pub fn plugin(&self) -> &Arc<dyn Plugin> {
         &self.plugin
     }
 }

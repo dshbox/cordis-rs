@@ -159,6 +159,15 @@ impl Fiber {
         self.inner.uid_value()
     }
 
+    /// Whether both handles refer to the same fiber instance.
+    ///
+    /// Unlike comparing [`uid`](Self::uid), this stays valid after disposal
+    /// (uids are cleared then), which is what "which entry owned this
+    /// fiber?" lookups need.
+    pub fn ptr_eq(&self, other: &Fiber) -> bool {
+        Arc::ptr_eq(&self.inner, &other.inner)
+    }
+
     /// Current lifecycle state.
     pub fn state(&self) -> FiberState {
         lock(&self.inner.data).state
