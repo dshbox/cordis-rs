@@ -109,7 +109,7 @@ fn reload_reconciles_created_removed_updated_and_moved() {
     assert!(diff.created.iter().any(|e| e.id() == "grp"));
     assert!(diff.created.iter().any(|e| e.id() == "new"));
     assert!(diff.updated.iter().any(|e| e.id() == "keep"));
-    assert!(diff.removed.iter().any(|e| e.id() == "drop"));
+    assert!(diff.removed.iter().any(|e| e.entry.id() == "drop"));
 
     // Config-only change patched the fiber without a restart: starts went
     // 2 -> 3 (update_value restarts "keep"), and the new entries started.

@@ -52,11 +52,20 @@
 //! open; plugins registered later via [`Loader::register_plugin`] are picked
 //! up by the next [`Loader::reload`].
 //!
+//! # Imports
+//!
+//! An entry with `name: import` and `config: { url: "…" }` mounts another
+//! config file as its subtree. Reloads compose every involved file into
+//! one tree (so diffs and id reuse work across files), while write-back
+//! decomposes: mounted children are persisted to the file they came from,
+//! never to the importing file. Import cycles are reported through
+//! [`Loader::last_error`] instead of recursing. With the `watch` feature,
+//! import files are watched like the main file.
+//!
 //! # Not in scope yet
 //!
-//! The `import` entry kind (mounting a sub-file), isolate/service
-//! migration, the `loader/entry-init`-style event family, and debounced
-//! merged writes are future work.
+//! Isolate/service migration, the `loader/entry-init`-style event family,
+//! and debounced merged writes are future work.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]

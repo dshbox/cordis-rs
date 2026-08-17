@@ -63,6 +63,31 @@ let _ = std::fs::remove_file(&path);
 # }
 ```
 
+## Imports
+
+An entry with `name: import` and `config: { url: "…" }` mounts another
+config file as its subtree — same diff machinery, same id reuse:
+
+```yaml
+# main.yml
+entries:
+  - id: extra
+    name: import
+    config:
+      url: extra.yml
+```
+
+```yaml
+# extra.yml — entries become children of `extra`
+entries:
+  - id: adapter
+    name: adapter-http
+```
+
+Reloads compose all involved files into one tree diff; write-back always
+routes mounted entries back to the file they came from (generated ids
+included). Import cycles are reported via `last_error()` and skipped.
+
 ## What the state machine does
 
 - **open** — read (or create) the entry file, build the tree, start every
