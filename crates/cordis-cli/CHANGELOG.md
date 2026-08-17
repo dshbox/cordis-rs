@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.7](https://github.com/dshbox/cordis-rs/compare/cordis-cli-v0.0.6...cordis-cli-v0.0.7) - 2026-08-17
+
+### Fixed
+
+- propagate cordis run boot failures and restart with backoff
+
+### Other
+
+- Merge pull request #22 from dshbox/fix/audit-major
+- pick the freshest rlib in the fixture build harnesses
+
 ## [0.0.6](https://github.com/dshbox/cordis-rs/compare/cordis-cli-v0.0.5...cordis-cli-v0.0.6) - 2026-08-17
 
 ### Added

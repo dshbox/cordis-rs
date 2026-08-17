@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.8](https://github.com/dshbox/cordis-rs/compare/cordis-loader-v0.0.7...cordis-loader-v0.0.8) - 2026-08-17
+
+### Fixed
+
+- correct loader reload, imports, inject, and dispose semantics
+
+### Other
+
+- Merge pull request #22 from dshbox/fix/audit-major
+- pick the freshest rlib in the fixture build harnesses
+
 ## [0.0.7](https://github.com/dshbox/cordis-rs/compare/cordis-loader-v0.0.6...cordis-loader-v0.0.7) - 2026-08-17
 
 ### Added
