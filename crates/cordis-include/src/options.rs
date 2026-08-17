@@ -8,6 +8,10 @@ fn is_false(value: &bool) -> bool {
     !*value
 }
 
+/// Entry name that mounts another config file as a subtree
+/// (`name: import` with `config: { url: "…" }`).
+pub const IMPORT_NAME: &str = "import";
+
 /// One entry in a config file: a plugin instance plus its group position.
 ///
 /// The declared field order is the serialization order (`id` and `name`
@@ -72,6 +76,15 @@ impl EntryOptions {
     pub fn with_disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
         self
+    }
+
+    /// The url this import entry mounts, when the entry is an import
+    /// (`name: import` with a string `config.url`).
+    pub fn import_url(&self) -> Option<&str> {
+        if self.name != IMPORT_NAME {
+            return None;
+        }
+        self.config.as_ref()?.as_object()?.get("url")?.as_str()
     }
 
     /// Declare services that must be active before this entry starts.

@@ -71,6 +71,12 @@ pub enum IncludeError {
         /// The underlying watcher error.
         source: Box<dyn StdError + Send + Sync>,
     },
+    /// Free-form message from layers composing multiple files (import
+    /// cycles, unreadable sub-files).
+    Message {
+        /// The message.
+        message: String,
+    },
 }
 
 impl fmt::Display for IncludeError {
@@ -107,6 +113,7 @@ impl fmt::Display for IncludeError {
             Self::NotInTree => write!(f, "entry does not belong to this tree"),
             Self::Cycle => write!(f, "cannot move an entry into its own subtree"),
             Self::Watch { source } => write!(f, "file watcher error: {source}"),
+            Self::Message { message } => write!(f, "{message}"),
         }
     }
 }

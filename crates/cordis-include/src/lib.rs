@@ -85,9 +85,9 @@ pub use entry::{Entry, EntrySuspendGuard};
 pub use error::{IncludeError, Result};
 pub use file::{Document, FileFormat, FileSuspendGuard, LoaderFile};
 pub use node::{Node, NodeMap};
-pub use options::EntryOptions;
+pub use options::{EntryOptions, IMPORT_NAME};
 pub use resolver::PluginResolver;
-pub use tree::{EntryTree, TreeDiff};
+pub use tree::{EntryTree, RemovedEntry, TreeDiff};
 #[cfg(feature = "watch")]
 pub use watch::FileWatcher;
 
