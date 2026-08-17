@@ -52,35 +52,36 @@ fn rustc() -> PathBuf {
     PathBuf::from("rustc")
 }
 
-/// Locate the built rlib for a workspace crate, preferring the unhashed
-/// uplift in `target/debug/` and falling back to the newest hashed copy.
+/// Locate the freshest built rlib for a workspace crate: the unhashed
+/// uplift in `target/debug/` and the hashed copies in `deps/` compete,
+/// and the newest wins (a stale uplift must not shadow a fresh build).
 fn find_rlib(name: &str) -> PathBuf {
     let debug = target_dir().join("debug");
-    let uplifted = debug.join(format!("lib{name}.rlib"));
-    if uplifted.is_file() {
-        return uplifted;
-    }
     let prefix = format!("lib{name}-");
-    let mut newest: Option<(SystemTime, PathBuf)> = None;
-    for entry in std::fs::read_dir(debug.join("deps")).expect("deps directory") {
-        let entry = entry.unwrap();
-        let path = entry.path();
-        let is_match = path
-            .extension()
-            .is_some_and(|extension| extension == "rlib")
-            && path
-                .file_name()
-                .and_then(|file| file.to_str())
-                .is_some_and(|file| file.starts_with(&prefix));
-        if !is_match {
-            continue;
-        }
-        let mtime = entry.metadata().unwrap().modified().unwrap();
-        if newest.as_ref().is_none_or(|(best, _)| mtime > *best) {
-            newest = Some((mtime, path));
+    let mut candidates: Vec<(SystemTime, PathBuf)> = Vec::new();
+    let uplifted = debug.join(format!("lib{name}.rlib"));
+    if let Ok(metadata) = std::fs::metadata(&uplifted) {
+        candidates.push((metadata.modified().unwrap(), uplifted));
+    }
+    if let Ok(entries) = std::fs::read_dir(debug.join("deps")) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let is_match = path
+                .extension()
+                .is_some_and(|extension| extension == "rlib")
+                && path
+                    .file_name()
+                    .and_then(|file| file.to_str())
+                    .is_some_and(|file| file.starts_with(&prefix));
+            if is_match {
+                let mtime = entry.metadata().unwrap().modified().unwrap();
+                candidates.push((mtime, path));
+            }
         }
     }
-    newest
+    candidates.sort_by_key(|candidate| candidate.0);
+    candidates
+        .pop()
         .unwrap_or_else(|| panic!("no rlib found for {name}"))
         .1
 }
