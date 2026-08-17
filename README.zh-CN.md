@@ -315,9 +315,20 @@ TypeScript 原版通过 Promise 调度生命周期任务。本 crate 特意采�
 
 插件 `apply`、disposer 或事件监听器中的 panic 会传播给触发生命周期操作的调用方。内部互斥锁会从 poisoning 中恢复；在迁移途中被打断的 fiber 会停留在 `Loading`/`Unloading` 状态（已注册的 effect 仍归其所有），直到下一次生命周期事件或 `dispose` 使其稳定。`Context` 和 `Fiber` 未实现 `UnwindSafe`（其内部的 trait object 无法证明该性质）；当某个插件不允许拖垮调用方时，请在调用处用 `std::panic::catch_unwind(std::panic::AssertUnwindSafe(...))` 进行隔离。
 
+## 生态
+
+核心 crate 保持零依赖；loader 栈位于其上的兄弟 crate 中：
+
+| Crate | 用途 |
+| --- | --- |
+| [`cordis-include`](../crates/cordis-include) | 配置条目树、YAML/JSON 配置文件、`${{ env.NAME }}` 插值 |
+| [`cordis-group`](../crates/cordis-group) | 分组插件：嵌套条目与级联禁用 |
+| [`cordis-loader`](../crates/cordis-loader) | 插件注册表 + 条目↔fiber 状态机、配置热重载 |
+| [`cordis-cli`](../crates/cordis-cli) | `cordis run` 可执行入口：daemon/worker、信号、dotenv |
+
 ## 项目结构
 
-源码结构与上游 package 对应：
+核心 crate 源码结构与上游 package 对应：
 
 ```text
 src/

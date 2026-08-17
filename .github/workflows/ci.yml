@@ -93,3 +93,25 @@ jobs:
           rustdoc --test README.zh-CN.md --edition 2024
           -L dependency=target/debug/deps
           --extern cordis=target/debug/libcordis.rlib
+
+      - name: Test cordis-include README examples
+        run: >-
+          rustdoc --test crates/cordis-include/README.md --edition 2024
+          -L dependency=target/debug/deps
+          --extern cordis=target/debug/libcordis.rlib
+          --extern cordis_include=target/debug/libcordis_include.rlib
+
+      - name: Test cordis-group README examples
+        run: >-
+          rustdoc --test crates/cordis-group/README.md --edition 2024
+          -L dependency=target/debug/deps
+          --extern cordis=target/debug/libcordis.rlib
+          --extern cordis_group=target/debug/libcordis_group.rlib
+
+      - name: Test cordis-loader README examples
+        run: >-
+          rustdoc --test crates/cordis-loader/README.md --edition 2024
+          -L dependency=target/debug/deps
+          --extern cordis=target/debug/libcordis.rlib
+          --extern cordis_include=target/debug/libcordis_include.rlib
+          --extern cordis_loader=target/debug/libcordis_loader.rlib
