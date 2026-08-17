@@ -315,9 +315,21 @@ Two consequences of the eager model: `Fiber::try_wait()` reports the settled sta
 
 A panic in a plugin `apply`, disposer, or event listener propagates to the caller of the lifecycle operation that triggered it. Internal mutexes recover from poisoning, and a fiber interrupted mid-transition stays in `Loading`/`Unloading` — with already-registered effects still owned — until the next lifecycle event or `dispose` settles it. `Context` and `Fiber` do not implement `UnwindSafe` because their trait objects cannot prove it; when a plugin must not take down its caller, isolate it with `std::panic::catch_unwind(std::panic::AssertUnwindSafe(...))`.
 
+## Ecosystem
+
+The core crate stays dependency-free; the loader stack lives in sibling
+crates that build on it:
+
+| Crate | Purpose |
+| --- | --- |
+| [`cordis-include`](../crates/cordis-include) | Config entry trees, YAML/JSON loader files, `${{ env.NAME }}` interpolation |
+| [`cordis-group`](../crates/cordis-group) | Group plugin: nested entries with cascading disable |
+| [`cordis-loader`](../crates/cordis-loader) | Plugin registry + entry↔fiber state machine, file hot reload |
+| [`cordis-cli`](../crates/cordis-cli) | `cordis run` executable: daemon/worker, signals, dotenv |
+
 ## Project layout
 
-The source mirrors the upstream package:
+The core crate source mirrors the upstream package:
 
 ```text
 src/
