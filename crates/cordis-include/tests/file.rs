@@ -2,6 +2,7 @@
 
 use cordis_include::{Document, EntryOptions, EntryTree, IncludeError, LoaderFile, Node};
 use std::path::PathBuf;
+use std::time::Duration;
 
 fn temp_path(stem: &str, ext: &str) -> PathBuf {
     std::env::temp_dir().join(format!(
@@ -244,5 +245,45 @@ fn parse_errors_surface_the_format() {
         file.read(),
         Err(IncludeError::Parse { format: "yaml", .. })
     ));
+    cleanup(&path);
+}
+
+#[test]
+fn deferred_writes_coalesce_latest_wins() {
+    let path = temp_path("deferred", "yml");
+    cleanup(&path);
+    let file = LoaderFile::open(&path).unwrap();
+    let stale = Document::with_entries(vec![EntryOptions::new("a")]);
+    let latest = Document::with_entries(vec![EntryOptions::new("b"), EntryOptions::new("c")]);
+
+    file.write_deferred(stale, Duration::from_millis(300));
+    std::thread::sleep(Duration::from_millis(50));
+    // The second call replaces the pending document and resets the deadline.
+    file.write_deferred(latest.clone(), Duration::from_millis(300));
+    file.flush_deferred();
+
+    assert_eq!(file.read().unwrap(), latest);
+    assert!(file.last_deferred_error().is_none());
+    cleanup(&path);
+}
+
+#[test]
+fn deferred_writes_wait_for_suspension_to_lift() {
+    let path = temp_path("deferred-suspend", "yml");
+    cleanup(&path);
+    let file = LoaderFile::open(&path).unwrap();
+    let document = Document::with_entries(vec![EntryOptions::new("a")]);
+
+    let guard = file.suspend();
+    file.write_deferred(document.clone(), Duration::from_millis(50));
+    let flushing = file.clone();
+    let flusher = std::thread::spawn(move || flushing.flush_deferred());
+
+    // While suspended nothing lands; the flusher is parked behind the guard.
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(!path.exists(), "suspension defers the physical write");
+    drop(guard);
+    flusher.join().unwrap();
+    assert_eq!(file.read().unwrap(), document);
     cleanup(&path);
 }
