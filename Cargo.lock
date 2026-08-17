@@ -10,7 +10,7 @@ checksum = "b588b76d00fde79687d7646a9b5bdf3cc0f655e0bbd080335a95d7e96f3587da"
 
 [[package]]
 name = "cordis-include"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "cordis-rs",
  "indexmap",
@@ -22,7 +22,7 @@ dependencies = [
 
 [[package]]
 name = "cordis-rs"
-version = "0.4.0"
+version = "0.4.1"
 
 [[package]]
 name = "equivalent"
