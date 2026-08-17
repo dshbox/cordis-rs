@@ -658,19 +658,43 @@ impl LoggerService {
     }
 }
 
+/// CamelCase → kebab-case with acronym support: a `-` is inserted before an
+/// uppercase run only when it follows a lowercase character or ends before a
+/// lowercase one, so `"HTTPServer"` becomes `"http-server"` and `"MyClass"`
+/// stays `"my-class"`.
 fn hyphenate(value: &str) -> String {
     let mut output = String::new();
-    for (index, character) in value.chars().enumerate() {
-        if character.is_uppercase() {
-            if index > 0 {
-                output.push('-');
-            }
-            for lower in character.to_lowercase() {
-                output.push(lower);
-            }
-        } else {
+    let characters = value.chars().collect::<Vec<_>>();
+    for (index, character) in characters.iter().copied().enumerate() {
+        if !character.is_uppercase() {
             output.push(character);
+            continue;
+        }
+        let previous = index.checked_sub(1).map(|index| characters[index]);
+        let next = characters.get(index + 1).copied();
+        if previous.is_some_and(|previous| {
+            previous.is_lowercase()
+                || (previous.is_uppercase() && next.is_some_and(char::is_lowercase))
+        }) {
+            output.push('-');
+        }
+        for lower in character.to_lowercase() {
+            output.push(lower);
         }
     }
     output
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hyphenate_splits_camel_case_and_acronyms() {
+        assert_eq!(hyphenate("greeter"), "greeter");
+        assert_eq!(hyphenate("MyClass"), "my-class");
+        assert_eq!(hyphenate("HTTPServer"), "http-server");
+        assert_eq!(hyphenate("ABC"), "abc");
+        assert_eq!(hyphenate("A"), "a");
+    }
 }
