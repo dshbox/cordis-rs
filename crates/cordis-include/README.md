@@ -43,7 +43,8 @@ assert!(Entry::ptr_eq(&kept, &tree.resolve("srv").unwrap()));
 ```
 
 Files round-trip through [`LoaderFile`] with atomic `.tmp` + rename writes,
-readonly detection, and unknown top-level keys preserved:
+readonly detection, unknown top-level keys preserved, and coalesced
+deferred writes (`write_deferred`) for bursty callers:
 
 ```yaml
 entries:

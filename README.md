@@ -32,7 +32,7 @@ The crate currently ports the complete **core runtime**:
 | `internal/plugin`, `internal/status`, `internal/service`, `internal/dispatch` | same meta-events | ✅⁴ |
 | Intercept meta-events (`internal/get`/`set`/`config`/`update`/`listener`) | not ported | Not included |
 | Decorators and callable services | explicit Rust traits/builders | Rust-native |
-| Loader/include/HMR packages | outside the core crate | Not included |
+| Loader / include packages | [`cordis-include`](../crates/cordis-include), [`cordis-group`](../crates/cordis-group), [`cordis-loader`](../crates/cordis-loader), [`cordis-cli`](../crates/cordis-cli) | ✅ separate crates |
 
 1. Rust cannot dynamically project arbitrary struct fields like a JavaScript Proxy, so `alias()` is the explicit counterpart to common `mixin()` usage.
 2. Rust plugin code registers multiple effects explicitly; `EffectHandle::adopt()` provides the original nested diagnostic/disposal tree.
@@ -55,7 +55,7 @@ cargo add cordis-rs
 
 ```toml
 [dependencies]
-cordis-rs = "0.3"
+cordis-rs = "0.4"
 ```
 
 The package is published as `cordis-rs`; the library crate is still named `cordis`, so imports remain `use cordis::...`.
@@ -322,41 +322,54 @@ crates that build on it:
 
 | Crate | Purpose |
 | --- | --- |
-| [`cordis-include`](../crates/cordis-include) | Config entry trees, YAML/JSON loader files, `${{ env.NAME }}` interpolation |
+| [`cordis-include`](../crates/cordis-include) | Config entry trees, YAML/JSON loader files, `${{ env.NAME }}` interpolation, atomic and debounced writes |
 | [`cordis-group`](../crates/cordis-group) | Group plugin: nested entries with cascading disable |
-| [`cordis-loader`](../crates/cordis-loader) | Plugin registry + entry↔fiber state machine, file hot reload |
-| [`cordis-cli`](../crates/cordis-cli) | `cordis run` executable: daemon/worker, signals, dotenv |
+| [`cordis-loader`](../crates/cordis-loader) | Plugin registry + entry↔fiber state machine, cross-file `import` entries, hot reload, lifecycle events, debounced write-backs |
+| [`cordis-cli`](../crates/cordis-cli) | `cordis run` executable: daemon/worker exit-code protocol, signals, dotenv |
+
+Ported so far: static plugin registry, groups, `import` sub-files, self-kill
+detection, entry-level inject, config hot reload, the `loader/*` event
+family, debounced writes, and the daemon/worker runner. Not yet ported:
+dynamic library plugins (and the HMR flow built on them) and isolate /
+service migration.
 
 ## Project layout
 
-The core crate source mirrors the upstream package:
+The repository is a virtual cargo workspace; the core crate lives in
+`crates/cordis` and mirrors the upstream package:
 
 ```text
-src/
-├── context.rs   # root/child context and scope overlays
-├── events.rs    # event bus and five dispatch modes
-├── fiber.rs     # plugin lifecycle and effect ownership
-├── logger.rs    # messages, formatters, buffer, exporters
-├── reflect.rs   # scoped service store and computed properties
-├── registry.rs  # Plugin, Inject, runtime records
-├── service.rs   # typed service and constructor adapters
-├── effect.rs    # disposers, handles, diagnostic trees
-├── value.rs     # Arc<dyn Any> values
-└── utils.rs     # boxed futures, small executor
+crates/
+├── cordis/            # cordis-rs — this crate (zero dependencies)
+│   └── src/
+│       ├── context.rs   # root/child context and scope overlays
+│       ├── events.rs    # event bus and five dispatch modes
+│       ├── fiber.rs     # plugin lifecycle and effect ownership
+│       ├── logger.rs    # messages, formatters, buffer, exporters
+│       ├── reflect.rs   # scoped service store and computed properties
+│       ├── registry.rs  # Plugin, Inject, runtime records
+│       ├── service.rs   # typed service and constructor adapters
+│       ├── effect.rs    # disposers, handles, diagnostic trees
+│       ├── value.rs     # Arc<dyn Any> values
+│       └── utils.rs     # boxed futures, small executor
+├── cordis-include/    # entry trees and config files
+├── cordis-group/      # group plugin
+├── cordis-loader/     # plugin registry + state machine
+└── cordis-cli/        # cordis run executable
 ```
 
 ## Development
 
 ```sh
 # MSRV compatibility
-cargo +1.85 check --all-targets --all-features
-cargo +1.85 test --all-features
+cargo +1.85 check --workspace --all-targets --all-features
+cargo +1.85 test --workspace --all-features
 
 # Latest stable quality and forward-compatibility checks
 cargo +stable fmt --all -- --check
-cargo +stable clippy --all-targets --all-features -- -D warnings
-cargo +stable test --all-features
-RUSTDOCFLAGS="-D warnings" cargo +stable doc --no-deps --all-features
+cargo +stable clippy --workspace --all-targets --all-features -- -D warnings
+cargo +stable test --workspace --all-features
+RUSTDOCFLAGS="-D warnings" cargo +stable doc --workspace --no-deps --all-features
 ```
 
 ## License

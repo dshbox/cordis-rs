@@ -32,7 +32,7 @@ Cordis 是一个基于上下文的插件框架，适用于需要显式依赖注�
 | `internal/plugin`、`internal/status`、`internal/service`、`internal/dispatch` | 同名元事件 | ✅⁴ |
 | 拦截元事件（`internal/get`/`set`/`config`/`update`/`listener`） | 未移植 | 未包含 |
 | 装饰器和可调用服务 | 显式 Rust trait/builder | Rust 原生实现 |
-| Loader/include/HMR 包 | 不属于 core crate | 未包含 |
+| Loader / include 包 | [`cordis-include`](../crates/cordis-include)、[`cordis-group`](../crates/cordis-group)、[`cordis-loader`](../crates/cordis-loader)、[`cordis-cli`](../crates/cordis-cli) | ✅ 独立 crate |
 
 1. Rust 无法像 JavaScript Proxy 一样动态投影任意 struct 字段，因此 `alias()` 是常见 `mixin()` 用法的显式对应方案。
 2. Rust 插件代码会显式注册多个 effect；`EffectHandle::adopt()` 提供与原版对应的嵌套诊断和回收树。
@@ -55,7 +55,7 @@ cargo add cordis-rs
 
 ```toml
 [dependencies]
-cordis-rs = "0.3"
+cordis-rs = "0.4"
 ```
 
 包以 `cordis-rs` 名称发布；库 crate 名仍为 `cordis`，导入方式保持 `use cordis::...` 不变。
@@ -321,41 +321,51 @@ TypeScript 原版通过 Promise 调度生命周期任务。本 crate 特意采�
 
 | Crate | 用途 |
 | --- | --- |
-| [`cordis-include`](../crates/cordis-include) | 配置条目树、YAML/JSON 配置文件、`${{ env.NAME }}` 插值 |
+| [`cordis-include`](../crates/cordis-include) | 配置条目树、YAML/JSON 配置文件、`${{ env.NAME }}` 插值、原子写与防抖合并写 |
 | [`cordis-group`](../crates/cordis-group) | 分组插件：嵌套条目与级联禁用 |
-| [`cordis-loader`](../crates/cordis-loader) | 插件注册表 + 条目↔fiber 状态机、配置热重载 |
-| [`cordis-cli`](../crates/cordis-cli) | `cordis run` 可执行入口：daemon/worker、信号、dotenv |
+| [`cordis-loader`](../crates/cordis-loader) | 插件注册表 + 条目↔fiber 状态机、跨文件 `import` 条目、配置热重载、生命周期事件、防抖写回 |
+| [`cordis-cli`](../crates/cordis-cli) | `cordis run` 可执行入口：daemon/worker 退出码协议、信号、dotenv |
+
+已移植：静态插件注册表、分组、`import` 子文件、自杀判别、entry 级
+inject、配置热重载、`loader/*` 事件族、防抖写、daemon/worker 运行器。
+尚未移植：动态库插件（及在其上的 HMR 流程）、isolate / 服务迁移.
 
 ## 项目结构
 
-核心 crate 源码结构与上游 package 对应：
+仓库是虚拟 cargo workspace；核心 crate 位于 `crates/cordis`，源码结构与上游 package 对应：
 
 ```text
-src/
-├── context.rs   # root/child 上下文和作用域覆盖
-├── events.rs    # 事件总线和五种分发模式
-├── fiber.rs     # 插件生命周期和 effect 所有权
-├── logger.rs    # 消息、格式化器、缓冲区、exporter
-├── reflect.rs   # 作用域服务存储和计算属性
-├── registry.rs  # Plugin、Inject、运行时记录
-├── service.rs   # 类型化服务和构造器适配器
-├── effect.rs    # disposer、handle、诊断树
-├── value.rs     # Arc<dyn Any> 动态值
-└── utils.rs     # boxed future、小型执行器
+crates/
+├── cordis/            # cordis-rs —— 本 crate（零依赖）
+│   └── src/
+│       ├── context.rs   # root/child 上下文和作用域覆盖
+│       ├── events.rs    # 事件总线和五种分发模式
+│       ├── fiber.rs     # 插件生命周期和 effect 所有权
+│       ├── logger.rs    # 消息、格式化器、缓冲区、exporter
+│       ├── reflect.rs   # 作用域服务存储和计算属性
+│       ├── registry.rs  # Plugin、Inject、运行时记录
+│       ├── service.rs   # 类型化服务和构造器适配器
+│       ├── effect.rs    # disposer、handle、诊断树
+│       ├── value.rs     # Arc<dyn Any> 动态值
+│       └── utils.rs     # boxed future、小型执行器
+├── cordis-include/    # 条目树与配置文件
+├── cordis-group/      # 分组插件
+├── cordis-loader/     # 插件注册表 + 状态机
+└── cordis-cli/        # cordis run 可执行入口
 ```
 
 ## 开发
 
 ```sh
 # MSRV 兼容性
-cargo +1.85 check --all-targets --all-features
-cargo +1.85 test --all-features
+cargo +1.85 check --workspace --all-targets --all-features
+cargo +1.85 test --workspace --all-features
 
 # 最新 stable 的质量和向前兼容性检查
 cargo +stable fmt --all -- --check
-cargo +stable clippy --all-targets --all-features -- -D warnings
-cargo +stable test --all-features
-RUSTDOCFLAGS="-D warnings" cargo +stable doc --no-deps --all-features
+cargo +stable clippy --workspace --all-targets --all-features -- -D warnings
+cargo +stable test --workspace --all-features
+RUSTDOCFLAGS="-D warnings" cargo +stable doc --workspace --no-deps --all-features
 ```
 
 ## 许可证
