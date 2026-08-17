@@ -4,6 +4,7 @@
 use cordis::utils::BoxFuture;
 use cordis::{Config, Context, Inject, Plugin, PluginHandle, PluginOutput, Result};
 use cordis_group::Group;
+use cordis_include::IMPORT_NAME;
 use cordis_include::resolver::unknown_plugin;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -23,10 +24,11 @@ pub struct PluginRegistry {
 }
 
 impl PluginRegistry {
-    /// An empty registry with the `group` builtin registered.
+    /// An empty registry with the `group` and `import` builtins registered.
     pub fn new() -> Self {
         let mut registry = Self::default();
         registry.register("group", Group::handle);
+        registry.register(IMPORT_NAME, || PluginHandle::new(Import));
         registry
     }
 
@@ -60,6 +62,20 @@ impl cordis_include::PluginResolver for PluginRegistry {
             Some(factory) => Ok(factory()),
             None => Err(unknown_plugin(name)),
         }
+    }
+}
+
+/// Nesting marker for import entries, whose children the loader mounts
+/// from the referenced file at compose time.
+pub(crate) struct Import;
+
+impl Plugin for Import {
+    fn name(&self) -> &str {
+        IMPORT_NAME
+    }
+
+    fn apply(&self, _ctx: Context, _config: Config) -> BoxFuture<Result<PluginOutput>> {
+        Box::pin(async { Ok(PluginOutput::default()) })
     }
 }
 

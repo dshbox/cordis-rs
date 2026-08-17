@@ -6,6 +6,17 @@ use crate::options::EntryOptions;
 use std::collections::{HashMap, HashSet};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// An entry whose id vanished from the new data, together with the
+/// composite path it had while attached (detached entries would otherwise
+/// report a bare id).
+#[derive(Debug, Clone)]
+pub struct RemovedEntry {
+    /// The detached entry, subtree intact.
+    pub entry: Entry,
+    /// The composite path the entry had before the update.
+    pub path: String,
+}
+
 /// What changed in one [`EntryTree::update`] pass.
 ///
 /// The loader consumes this to start/stop/patch fibers without touching
@@ -19,7 +30,7 @@ pub struct TreeDiff {
     /// Entries that moved to a different parent.
     pub moved: Vec<Entry>,
     /// Entries whose ids vanished from the new data (whole subtrees).
-    pub removed: Vec<Entry>,
+    pub removed: Vec<RemovedEntry>,
 }
 
 impl TreeDiff {
@@ -250,6 +261,13 @@ impl EntryTree {
         // duplicates within the incoming data are rejected.
         validate_subtree(&entries, &HashSet::new(), &mut HashSet::new())?;
 
+        // Snapshot composite paths while every entry is still attached, so
+        // removals can report where they lived.
+        let paths: HashMap<String, String> = self
+            .entries()
+            .iter()
+            .map(|entry| (entry.id().to_string(), entry.path()))
+            .collect();
         // Index every existing entry by id so matches work across groups.
         let mut pool: HashMap<String, Entry> = self
             .entries()
@@ -260,7 +278,13 @@ impl EntryTree {
         let mut diff = TreeDiff::default();
         let children = sync_children(&self.root, entries, &mut pool, &reserved, &mut diff);
         self.root.set_children(children);
-        diff.removed = pool.into_values().collect();
+        diff.removed = pool
+            .into_values()
+            .map(|entry| RemovedEntry {
+                path: paths.get(entry.id()).cloned().unwrap_or_default(),
+                entry,
+            })
+            .collect();
         Ok(diff)
     }
 
