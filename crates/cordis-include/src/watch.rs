@@ -54,7 +54,7 @@ impl LoaderFile {
         let stop = Arc::new(AtomicBool::new(false));
         let stop_flag = Arc::clone(&stop);
         let file = self.clone();
-        let relevant_paths = relevant_paths(self.path(), &watched);
+        let relevant_paths = relevant_paths(self.path());
         let thread = std::thread::Builder::new()
             .name(format!("cordis-watch-{}", self.path().display()))
             .spawn(move || {
@@ -66,10 +66,11 @@ impl LoaderFile {
                     }
                     match rx.recv_timeout(Duration::from_millis(100)) {
                         Ok(Ok(event)) => {
-                            // Some backends report the watched directory instead
-                            // of the changed file, and macOS FSEvents returns
-                            // realpaths, so accept canonical forms too (e.g.
-                            // /tmp vs /private/tmp).
+                            // macOS FSEvents reports realpaths, so accept the
+                            // canonicalized form of the file as well (e.g.
+                            // /tmp/x.yml vs /private/tmp/x.yml). Only the file
+                            // itself matches: sibling files in the watched
+                            // directory must not trigger a reload.
                             let relevant = event
                                 .paths
                                 .iter()
@@ -107,11 +108,11 @@ impl Drop for FileWatcher {
     }
 }
 
-/// Paths whose events are relevant: the file, the watched directory, and
-/// their canonicalized forms. Symlinked prefixes (macOS `/tmp`) make backends
-/// report paths that differ textually from the configured ones.
-fn relevant_paths(file: &std::path::Path, watched: &std::path::Path) -> Vec<std::path::PathBuf> {
-    let mut candidates = vec![file.to_path_buf(), watched.to_path_buf()];
+/// Paths whose events are relevant: the file and its canonicalized form.
+/// Symlinked prefixes (macOS `/tmp`) make backends report paths that differ
+/// textually from the configured one.
+fn relevant_paths(file: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut candidates = vec![file.to_path_buf()];
     if let Ok(canonical) = std::fs::canonicalize(file) {
         candidates.push(canonical);
     } else if let (Some(name), Some(parent)) = (file.file_name(), file.parent()) {
@@ -119,9 +120,6 @@ fn relevant_paths(file: &std::path::Path, watched: &std::path::Path) -> Vec<std:
         if let Ok(canonical_parent) = std::fs::canonicalize(parent) {
             candidates.push(canonical_parent.join(name));
         }
-    }
-    if let Ok(canonical) = std::fs::canonicalize(watched) {
-        candidates.push(canonical);
     }
     candidates
 }
