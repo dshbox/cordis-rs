@@ -34,6 +34,13 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+/// Version of the cordis-rs core this binary was compiled against.
+///
+/// Dynamic-library plugins (`cordis-loader`'s `dynamic` feature) embed this
+/// in their build fingerprint so a library built against a different core
+/// version is rejected instead of producing undefined behavior.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 pub mod context;
 pub mod effect;
 pub mod error;

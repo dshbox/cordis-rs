@@ -10,7 +10,9 @@
 //!
 //! - **Static registry** ([`PluginRegistry`]) replaces upstream's dynamic
 //!   `import(name)`: register plugins at startup, entries resolve by name.
-//!   The `group` builtin is pre-registered.
+//!   The `group` builtin is pre-registered. With the `dynamic` feature,
+//!   names can also resolve to plugins compiled as dynamic libraries (see
+//!   the [`dynamic`] module).
 //! - **Startup**: [`Loader::open`] reads the entry file (writing
 //!   `initial` when missing), builds the [`EntryTree`], and starts every
 //!   enabled entry — group entries as `cordis_group::Group` fibers, children
@@ -71,13 +73,37 @@
 //! [`Loader::set_write_debounce`]: rapid successive writes coalesce into
 //! one physical write after the quiet window.
 //!
+//! # Dynamic library plugins
+//!
+//! With the `dynamic` feature, plugins can be compiled as `cdylib`
+//! libraries and resolved from a directory instead of being registered
+//! statically:
+//!
+//! ```rust,ignore
+//! let registry = PluginRegistry::new().with_dynamic_dirs(["./plugins"]);
+//! ```
+//!
+//! A plugin library exports its implementation through
+//! [`dynamic::export_plugin!`] and must be built by the exact same
+//! toolchain, target, panic strategy, and cordis-rs version as the loading
+//! process — the loader verifies a build fingerprint before accepting the
+//! library. Libraries are never unloaded within a process; reloading a
+//! changed library is the worker-restart HMR flow implemented by
+//! `cordis-cli`.
+//!
 //! # Not in scope yet
 //!
-//! Isolate/service migration and dynamic library plugins are future work.
+//! Isolate/service migration is future work.
 
-#![forbid(unsafe_code)]
+// `deny` instead of `forbid` because the `dynamic` feature wraps
+// libloading's unsafe primitives; every unsafe operation lives in that one
+// module, item-scoped behind `#[allow(unsafe_code)]` with SAFETY notes
+// (the same pattern cordis-cli uses for dotenv).
+#![deny(unsafe_code)]
 #![warn(missing_docs)]
 
+#[cfg(feature = "dynamic")]
+pub mod dynamic;
 pub mod error;
 pub mod events;
 pub mod loader;

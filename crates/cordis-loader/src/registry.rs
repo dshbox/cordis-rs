@@ -7,6 +7,7 @@ use cordis_group::Group;
 use cordis_include::IMPORT_NAME;
 use cordis_include::resolver::unknown_plugin;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 /// A factory producing fresh plugin handles.
@@ -18,9 +19,16 @@ type Factory = Arc<dyn Fn() -> PluginHandle + Send + Sync>;
 /// thus distinct [`cordis::PluginKey`] identities), mirroring one plugin
 /// instance per entry. The registry pre-registers [`cordis_group`]'s
 /// `group` marker.
+///
+/// With the `dynamic` feature, a
+/// [`DynamicPluginResolver`](crate::dynamic::DynamicPluginResolver) can be
+/// attached as a fallback: names missing from the registry are then looked
+/// up as dynamic libraries in its directories.
 #[derive(Clone, Default)]
 pub struct PluginRegistry {
     factories: HashMap<String, Factory>,
+    #[cfg(feature = "dynamic")]
+    dynamic: Option<crate::dynamic::DynamicPluginResolver>,
 }
 
 impl PluginRegistry {
@@ -54,12 +62,43 @@ impl PluginRegistry {
     pub fn names(&self) -> impl Iterator<Item = &str> {
         self.factories.keys().map(String::as_str)
     }
+
+    /// Attach `resolver` as the fallback for unknown names (dynamic
+    /// feature).
+    #[cfg(feature = "dynamic")]
+    pub fn set_dynamic(&mut self, resolver: crate::dynamic::DynamicPluginResolver) {
+        self.dynamic = Some(resolver);
+    }
+
+    /// Builder form of [`PluginRegistry::set_dynamic`]: search `dirs` for
+    /// dynamic-library plugins when a name is not statically registered.
+    #[cfg(feature = "dynamic")]
+    pub fn with_dynamic_dirs<I, D>(mut self, dirs: I) -> Self
+    where
+        I: IntoIterator<Item = D>,
+        D: Into<PathBuf>,
+    {
+        self.set_dynamic(crate::dynamic::DynamicPluginResolver::new(dirs));
+        self
+    }
+
+    /// The attached dynamic resolver, if any (dynamic feature).
+    #[cfg(feature = "dynamic")]
+    pub fn dynamic(&self) -> Option<&crate::dynamic::DynamicPluginResolver> {
+        self.dynamic.as_ref()
+    }
 }
 
 impl cordis_include::PluginResolver for PluginRegistry {
     fn resolve(&self, name: &str) -> Result<PluginHandle> {
         match self.factories.get(name) {
             Some(factory) => Ok(factory()),
+            #[cfg(feature = "dynamic")]
+            None => match &self.dynamic {
+                Some(resolver) => resolver.resolve(name),
+                None => Err(unknown_plugin(name)),
+            },
+            #[cfg(not(feature = "dynamic"))]
             None => Err(unknown_plugin(name)),
         }
     }
