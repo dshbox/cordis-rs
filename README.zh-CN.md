@@ -323,12 +323,13 @@ TypeScript 原版通过 Promise 调度生命周期任务。本 crate 特意采�
 | --- | --- |
 | [`cordis-include`](../crates/cordis-include) | 配置条目树、YAML/JSON 配置文件、`${{ env.NAME }}` 插值、原子写与防抖合并写 |
 | [`cordis-group`](../crates/cordis-group) | 分组插件：嵌套条目与级联禁用 |
-| [`cordis-loader`](../crates/cordis-loader) | 插件注册表 + 条目↔fiber 状态机、跨文件 `import` 条目、配置热重载、生命周期事件、防抖写回 |
-| [`cordis-cli`](../crates/cordis-cli) | `cordis run` 可执行入口：daemon/worker 退出码协议、信号、dotenv |
+| [`cordis-loader`](../crates/cordis-loader) | 插件注册表 + 条目↔fiber 状态机、跨文件 `import` 条目、配置热重载、生命周期事件、防抖写回、动态库插件（`dynamic` feature） |
+| [`cordis-cli`](../crates/cordis-cli) | `cordis run` 可执行入口：daemon/worker 退出码协议、信号、dotenv、插件库热重启 |
 
 已移植：静态插件注册表、分组、`import` 子文件、自杀判别、entry 级
-inject、配置热重载、`loader/*` 事件族、防抖写、daemon/worker 运行器。
-尚未移植：动态库插件（及在其上的 HMR 流程）、isolate / 服务迁移.
+inject、配置热重载、`loader/*` 事件族、防抖写、daemon/worker 运行器，
+以及动态库插件 + worker 重启式 HMR（`cordis-loader` 的 `dynamic`
+feature 与 `cordis run --plugin-dir`）。尚未移植：isolate / 服务迁移.
 
 ## 项目结构
 
