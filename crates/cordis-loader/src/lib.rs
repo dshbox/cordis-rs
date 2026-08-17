@@ -23,7 +23,11 @@
 //! - **Reload** ([`Loader::reload`], wired to the `watch` feature):
 //!   re-read the file, diff the tree, and reconcile fibers — created entries
 //!   start, removed subtrees stop, moved entries restart under their new
-//!   parent, config-only changes patch in place via `Fiber::update_value`.
+//!   parent, entries whose plugin name / inject declaration / enabled flag
+//!   changed stop and restart with their new options, and config-only
+//!   changes patch in place via `Fiber::update_value`. A corrupt or
+//!   unreadable main file fails the operation instead of silently booting
+//!   an empty tree (import files keep a tolerant record-and-skip path).
 //! - **Inject**: an entry's `inject` list is merged into the plugin's own
 //!   declaration, so the core fiber machinery reconciles entries when
 //!   services come and go — "hot-swapped service restarts its dependents"

@@ -25,8 +25,13 @@ pub struct RemovedEntry {
 pub struct TreeDiff {
     /// Entries that appeared in the new data (subtree roots first).
     pub created: Vec<Entry>,
-    /// Entries still present whose options changed.
+    /// Entries still present whose non-structural options (config or
+    /// nested children) changed.
     pub updated: Vec<Entry>,
+    /// Entries still present whose structural options changed — plugin
+    /// name, inject declaration, or enabled flag — and therefore need a
+    /// stop-and-start instead of an in-place patch.
+    pub redefined: Vec<Entry>,
     /// Entries that moved to a different parent.
     pub moved: Vec<Entry>,
     /// Entries whose ids vanished from the new data (whole subtrees).
@@ -38,6 +43,7 @@ impl TreeDiff {
     pub fn is_empty(&self) -> bool {
         self.created.is_empty()
             && self.updated.is_empty()
+            && self.redefined.is_empty()
             && self.moved.is_empty()
             && self.removed.is_empty()
     }
@@ -330,8 +336,17 @@ fn sync_children(
         let entry = match pool.remove(&id) {
             Some(existing) => {
                 if existing.options() != options {
+                    // Structural changes (plugin identity or gating) need a
+                    // restart; config or child-list changes patch in place.
+                    let structural = existing.options().name != options.name
+                        || existing.options().inject != options.inject
+                        || existing.options().disabled != options.disabled;
                     existing.set_options(options);
-                    diff.updated.push(existing.clone());
+                    if structural {
+                        diff.redefined.push(existing.clone());
+                    } else {
+                        diff.updated.push(existing.clone());
+                    }
                 }
                 let moved = existing
                     .parent()

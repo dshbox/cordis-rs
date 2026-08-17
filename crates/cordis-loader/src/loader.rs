@@ -122,6 +122,10 @@ impl Loader {
                 file.write(initial)?;
             }
         }
+        // A corrupt or unreadable main file is fatal — booting an empty
+        // loader would silently discard the whole configuration. Import
+        // files keep the tolerant record-and-skip path inside `compose`.
+        file.read()?;
         let inner = Arc::new(LoaderInner {
             root: root.clone(),
             file,
@@ -144,6 +148,7 @@ impl Loader {
         let (composed, _dirty) = compose(
             &inner.file,
             &mut lock(&inner.imports),
+            &mut HashSet::new(),
             &mut HashSet::new(),
             &mut errors,
         );
@@ -255,16 +260,23 @@ impl Loader {
     /// Re-read the entry file and apply the difference to the fibers.
     ///
     /// Created entries start (parents first), removed subtrees stop, moved
-    /// entries restart under their new parent, updated entries are patched
-    /// in place when only config changed and restarted otherwise. While the
-    /// reload runs, the file is suspended, so the patches it causes are not
+    /// entries restart under their new parent, redefined entries (plugin
+    /// name, inject declaration, or enabled flag changed) stop and start
+    /// with their new options, and updated entries are patched in place —
+    /// their config-only change never restarts the fiber. While the reload
+    /// runs, the file is suspended, so the patches it causes are not
     /// written back; generated ids are persisted afterwards.
     pub fn reload(&self) -> Result<TreeDiff> {
         let inner = &self.inner;
         let mut imports = HashMap::new();
         let mut errors = Vec::new();
-        let (composed, dirty) =
-            compose(&inner.file, &mut imports, &mut HashSet::new(), &mut errors);
+        let (composed, dirty) = compose(
+            &inner.file,
+            &mut imports,
+            &mut HashSet::new(),
+            &mut HashSet::new(),
+            &mut errors,
+        );
         for error in errors {
             self.record_error(LoaderError::Include(
                 cordis_include::IncludeError::Message { message: error },
@@ -283,6 +295,11 @@ impl Loader {
                 self.record_error(error);
             }
         }
+        for entry in &diff.redefined {
+            if let Err(error) = stop_entry(inner, entry) {
+                self.record_error(error);
+            }
+        }
         for entry in &diff.updated {
             if let Err(error) = patch_entry(inner, entry) {
                 self.record_error(error);
@@ -290,6 +307,23 @@ impl Loader {
         }
         for entry in &diff.created {
             if let Err(error) = start_entry(inner, entry) {
+                self.record_error(error);
+            }
+        }
+
+        // Restart what this reload stopped, parents first so re-parented
+        // entries find their group fibers: moved entries under their new
+        // parents, redefined entries with their new options, and updated
+        // entries that had no live fiber.
+        let mut restarts: Vec<&Entry> = diff
+            .moved
+            .iter()
+            .chain(&diff.redefined)
+            .chain(diff.updated.iter().filter(|entry| entry.fiber().is_none()))
+            .collect();
+        restarts.sort_by_key(|entry| entry_depth(entry));
+        for entry in restarts {
+            if let Err(error) = start_subtree(inner, entry) {
                 self.record_error(error);
             }
         }
@@ -328,13 +362,26 @@ impl Loader {
         Ok(())
     }
 
-    /// Stop every entry and clear the fiber map. The root context itself
-    /// stays usable.
+    /// Stop every entry, stop watching files, and release the loader's
+    /// root-level effects (the status listener and the `loader` service).
+    /// The root context stays usable, and a fresh [`Loader::open`] on the
+    /// same root works afterwards.
     pub fn dispose(&self) -> Result<()> {
         let inner = &self.inner;
         for entry in inner.tree.top_level() {
             if let Err(error) = stop_entry(inner, &entry) {
                 self.record_error(error);
+            }
+        }
+        #[cfg(feature = "watch")]
+        {
+            lock(&inner.watched).clear();
+            lock(&inner.watchers).clear();
+        }
+        let keep_alive = std::mem::take(&mut lock(&inner.state)._keep_alive);
+        for effect in &keep_alive {
+            if let Err(error) = effect.dispose() {
+                self.record_error(LoaderError::Cordis(error));
             }
         }
         Ok(())
@@ -465,23 +512,17 @@ fn stop_entry(inner: &LoaderInner, entry: &Entry) -> Result<()> {
     fiber.dispose().map_err(LoaderError::Cordis)
 }
 
-/// Apply an options change to a live entry: restart when the plugin identity
-/// changed (name, inject) or the enabled flag flipped; patch the config in
-/// place otherwise.
+/// Apply a config-only change to a live entry by patching it in place.
+/// Structural changes (name, inject, enabled) arrive through
+/// `diff.redefined` and never here, so no identity comparison is needed.
+/// Entries without a live fiber are left to the reload's restart phase.
 fn patch_entry(inner: &LoaderInner, entry: &Entry) -> Result<()> {
     if !entry.enabled() {
         return stop_entry(inner, entry);
     }
     let Some(fiber) = entry.fiber() else {
-        return start_entry(inner, entry);
+        return Ok(());
     };
-    let options = entry.options();
-    let inject_changed =
-        fiber.inject().names().collect::<Vec<_>>() != options.inject.iter().collect::<Vec<_>>();
-    if fiber.name() != options.name || inject_changed {
-        stop_entry(inner, entry)?;
-        return start_entry(inner, entry);
-    }
     let new_config = entry.resolved_config()?.unwrap_or(Node::Null);
     let current = fiber
         .config()
@@ -502,6 +543,28 @@ fn patch_entry(inner: &LoaderInner, entry: &Entry) -> Result<()> {
         );
     }
     Ok(())
+}
+
+/// (Re)start an entry and its descendants, parents first; `start_entry`
+/// itself skips disabled entries and entries that already run.
+fn start_subtree(inner: &LoaderInner, entry: &Entry) -> Result<()> {
+    start_entry(inner, entry)?;
+    for child in entry.children() {
+        start_subtree(inner, &child)?;
+    }
+    Ok(())
+}
+
+/// Distance from the tree root, for restarting stopped entries parents
+/// first.
+fn entry_depth(entry: &Entry) -> usize {
+    let mut depth = 0;
+    let mut current = entry.clone();
+    while let Some(parent) = current.parent() {
+        depth += 1;
+        current = parent;
+    }
+    depth
 }
 
 /// Serialize an entry together with its live subtree (used by update paths
@@ -594,10 +657,17 @@ fn import_canonical(inner: &LoaderInner, entry: &Entry) -> PathBuf {
 /// `EntryTree::update` diffs across all files uniformly. Returns the
 /// composed top-level entries and whether any file carried entries without
 /// ids (whose generated ids need persisting).
+///
+/// `active` holds the files on the current import chain (cycle detection);
+/// `mounted` holds every file mounted anywhere in this compose. The entry
+/// tree keys entries by globally unique id, so the import graph must be a
+/// tree: real cycles and diamonds (the same file mounted twice) are both
+/// reported and their reference dropped, but with distinct diagnoses.
 fn compose(
     file: &LoaderFile,
     imports: &mut HashMap<PathBuf, LoaderFile>,
     active: &mut HashSet<PathBuf>,
+    mounted: &mut HashSet<PathBuf>,
     errors: &mut Vec<String>,
 ) -> (Vec<EntryOptions>, bool) {
     let document = match file.read() {
@@ -619,12 +689,22 @@ fn compose(
                 // would duplicate its id inside the composed tree.
                 continue;
             }
+            if !mounted.insert(canonical.clone()) {
+                errors.push(format!(
+                    "duplicate import: {} is already mounted elsewhere; \
+                     the import graph must be a tree",
+                    path.display()
+                ));
+                active.remove(&canonical);
+                continue;
+            }
             match LoaderFile::open(&path) {
                 Ok(sub_file) => {
-                    let (sub_entries, sub_dirty) = compose(&sub_file, imports, active, errors);
+                    let (sub_entries, sub_dirty) =
+                        compose(&sub_file, imports, active, mounted, errors);
                     dirty |= sub_dirty;
                     options.group = sub_entries;
-                    imports.insert(canonical, sub_file);
+                    imports.insert(canonical.clone(), sub_file);
                 }
                 Err(error) => errors.push(format!(
                     "cannot open import {} ({}: {error})",
@@ -632,6 +712,9 @@ fn compose(
                     file.path().display()
                 )),
             }
+            // A file is "active" only while its own subtree composes, so
+            // sibling imports of different files never look like cycles.
+            active.remove(&canonical);
         }
         entries.push(options);
     }

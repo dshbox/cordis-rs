@@ -349,10 +349,11 @@ impl Future for Gate {
     }
 }
 
-/// A concurrent dispose during a parked apply() must report the in-flight
-/// transition instead of deadlocking; await_idle() then waits it out.
+/// A cross-thread dispose during a parked apply() waits for the in-flight
+/// transition instead of silently dropping the disposal; same-thread
+/// reentrancy (from a callback) keeps failing fast.
 #[test]
-fn dispose_during_loading_conflicts_then_await_idle() -> Result<()> {
+fn dispose_during_loading_waits_for_the_transition() -> Result<()> {
     let root = Context::new();
     let gate = Gate::new();
     let gate_in_plugin = gate.clone();
@@ -390,11 +391,19 @@ fn dispose_during_loading_conflicts_then_await_idle() -> Result<()> {
     assert!(gate.entered(), "apply() never parked");
     let fiber = slot.lock().unwrap().clone().unwrap();
 
-    assert!(fiber.dispose().is_err(), "dispose raced the transition");
+    // The disposer cannot return while apply() holds the transition: it
+    // waits for the gate to open instead of reporting a conflict.
+    let disposer = std::thread::spawn({
+        let fiber = fiber.clone();
+        move || fiber.dispose()
+    });
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    assert!(
+        !disposer.is_finished(),
+        "dispose must block while the transition is in flight"
+    );
     gate.open();
-    fiber.await_idle();
-    assert_eq!(fiber.state(), FiberState::Active);
-    fiber.dispose()?;
+    disposer.join().unwrap()?;
     assert_eq!(fiber.state(), FiberState::Disposed);
     let _ = worker.join().unwrap();
     Ok(())
@@ -610,4 +619,85 @@ fn restart_from_status_listener_does_not_deadlock() -> Result<()> {
         .expect("deadlock: reentrant restart from internal/status listener")?;
     assert!(fired.load(Ordering::SeqCst));
     Ok(())
+}
+
+/// A wrong-typed config update on a `plugin_sync` plugin must fail
+/// validation and leave the running instance untouched. The type check
+/// used to happen only inside `apply`, so the update tore the instance
+/// down first and left the fiber `Failed`.
+#[test]
+fn update_with_wrong_config_type_fails_validation_not_the_plugin() -> Result<()> {
+    let root = Context::new();
+    let starts = Arc::new(AtomicUsize::new(0));
+    let counter = starts.clone();
+    let fiber = root.plugin(
+        plugin_sync::<u32, _>("typed", Inject::none(), move |_, _| {
+            counter.fetch_add(1, Ordering::SeqCst);
+            Ok(PluginOutput::default())
+        }),
+        7_u32,
+    );
+    fiber.try_wait()?;
+    assert_eq!(starts.load(Ordering::SeqCst), 1);
+
+    let error = fiber.update("wrong type").unwrap_err();
+    assert_eq!(error.code(), ErrorCode::TypeMismatch);
+    assert_eq!(fiber.state(), FiberState::Active);
+    assert_eq!(
+        starts.load(Ordering::SeqCst),
+        1,
+        "the running instance is untouched"
+    );
+    fiber.dispose()?;
+    Ok(())
+}
+
+/// Regression: `register_effect`'s liveness check and its push into the
+/// effect list were not serialized against a concurrent `dispose`, so an
+/// effect that landed after the disposal drain never ran its disposer.
+/// Registration now re-checks liveness under the list lock and undoes the
+/// push; hammer both sides and require every accepted effect to run.
+#[test]
+fn effect_registration_racing_disposal_never_leaks() {
+    let mut leaks = 0;
+    for _ in 0..4000 {
+        let root = Context::new();
+        let fiber = root.plugin_default(plugin_sync::<(), _>("raced", Inject::none(), |_, _| {
+            Ok(PluginOutput::default())
+        }));
+        fiber.try_wait().unwrap();
+
+        let accepted = Arc::new(AtomicUsize::new(0));
+        let disposed = Arc::new(AtomicUsize::new(0));
+        let registrar = {
+            let (fiber, accepted, disposed) = (fiber.clone(), accepted.clone(), disposed.clone());
+            std::thread::spawn(move || {
+                for _ in 0..400 {
+                    let disposed = disposed.clone();
+                    match fiber.effect("raced", move || {
+                        disposed.fetch_add(1, Ordering::SeqCst);
+                        Ok(())
+                    }) {
+                        Ok(_) => {
+                            accepted.fetch_add(1, Ordering::SeqCst);
+                        }
+                        Err(_) => return,
+                    }
+                }
+            })
+        };
+        while accepted.load(Ordering::SeqCst) == 0 {
+            std::thread::yield_now();
+        }
+        fiber.dispose().unwrap();
+        registrar.join().unwrap();
+
+        if disposed.load(Ordering::SeqCst) != accepted.load(Ordering::SeqCst) {
+            leaks += 1;
+        }
+    }
+    assert_eq!(
+        leaks, 0,
+        "some registered effects never ran their disposers"
+    );
 }

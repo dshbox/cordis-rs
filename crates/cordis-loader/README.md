@@ -143,17 +143,25 @@ changes. See the `dynamic` module docs for the full safety model.
 
 - **open** — read (or create) the entry file, build the tree, start every
   enabled entry; group children start beneath their group fiber's context,
-  so disposing a group cascades.
+  so disposing a group cascades. A corrupt or unreadable main file fails
+  the open instead of silently starting an empty tree.
 - **reload** — re-read the file under a suspend guard and reconcile:
   created entries start, removed subtrees stop, moved entries restart
-  under their new parent, config-only changes patch in place. Generated
-  ids are persisted afterwards so the next reload matches them.
+  under their new parent, entries whose plugin name / inject declaration /
+  enabled flag changed stop and restart with their new options, and
+  config-only changes patch in place. Generated ids are persisted
+  afterwards so the next reload matches them.
+- **dispose** — stop every entry, stop watching files, and release the
+  loader's root-level effects (the status listener and the `loader`
+  service); a fresh `Loader::open` on the same root works afterwards.
 - **self-kill** — a fiber that reaches `Disposed` outside loader operation
   was killed by its own plugin; the loader persists `disabled: true` for
   that entry. Removing an entry from the file just stops it.
-- **inject** — an entry's `inject` list is merged into the plugin's own
-  declaration, so services going away or coming back reconciles entries
-  through the core machinery.
+- **inject** — an entry's `inject` list is merged with the plugin's own
+  declaration (both gate startup), so services going away or coming back
+  reconciles entries through the core machinery. The import graph must be
+  a tree: cycles and duplicate mounts of one file are reported distinctly
+  through `last_error()`.
 - **update_config** — the runtime entry point for changing config: updates
   the fiber and persists to the file.
 

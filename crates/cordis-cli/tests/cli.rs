@@ -96,3 +96,48 @@ fn unknown_arguments_fail_fast() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("unknown command"), "stderr: {stderr}");
 }
+
+#[test]
+fn a_config_that_cannot_boot_fails_the_daemon() {
+    let dir = temp_dir("boot-fail");
+    // An unsupported extension fails LoaderFile::open in the worker.
+    let config = dir.join("cordis.toml");
+    std::fs::write(&config, "entries: []\n").unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cordis"))
+        .arg("run")
+        .arg(&config)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("failed to start"), "stderr: {stderr}");
+    assert_ne!(
+        output.status.code(),
+        Some(0),
+        "boot failures must not exit 0"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn an_unparseable_config_fails_the_daemon() {
+    let dir = temp_dir("corrupt");
+    let config = dir.join("cordis.json");
+    std::fs::write(&config, "{\"entries\": [").unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cordis"))
+        .arg("run")
+        .arg(&config)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("failed to start"), "stderr: {stderr}");
+    assert_ne!(
+        output.status.code(),
+        Some(0),
+        "a corrupt config must not exit 0"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

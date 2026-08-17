@@ -272,10 +272,12 @@ impl EventsService {
             }
         }
 
-        // The fiber may have unloaded between effect registration and hook
-        // insertion; its disposer then never runs, so roll back by hand
-        // instead of leaking a live hook for a dead plugin.
-        if fiber.uid().is_none() {
+        // The effect may have been disposed between registration and hook
+        // insertion — by disposal *or* by a restart's unload pass (restart
+        // keeps the fiber uid, so checking the effect covers both). Its
+        // disposer then ran before the hook existed, so roll back by hand
+        // instead of leaking a live hook for a dead listener.
+        if effect.is_disposed() {
             self.ctx.root.events.remove(&name, id);
             effect.dispose()?;
             return Err(CordisError::new(ErrorCode::InactiveEffect));

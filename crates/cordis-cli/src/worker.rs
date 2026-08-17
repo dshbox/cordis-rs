@@ -12,6 +12,9 @@ use std::time::Duration;
 pub const EXIT_RESTART: i32 = 51;
 /// Exit code telling the daemon to quit without restarting.
 pub const EXIT_QUIT: i32 = 52;
+/// Exit code reporting that the loader never came up (bad config,
+/// unreadable file); the daemon exits non-zero instead of masking it.
+pub const EXIT_BOOT: i32 = 53;
 
 /// Quiet window a plugin library must stay unchanged before the worker
 /// restarts, so incremental linker output does not restart mid-write.
@@ -72,7 +75,7 @@ pub fn run(config_path: &Path, plugin_dirs: &[PathBuf]) -> ! {
                 "cordis: failed to start from {}: {error}",
                 config_path.display()
             );
-            std::process::exit(EXIT_QUIT);
+            std::process::exit(EXIT_BOOT);
         }
     };
     let inner = Arc::new(WorkerInner {

@@ -3,10 +3,14 @@
 //!
 //! The process model follows upstream Cordis' NodeLoader: `cordis run`
 //! supervises a worker subprocess running the loader. The worker exits
-//! with code `51` to request a hot restart and `52` to quit; `SIGINT` /
-//! `SIGTERM` dispose the root context gracefully and exit `52`. `.env` and
-//! `.env.local` are loaded (without overriding existing variables) before
-//! the worker boots, and the entry file is watched for hot reload.
+//! with code `51` to request a hot restart (respawned with a doubling,
+//! capped backoff), `52` to quit, and `53` when the loader never came up.
+//! The daemon exits `0` on clean shutdown, `1` when the worker never
+//! booted or died abnormally, and otherwise propagates the worker's code —
+//! deployment pipelines always see the real outcome. `SIGINT` / `SIGTERM`
+//! dispose the root context gracefully and exit `52` (daemon `0`). `.env`
+//! and `.env.local` are loaded (without overriding existing variables)
+//! before the worker boots, and the entry file is watched for hot reload.
 //!
 //! `--plugin-dir <dir>` (repeatable) additionally resolves entries from
 //! dynamic-library plugins compiled against the same toolchain; a change
@@ -26,6 +30,14 @@ pub mod worker;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
+
+/// Initial delay before respawning a restart-looping worker.
+const RESTART_BACKOFF_START: Duration = Duration::from_millis(100);
+/// Ceiling for the doubling restart delay.
+const RESTART_BACKOFF_MAX: Duration = Duration::from_secs(5);
+/// A worker that stayed up at least this long resets the restart backoff.
+const RESTART_BACKOFF_RESET_AFTER: Duration = Duration::from_secs(10);
 
 /// What the supervisor does after a worker exits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,6 +58,39 @@ pub fn supervisor_action(exit_code: Option<i32>, shutdown: bool) -> Action {
     } else {
         Action::Restart
     }
+}
+
+/// The daemon's own exit code after the worker stopped.
+///
+/// A clean quit (52) and a daemon-side shutdown signal exit 0; a worker
+/// that never booted (53) exits 1 so deployment pipelines see the failure;
+/// a crashed worker's code is propagated instead of being masked as
+/// success.
+pub fn daemon_exit_code(exit_code: Option<i32>, shutdown: bool) -> i32 {
+    if shutdown {
+        return 0;
+    }
+    match exit_code {
+        Some(code) if code == worker::EXIT_QUIT => 0,
+        Some(code) if code == worker::EXIT_RESTART => 0,
+        Some(code) if code == worker::EXIT_BOOT => 1,
+        Some(code) => code,
+        None => 1,
+    }
+}
+
+/// The delay before respawning a restart-looping worker: doubling from
+/// [`RESTART_BACKOFF_START`], capped at [`RESTART_BACKOFF_MAX`], and reset
+/// whenever the previous worker stayed up at least
+/// [`RESTART_BACKOFF_RESET_AFTER`].
+fn next_backoff(previous: Option<Duration>, ran_for: Duration) -> Duration {
+    let Some(previous) = previous else {
+        return RESTART_BACKOFF_START;
+    };
+    if ran_for >= RESTART_BACKOFF_RESET_AFTER {
+        return RESTART_BACKOFF_START;
+    }
+    previous.saturating_mul(2).min(RESTART_BACKOFF_MAX)
 }
 
 /// Parsed command line.
@@ -119,7 +164,9 @@ fn usage() -> String {
                   (repeatable); library changes there hot-restart the worker
   --worker        internal: run as the daemon's worker process
 
-Worker exit codes: 51 = hot restart, 52 = quit."
+Worker exit codes: 51 = hot restart, 52 = quit, 53 = boot failure.
+Daemon exit codes: 0 = clean shutdown, 1 = worker never booted or died
+abnormally, otherwise the worker's own code."
         .to_owned()
 }
 
@@ -167,10 +214,16 @@ fn supervise(config: &std::path::Path, plugin_dirs: &[PathBuf]) -> i32 {
             return 1;
         }
     };
+    // Restart backoff so a restart loop cannot spin the CPU; a worker that
+    // stayed up long enough resets it.
+    let mut backoff: Option<Duration> = None;
+    let exit_code;
     loop {
         if shutdown.load(Ordering::SeqCst) {
+            exit_code = Some(worker::EXIT_QUIT);
             break;
         }
+        let started = std::time::Instant::now();
         let mut command = std::process::Command::new(&exe);
         command.arg("run").arg(config).arg("--worker");
         for dir in plugin_dirs {
@@ -183,13 +236,20 @@ fn supervise(config: &std::path::Path, plugin_dirs: &[PathBuf]) -> i32 {
                 return 1;
             }
         };
-        let exit_code = child.wait().ok().and_then(|status| status.code());
-        if supervisor_action(exit_code, shutdown.load(Ordering::SeqCst)) == Action::Stop {
+        let code = child.wait().ok().and_then(|status| status.code());
+        if supervisor_action(code, shutdown.load(Ordering::SeqCst)) == Action::Stop {
+            exit_code = code;
             break;
         }
-        eprintln!("cordis: worker requested restart, respawning");
+        let delay = next_backoff(backoff, started.elapsed());
+        eprintln!(
+            "cordis: worker requested restart, respawning in {}ms",
+            delay.as_millis()
+        );
+        backoff = Some(delay);
+        std::thread::sleep(delay);
     }
-    0
+    daemon_exit_code(exit_code, shutdown.load(Ordering::SeqCst))
 }
 
 #[cfg(test)]
@@ -259,5 +319,39 @@ mod tests {
         assert_eq!(supervisor_action(Some(52), false), Action::Stop);
         assert_eq!(supervisor_action(Some(0), false), Action::Stop);
         assert_eq!(supervisor_action(None, false), Action::Stop);
+    }
+
+    #[test]
+    fn daemon_exit_code_reflects_how_the_worker_ended() {
+        // Clean quit and daemon-side shutdown stay successful.
+        assert_eq!(daemon_exit_code(Some(52), false), 0);
+        assert_eq!(daemon_exit_code(Some(52), true), 0);
+        assert_eq!(daemon_exit_code(Some(51), true), 0);
+        // A worker that never booted fails the daemon.
+        assert_eq!(daemon_exit_code(Some(53), false), 1);
+        // Crashes propagate instead of being masked as success.
+        assert_eq!(daemon_exit_code(Some(101), false), 101);
+        assert_eq!(daemon_exit_code(None, false), 1);
+    }
+
+    #[test]
+    fn restart_backoff_doubles_resets_and_caps() {
+        assert_eq!(
+            next_backoff(None, Duration::from_secs(0)),
+            RESTART_BACKOFF_START
+        );
+        assert_eq!(
+            next_backoff(Some(Duration::from_millis(100)), Duration::from_secs(1)),
+            Duration::from_millis(200)
+        );
+        assert_eq!(
+            next_backoff(Some(Duration::from_secs(4)), Duration::from_secs(1)),
+            RESTART_BACKOFF_MAX
+        );
+        assert_eq!(
+            next_backoff(Some(Duration::from_secs(4)), Duration::from_secs(60)),
+            RESTART_BACKOFF_START,
+            "a worker that stayed up resets the backoff"
+        );
     }
 }
