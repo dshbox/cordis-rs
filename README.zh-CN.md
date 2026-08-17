@@ -104,7 +104,7 @@ fn main() -> Result<()> {
     );
 
     let fiber = root.plugin_default(greeter);
-    fiber.wait()?;
+    fiber.try_wait()?;
     assert_eq!(counter.0.load(Ordering::SeqCst), 1);
 
     fiber.dispose()?;

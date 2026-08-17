@@ -26,7 +26,7 @@
 //!     });
 //!
 //! let fiber = root.plugin(greeter, ());
-//! fiber.wait().unwrap();
+//! fiber.try_wait().unwrap();
 //! assert_eq!(counter.load(Ordering::SeqCst), 1);
 //! fiber.dispose().unwrap();
 //! ```

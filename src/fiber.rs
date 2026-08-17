@@ -520,15 +520,15 @@ impl Fiber {
         }
     }
 
-    /// Wait for the current lifecycle transition and rethrow startup errors.
+    /// Report the fiber's settled lifecycle state without blocking.
     ///
-    /// This port drives transitions eagerly, so this method does not require
-    /// a particular async runtime. It reports the settled state instead of
-    /// suspending: `Ok` only when `Active`; a startup failure is rethrown;
-    /// `Pending` (dependencies missing), in-flight, and `Disposed` fibers
-    /// yield an error rather than a false success. It never blocks, so it is
-    /// safe to call from lifecycle callbacks.
-    pub fn wait(&self) -> Result<Fiber> {
+    /// Despite the upstream name, this port drives transitions eagerly, so
+    /// there is nothing to wait for: the method polls the current state and
+    /// never suspends. `Ok` is returned only when `Active`; a startup failure
+    /// is rethrown; `Pending` (dependencies missing), in-flight, and
+    /// `Disposed` fibers yield an error rather than a false success. Safe to
+    /// call from lifecycle callbacks.
+    pub fn try_wait(&self) -> Result<Fiber> {
         match self.state() {
             FiberState::Active => Ok(self.clone()),
             FiberState::Failed => Err(self
@@ -559,9 +559,9 @@ impl Fiber {
         }
     }
 
-    /// Async equivalent of [`wait`](Self::wait).
+    /// Async equivalent of [`try_wait`](Self::try_wait): also never suspends.
     pub async fn await_ready(&self) -> Result<Fiber> {
-        self.wait()
+        self.try_wait()
     }
 
     /// Dispose and immediately reload this plugin with its current config.
@@ -583,7 +583,7 @@ impl Fiber {
             self.unload_to(FiberState::Pending);
         }
         self.refresh();
-        self.wait().map(|_| ())
+        self.try_wait().map(|_| ())
     }
 
     /// Validate and apply new config, then restart when dependencies are active.
@@ -727,7 +727,7 @@ mod tests {
             }
         }));
         let provider = root.provide("svc", 1_u32).unwrap();
-        fiber.wait().unwrap();
+        fiber.try_wait().unwrap();
         assert_eq!(starts.load(Ordering::SeqCst), 1);
 
         REFRESH_WINDOW_STRETCH.store(true, Ordering::Relaxed);

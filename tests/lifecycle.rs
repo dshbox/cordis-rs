@@ -93,7 +93,7 @@ fn config_update_restarts_a_fiber() -> Result<()> {
         }
     });
     let fiber = root.plugin(plugin, String::from("first"));
-    fiber.wait()?;
+    fiber.try_wait()?;
     fiber.update(String::from("second"))?;
     assert_eq!(*seen.lock().unwrap(), vec!["first", "second"]);
     Ok(())
@@ -123,7 +123,7 @@ fn failed_startup_rolls_back_effects_and_update_can_recover() -> Result<()> {
 
     let fiber = root.plugin(plugin, false);
     assert_eq!(fiber.state(), FiberState::Failed);
-    assert!(fiber.wait().is_err());
+    assert!(fiber.try_wait().is_err());
     root.emit("probe", [])?;
     assert_eq!(calls.load(Ordering::SeqCst), 0);
 
@@ -258,7 +258,7 @@ fn rejected_plugin_leaves_no_registry_record() -> Result<()> {
             Ok(PluginOutput::default())
         },
     ));
-    parent.wait()?;
+    parent.try_wait()?;
     parent.dispose()?;
 
     // The captured context belongs to a disposed fiber, so registering the
@@ -281,7 +281,7 @@ fn dispose_orphaned_fiber_does_not_panic() -> Result<()> {
         let fiber = root.plugin_default(plugin_sync::<(), _>("orphan", Inject::none(), |_, _| {
             Ok(PluginOutput::default())
         }));
-        fiber.wait()?;
+        fiber.try_wait()?;
         fiber
     };
     fiber.dispose()?;
@@ -513,7 +513,7 @@ fn wait_reports_pending_as_not_ready() -> Result<()> {
         |_, _| Ok(PluginOutput::default()),
     ));
     assert_eq!(fiber.state(), FiberState::Pending);
-    assert!(fiber.wait().is_err());
+    assert!(fiber.try_wait().is_err());
     Ok(())
 }
 
@@ -526,7 +526,7 @@ fn restart_on_root_fiber_errors_without_side_effects() -> Result<()> {
     let fiber = root.plugin_default(plugin_sync::<(), _>("alive", Inject::none(), |_, _| {
         Ok(PluginOutput::default())
     }));
-    fiber.wait()?;
+    fiber.try_wait()?;
     assert!(root.fiber()?.restart().is_err());
     assert_eq!(root.fiber()?.state(), FiberState::Active);
     assert_eq!(fiber.state(), FiberState::Active);
@@ -561,7 +561,7 @@ fn update_validates_config_once() -> Result<()> {
     let root = Context::new();
     let calls = Arc::new(AtomicUsize::new(0));
     let fiber = root.plugin_default(PluginHandle::new(CountingValidator(calls.clone())));
-    fiber.wait()?;
+    fiber.try_wait()?;
     assert_eq!(calls.load(Ordering::SeqCst), 1);
     fiber.update(())?;
     assert_eq!(calls.load(Ordering::SeqCst), 2);
@@ -577,7 +577,7 @@ fn restart_from_status_listener_does_not_deadlock() -> Result<()> {
     let fiber = root.plugin_default(plugin_sync::<(), _>("reentrant", Inject::none(), |_, _| {
         Ok(PluginOutput::default())
     }));
-    fiber.wait()?;
+    fiber.try_wait()?;
     let target_uid = fiber.uid();
 
     let fired = Arc::new(AtomicBool::new(false));
