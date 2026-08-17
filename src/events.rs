@@ -307,6 +307,14 @@ impl EventsService {
     }
 
     /// Register an asynchronous event listener.
+    ///
+    /// The future is driven by a small blocking executor, often while the
+    /// owning fiber's transition mutex is held. Do not await futures that
+    /// require the current thread to make progress (for example runtime
+    /// blocking-task joins or channels filled by the calling thread); park
+    /// only on work completing on other threads. The same caveat applies to
+    /// async listeners dispatched through [`emit`](Self::emit) and
+    /// [`bail`](Self::bail), which block on each listener in turn.
     pub fn on_async<F, Fut>(
         &self,
         name: impl Into<String>,

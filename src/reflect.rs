@@ -393,6 +393,14 @@ impl ReflectService {
     }
 
     /// Replace a service or computed property value.
+    ///
+    /// Replacing a service value neither advances its dependency generation
+    /// nor notifies injecting fibers: dependents reconciled earlier keep
+    /// observing the old value until they reconcile for another reason. Call
+    /// [`notify`](Self::notify) with the service name to re-evaluate them.
+    /// Availability predicates registered with
+    /// [`provide_checked`](Self::provide_checked) see the new value on their
+    /// next evaluation.
     pub fn set_value(&self, name: &str, value: Value) -> Result<()> {
         let scope_override = self.ctx.scope_override(name);
         let mut state = lock(&self.ctx.root.reflect.state);

@@ -371,6 +371,10 @@ impl Context {
     }
 
     /// Replace a service value. Only its providing fiber may do this.
+    ///
+    /// The replacement does not wake dependent fibers; see
+    /// [`ReflectService::set_value`](crate::ReflectService::set_value) and
+    /// [`notify`](Self::notify).
     pub fn set<T>(&self, name: &str, value: T) -> Result<()>
     where
         T: Send + Sync + 'static,
@@ -414,6 +418,9 @@ impl Context {
     }
 
     /// Register an asynchronous event listener.
+    ///
+    /// See [`EventsService::on_async`](crate::EventsService::on_async) for the
+    /// blocking-executor caveats before awaiting thread-local work here.
     pub fn on_async<F, Fut>(&self, name: impl Into<String>, listener: F) -> Result<EffectHandle>
     where
         F: Fn(Event) -> Fut + Send + Sync + 'static,
