@@ -1,0 +1,20 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+## [0.0.2](https://github.com/dshbox/cordis-rs/compare/cordis-include-v0.0.1...cordis-include-v0.0.2) - 2026-08-17
+
+### Added
+
+- add cordis-include for config entry trees and loader files
+
+### Fixed
+
+- scope watch matching to the target file and isolate watch tests
+- match watcher events through symlinked paths
+- satisfy stable clippy and macOS FSEvents in cordis-include
