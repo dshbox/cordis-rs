@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.5](https://github.com/dshbox/cordis-rs/compare/cordis-cli-v0.0.4...cordis-cli-v0.0.5) - 2026-08-17
+
+### Other
+
+- Merge pull request #18 from dshbox/docs/readme-refresh
+- align READMEs with the current workspace and feature set
+
 ## [0.0.4](https://github.com/dshbox/cordis-rs/compare/cordis-cli-v0.0.3...cordis-cli-v0.0.4) - 2026-08-17
 
 ### Other
