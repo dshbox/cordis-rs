@@ -24,13 +24,10 @@ cordis: worker ready (2 entries, config: cordis.yml)
 
 Plugins stop or restart the process through the `worker` service:
 
-```rust
-# use cordis::Context;
-# fn main() -> cordis::Result<()> {
+```rust,ignore
+// inside a plugin's apply, with `ctx` the plugin context:
 let handle = ctx.require::<cordis_cli::worker::WorkerHandle>("worker")?;
 handle.restart(); // full worker reload (exit 51)
-# Ok(())
-# }
 ```
 
 ## Scope
