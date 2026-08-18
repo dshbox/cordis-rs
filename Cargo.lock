@@ -54,9 +54,11 @@ dependencies = [
  "cordis-rs",
  "indexmap",
  "notify",
+ "ryu",
  "serde",
  "serde_json",
  "serde_yaml_ng",
+ "unsafe-libyaml",
 ]
 
 [[package]]

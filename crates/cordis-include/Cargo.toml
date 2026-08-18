@@ -19,7 +19,14 @@ watch = ["notify"]
 [dependencies]
 cordis-rs.workspace = true
 indexmap.workspace = true
+ryu.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-serde_yaml_ng.workspace = true
+unsafe-libyaml.workspace = true
 notify = { version = "8", optional = true }
+
+[dev-dependencies]
+# Parity oracle only: the dialect parser's resolution must match what
+# serde_yaml_ng produced before the switch (A/B tests). Leaving the
+# dependency graph unchanged otherwise.
+serde_yaml_ng.workspace = true

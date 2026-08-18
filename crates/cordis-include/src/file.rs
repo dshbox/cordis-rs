@@ -146,20 +146,11 @@ impl LoaderFile {
         }
         match self.inner.format {
             FileFormat::Yaml => {
-                let value =
-                    serde_yaml_ng::from_str::<serde_yaml_ng::Value>(&content).map_err(|error| {
-                        IncludeError::Parse {
-                            format: "yaml",
-                            source: Box::new(error),
-                        }
-                    })?;
-                if value.is_null() {
+                let node = crate::yaml::parse_node(&content)?;
+                if node.is_null() {
                     return Ok(Document::default());
                 }
-                serde_yaml_ng::from_value(value).map_err(|error| IncludeError::Parse {
-                    format: "yaml",
-                    source: Box::new(error),
-                })
+                crate::yaml::document_from_node(node)
             }
             FileFormat::Json => {
                 let value =
@@ -281,12 +272,7 @@ fn write_document(inner: &FileInner, document: &Document) -> Result<()> {
         }
     }
     let content = match inner.format {
-        FileFormat::Yaml => {
-            serde_yaml_ng::to_string(document).map_err(|error| IncludeError::Parse {
-                format: "yaml",
-                source: Box::new(error),
-            })?
-        }
+        FileFormat::Yaml => crate::yaml::emit_document(document),
         FileFormat::Json => {
             let mut text =
                 serde_json::to_string_pretty(document).map_err(|error| IncludeError::Parse {

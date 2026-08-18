@@ -50,7 +50,10 @@
 //!
 //! `${{ env.NAME }}` templates substitute environment variables when config
 //! is handed to a plugin ([`Entry::resolved_config`]); the file itself keeps
-//! the template text. There is no expression evaluation.
+//! the template text. `!!js` scalars parse through the crate's own YAML
+//! dialect (the [`yaml`] module) and round-trip as expression nodes
+//! ([`Node::Expr`]), still unevaluated — evaluation of the expression
+//! subset is the loader's hand-off job.
 //!
 //! # Patch lists
 //!
@@ -74,7 +77,11 @@
 //! registries and dynamic libraries live in `cordis-loader`), fiber
 //! lifecycle, and cascading group semantics (`cordis-group`).
 
-#![forbid(unsafe_code)]
+// `deny` instead of `forbid` because the YAML dialect module wraps
+// `unsafe-libyaml`'s C-translation parser; every unsafe operation lives in
+// that one module, item-scoped behind `#[allow(unsafe_code)]` with SAFETY
+// notes (the same pattern `cordis-loader` uses for libloading).
+#![deny(unsafe_code)]
 #![warn(missing_docs)]
 
 pub mod entry;
@@ -88,6 +95,7 @@ pub mod resolver;
 pub mod tree;
 #[cfg(feature = "watch")]
 pub mod watch;
+pub mod yaml;
 
 pub use entry::{Entry, EntrySuspendGuard};
 pub use error::{IncludeError, Result};
@@ -103,6 +111,7 @@ pub use resolver::PluginResolver;
 pub use tree::{EntryTree, RemovedEntry, TreeDiff};
 #[cfg(feature = "watch")]
 pub use watch::FileWatcher;
+pub use yaml::{emit_document, emit_entry_list, parse_document, parse_entry_list, parse_node};
 
 /// Lock a mutex tolerantly, treating a poisoned lock as unlocked.
 ///

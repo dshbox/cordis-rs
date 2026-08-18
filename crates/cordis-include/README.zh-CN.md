@@ -44,7 +44,9 @@ assert!(Entry::ptr_eq(&kept, &tree.resolve("srv").unwrap()));
 
 文件通过 [`LoaderFile`] 往返读写：原子且写者互斥的 `.tmp` + rename 写入
 （并发写者不会交错出撕裂内容）、只读检测、未知顶层键原样保留，以及面向
-高频调用方的合并延迟写（`write_deferred`）：
+高频调用方的合并延迟写（`write_deferred`）。YAML 由 crate 自有方言解析：
+与原 serde 读取器语义一致（A/B 测试验证），同时把 `!!js` 标量保留为
+表达式节点（[`Node`]），原样往返、不求值：
 
 ```yaml
 entries:
@@ -103,3 +105,5 @@ assert!(entries[0].disabled);
 [`apply_entry_patches`]: https://docs.rs/cordis-include/latest/cordis_include/fn.apply_entry_patches.html
 [`compose_layers`]: https://docs.rs/cordis-include/latest/cordis_include/fn.compose_layers.html
 [`render_config_dump`]: https://docs.rs/cordis-include/latest/cordis_include/fn.render_config_dump.html
+
+[`Node`]: https://docs.rs/cordis-include/latest/cordis_include/enum.Node.html
