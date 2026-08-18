@@ -305,7 +305,7 @@ impl Plugin for Worker {
 
 ## 运行时说明
 
-TypeScript 原版通过 Promise 调度生命周期任务。本 crate 特意采用即时生命周期协调：`provide`、effect 回收、`restart` 和 `update` 会在受影响的 fiber 稳定后才返回。因此，无需 Tokio 或其他执行器也能获得确定性行为。同时仍然提供 `Fiber::await_ready`、异步事件模式、异步插件和异步 disposer。
+TypeScript 原版通过 Promise 调度生命周期任务。本 crate 特意采用即时生命周期协调：`provide`、effect 回收、`restart` 和 `update` 会在受影响的 fiber 稳定后才返回。因此，无需 Tokio 或其他执行器也能获得确定性行为。同时仍然提供 `Fiber::await_ready`、异步事件模式、异步插件和异步 disposer；其中 `await_ready` 与 `dispose_async` 是同步直通实现，从不让出执行器——await 期间会阻塞调用线程直至完成。
 
 与执行器无关的 future 可以在任何环境中运行。如果 future 会创建特定运行时资源（例如 `tokio::time::sleep`），请在对应运行时已经进入的情况下调用 Cordis。
 

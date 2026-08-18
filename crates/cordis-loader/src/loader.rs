@@ -274,9 +274,13 @@ impl Loader {
     /// entries restart under their new parent, redefined entries (plugin
     /// name, inject declaration, or enabled flag changed) stop and start
     /// with their new options, and updated entries are patched in place —
-    /// their config-only change never restarts the fiber. While the reload
-    /// runs, the file is suspended, so the patches it causes are not
-    /// written back; generated ids are persisted afterwards.
+    /// their config-only change never restarts the fiber. A patch the
+    /// plugin rejects leaves the fiber on its current config and is
+    /// retried by the next reload. Patches are never written back to the
+    /// file; only newly generated ids are persisted afterwards. The whole
+    /// reconcile runs under the loader's operation lock, serialized
+    /// against [`update_config`](Self::update_config) and
+    /// [`dispose`](Self::dispose).
     pub fn reload(&self) -> Result<TreeDiff> {
         let inner = &self.inner;
         // Whole-reload exclusion: compose, diff, fiber transitions, and the
