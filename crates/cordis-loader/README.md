@@ -90,6 +90,58 @@ Reloads compose all involved files into one tree diff; write-back always
 routes mounted entries back to the file they came from (generated ids
 included). Import cycles are reported via `last_error()` and skipped.
 
+## Document sources
+
+[`LoaderConfig::with_document`] composes from an in-memory document
+instead of reading the entry file, and [`Loader::update`] reconciles a
+fresh composition the same way — the layer-based assembly model:
+compose layers offline, then mount the result. Boot then neither reads
+nor writes the file (concurrent
+boots on one shared draft cannot race, and the directory may stay
+read-only), reloads recompose from the stored document while import
+files are still read, and `update` persists nothing — the file stays a
+pure write-back draft:
+
+```rust
+use cordis::{plugin_sync, Inject, PluginOutput};
+use cordis_include::{Document, EntryOptions, Node};
+use cordis_loader::{Loader, LoaderConfig, PluginRegistry};
+
+# fn main() -> cordis_loader::Result<()> {
+# let mut registry = PluginRegistry::new();
+# registry.register("worker", || {
+#     plugin_sync::<Node, _>("worker", Inject::default(), |_, _| Ok(PluginOutput::none()))
+# });
+let path = std::env::temp_dir().join(format!("cordis-loader-doc-{}.yml", std::process::id()));
+let _ = std::fs::remove_file(&path);
+let root = cordis::Context::new();
+let loader = Loader::open(
+    &root,
+    LoaderConfig::new(&path).with_registry(registry).with_document(Document::with_entries(
+        vec![EntryOptions::new("worker").with_id("w1")],
+    )),
+)?;
+assert!(!path.exists(), "boot touched the draft");
+
+// Recomposition: full diff → stop → patch → start, no write-back.
+let diff = loader.update(Document::with_entries(vec![
+    EntryOptions::new("worker").with_id("w1").with_config(
+        [("port".to_string(), Node::Int(8080))].into_iter().collect(),
+    ),
+]))?;
+assert_eq!(diff.updated.len(), 1);
+assert!(!path.exists(), "recomposition touched the draft");
+
+// The draft is only touched by write-backs:
+loader.update_config("w1", [("port".to_string(), Node::Int(9090))].into_iter().collect())?;
+assert!(path.exists(), "write-back landed in the draft");
+
+loader.dispose()?;
+let _ = std::fs::remove_file(&path);
+# Ok(())
+# }
+```
+
 ## Dynamic library plugins
 
 With the `dynamic` feature, entries can also resolve to plugins compiled
@@ -155,6 +207,12 @@ changes. See the `dynamic` module docs for the full safety model.
   plugin rejects keeps the fiber on its old config and is retried by the
   next reload. Generated ids are persisted afterwards so the next reload
   matches them.
+- **document sources** — `LoaderConfig::with_document` boots from an
+  in-memory document (the file becomes a pure write-back draft, never a
+  composition input), and `Loader::update` reconciles a fresh composition
+  through the same machinery without write-back — the HMR primitive for
+  layer-based composition. Reloads of a document-backed loader recompose
+  from the stored document; only import files are re-read.
 - **dispose** — stop every entry, stop watching files, and release the
   loader's root-level effects (the status listener and the `loader`
   service); a fresh `Loader::open` on the same root works afterwards.
@@ -202,3 +260,5 @@ The [`cordis-cli`](https://crates.io/crates/cordis-cli) runner builds its
 `cordis run` command on top of this crate.
 
 [`Loader::reload`]: https://docs.rs/cordis-loader/latest/cordis_loader/struct.Loader.html#method.reload
+[`Loader::update`]: https://docs.rs/cordis-loader/latest/cordis_loader/struct.Loader.html#method.update
+[`LoaderConfig::with_document`]: https://docs.rs/cordis-loader/latest/cordis_loader/struct.LoaderConfig.html#method.with_document

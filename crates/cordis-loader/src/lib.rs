@@ -28,6 +28,15 @@
 //!   changes patch in place via `Fiber::update_value`. A corrupt or
 //!   unreadable main file fails the operation instead of silently booting
 //!   an empty tree (import files keep a tolerant record-and-skip path).
+//! - **Document sources** ([`LoaderConfig::with_document`],
+//!   [`Loader::update`]): compose from an in-memory document instead of the
+//!   entry file. Boot then never reads or writes the file — concurrent
+//!   boots on one shared draft cannot race, and the directory may stay
+//!   read-only — while reloads recompose from the stored document (import
+//!   files are still read). `update` reconciles a fresh composition with
+//!   the same diff → stop → patch → start machinery but no write-back,
+//!   making it the HMR primitive for layer-based composition: a watcher
+//!   recomposes and hands the result over.
 //! - **Inject**: an entry's `inject` list is merged into the plugin's own
 //!   declaration, so the core fiber machinery reconciles entries when
 //!   services come and go — "hot-swapped service restarts its dependents"
@@ -40,9 +49,11 @@
 //! - **Write-back**: [`Loader::update_config`] is the runtime entry point —
 //!   it updates the fiber *and* persists the config. Reloads apply their
 //!   patches without writing them back; only newly generated ids are
-//!   persisted. `reload`, `update_config`, and `dispose` serialize through
-//!   one operation lock (reentrant from event listeners), so a
-//!   watch-thread reload cannot interleave with a plugin-thread
+//!   persisted. For a document-backed loader the entry file is a pure
+//!   write-back draft: rows materialized into it never re-enter the
+//!   composition. `reload`, `update`, `update_config`, and `dispose`
+//!   serialize through one operation lock (reentrant from event listeners),
+//!   so a watch-thread reload cannot interleave with a plugin-thread
 //!   `update_config`.
 //!
 //! # Example
