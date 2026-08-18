@@ -52,6 +52,13 @@
 //! is handed to a plugin ([`Entry::resolved_config`]); the file itself keeps
 //! the template text. There is no expression evaluation.
 //!
+//! # Patch lists
+//!
+//! Entry lists compose from *patch* files — bare top-level YAML arrays of
+//! [`PatchOptions`] rows (`id`-targeted overrides and `insert` lists), the
+//! bundle/profile assembly model. See the [`patch`] module for the apply,
+//! composition, provenance, and dump mechanisms.
+//!
 //! # Suspension
 //!
 //! Two suspend counters break the reload feedback loop: a file-level guard
@@ -76,6 +83,7 @@ pub mod file;
 pub mod interpolate;
 pub mod node;
 pub mod options;
+pub mod patch;
 pub mod resolver;
 pub mod tree;
 #[cfg(feature = "watch")]
@@ -85,7 +93,12 @@ pub use entry::{Entry, EntrySuspendGuard};
 pub use error::{IncludeError, Result};
 pub use file::{Document, FileFormat, FileSuspendGuard, LoaderFile};
 pub use node::{Node, NodeMap};
-pub use options::{EntryOptions, IMPORT_NAME};
+pub use options::{EntryOptions, GROUP_NAME, IMPORT_NAME};
+pub use patch::{
+    DumpLayer, PatchOptions, Provenance, apply_entry_patches, compose_layers,
+    compose_with_provenance, load_optional_patches, load_overlay_patches, render_config_dump,
+    render_dump,
+};
 pub use resolver::PluginResolver;
 pub use tree::{EntryTree, RemovedEntry, TreeDiff};
 #[cfg(feature = "watch")]

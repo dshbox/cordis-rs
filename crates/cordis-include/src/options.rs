@@ -12,6 +12,10 @@ fn is_false(value: &bool) -> bool {
 /// (`name: import` with `config: { url: "…" }`).
 pub const IMPORT_NAME: &str = "import";
 
+/// Entry name of the built-in group plugin: a row named `group` (or any row
+/// with children) is a group.
+pub const GROUP_NAME: &str = "group";
+
 /// One entry in a config file: a plugin instance plus its group position.
 ///
 /// The declared field order is the serialization order (`id` and `name`

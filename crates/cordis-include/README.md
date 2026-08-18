@@ -60,6 +60,36 @@ entries:
           host: ${{ env.HOST }}
 ```
 
+## Patch lists
+
+Entry lists compose from *patch* files — bare top-level YAML arrays of
+[`PatchOptions`] rows (`id`-targeted overrides and `insert` lists), the
+bundle/profile assembly model. [`apply_entry_patches`] is the one
+application routine every consumer shares; [`compose_layers`] flattens all
+layers into a single call (the same single call a boot performs);
+[`render_config_dump`] prints the composition grouped by source under
+`# ==` provenance comments:
+
+```rust
+use cordis_include::{compose_layers, EntryOptions, Node, PatchOptions};
+# fn main() {
+let bundle = vec![PatchOptions {
+    insert: Some(vec![EntryOptions::new("adapter-http")
+        .with_id("http")
+        .with_config(Node::from_iter([("port".to_string(), 8080.into())]))]),
+    ..Default::default()
+}];
+let user = vec![PatchOptions {
+    id: Some("http".into()),
+    disabled: Some(true),
+    ..Default::default()
+}];
+let entries = compose_layers(&[bundle, user], |_| {});
+assert_eq!(entries.len(), 1);
+assert!(entries[0].disabled);
+# }
+```
+
 ## Feature flags
 
 - **`watch`** — debounced file watching through [`notify`](https://crates.io/crates/notify).
@@ -75,3 +105,7 @@ lifecycle.
 
 [`LoaderFile`]: https://docs.rs/cordis-include/latest/cordis_include/struct.LoaderFile.html
 [`PluginResolver`]: https://docs.rs/cordis-include/latest/cordis_include/trait.PluginResolver.html
+[`PatchOptions`]: https://docs.rs/cordis-include/latest/cordis_include/struct.PatchOptions.html
+[`apply_entry_patches`]: https://docs.rs/cordis-include/latest/cordis_include/fn.apply_entry_patches.html
+[`compose_layers`]: https://docs.rs/cordis-include/latest/cordis_include/fn.compose_layers.html
+[`render_config_dump`]: https://docs.rs/cordis-include/latest/cordis_include/fn.render_config_dump.html
