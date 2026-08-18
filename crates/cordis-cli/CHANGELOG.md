@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.17](https://github.com/dshbox/cordis-rs/compare/cordis-cli-v0.0.16...cordis-cli-v0.0.17) - 2026-08-18
+
+### Fixed
+
+- stop the lib/bin rustdoc output collision between cordis-rs and cordis-cli ([#59](https://github.com/dshbox/cordis-rs/pull/59))
+
 ## [0.0.16](https://github.com/dshbox/cordis-rs/compare/cordis-cli-v0.0.15...cordis-cli-v0.0.16) - 2026-08-18
 
 ### Other
