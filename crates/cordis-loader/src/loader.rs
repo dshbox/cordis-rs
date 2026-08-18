@@ -673,9 +673,15 @@ fn reconcile(
     Ok(diff)
 }
 
-/// Start one entry's fiber beneath its parent group's context.
+/// Start one entry's fiber beneath its parent group's context. The
+/// enabled check resolves `!!js` disabled expressions (own slot and every
+/// ancestor's); an expression that fails to evaluate is a start failure,
+/// recorded by the caller like a resolve failure.
 fn start_entry(inner: &LoaderInner, entry: &Entry) -> Result<()> {
-    if !entry.enabled() || entry.fiber().is_some() {
+    if entry.fiber().is_some() {
+        return Ok(());
+    }
+    if !entry.resolved_enabled()? {
         return Ok(());
     }
     let name = entry.name();
@@ -735,8 +741,11 @@ fn stop_entry(inner: &LoaderInner, entry: &Entry) -> Result<()> {
 /// Structural changes (name, inject, enabled) arrive through
 /// `diff.redefined` and never here, so no identity comparison is needed.
 /// Entries without a live fiber are left to the reload's restart phase.
+/// A `!!js` disabled expression that fails to evaluate propagates the
+/// error and leaves the fiber on its current config, retried by the next
+/// reload.
 fn patch_entry(inner: &LoaderInner, entry: &Entry) -> Result<()> {
-    if !entry.enabled() {
+    if !entry.resolved_enabled()? {
         return stop_entry(inner, entry);
     }
     let Some(fiber) = entry.fiber() else {
@@ -1065,7 +1074,11 @@ fn persist_self_dispose(inner: &LoaderInner, entry: &Entry) -> Result<()> {
     }
     entry.set_fiber(None);
     let mut options = entry_options_with_children(entry);
-    options.disabled = true;
+    // The static flag overwrites any `!!js` expression the slot held.
+    // Upstream keeps the raw expression in the options; this port trades
+    // that for the dead entry's final state — the draft is regenerated
+    // (and the expression restored) on every recomposition anyway.
+    options.disabled = cordis_include::Disabled::Flag(true);
     inner
         .tree
         .update_entry(&entry.path(), options, None, None)?;

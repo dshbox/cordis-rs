@@ -56,12 +56,21 @@ expression nodes ([`Node`]) that round-trip verbatim, unevaluated:
 entries:
   - id: srv
     name: group
-    group:
-      - name: adapter-http
-        config:
-          port: 8080
-          host: ${{ env.HOST }}
+  - id: gated
+    name: adapter-http
+    disabled: !!js process.platform === 'win32'
+    config:
+      port: 8080
+      host: ${{ env.HOST }}
+      mode: !!js process.env.DSH_MODE || 'default'
 ```
+
+At hand-off ([`Entry::resolved_config`]) every `!!js` expression evaluates
+through the [`expr`] subset — the `process.*` references the shipped
+bundles use; expressions touching injected context (`ctx.*`,
+`dshHomePath(…)`) fail with a clear subset error. The `disabled` field
+takes the same `!!js` form: the raw text round-trips through the file
+and [`Entry::resolved_disabled`] evaluates it at activation.
 
 ## Patch lists
 
@@ -89,7 +98,7 @@ let user = vec![PatchOptions {
 }];
 let entries = compose_layers(&[bundle, user], |_| {});
 assert_eq!(entries.len(), 1);
-assert!(entries[0].disabled);
+assert!(entries[0].disabled.is_disabled());
 # }
 ```
 
@@ -112,5 +121,8 @@ lifecycle.
 [`apply_entry_patches`]: https://docs.rs/cordis-include/latest/cordis_include/fn.apply_entry_patches.html
 [`compose_layers`]: https://docs.rs/cordis-include/latest/cordis_include/fn.compose_layers.html
 [`render_config_dump`]: https://docs.rs/cordis-include/latest/cordis_include/fn.render_config_dump.html
+[`Entry::resolved_config`]: https://docs.rs/cordis-include/latest/cordis_include/struct.Entry.html#method.resolved_config
+[`Entry::resolved_disabled`]: https://docs.rs/cordis-include/latest/cordis_include/struct.Entry.html#method.resolved_disabled
+[`expr`]: https://docs.rs/cordis-include/latest/cordis_include/expr/index.html
 
 [`Node`]: https://docs.rs/cordis-include/latest/cordis_include/enum.Node.html

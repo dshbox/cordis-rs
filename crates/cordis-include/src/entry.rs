@@ -1,9 +1,10 @@
 //! In-memory entry nodes: identity, runtime state, and ancestor walks.
 
-use crate::error::Result;
+use crate::error::{IncludeError, Result};
+use crate::expr::evaluate_node;
 use crate::interpolate::interpolate_node;
 use crate::lock;
-use crate::options::EntryOptions;
+use crate::options::{Disabled, EntryOptions};
 use cordis::Fiber;
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 
@@ -103,11 +104,13 @@ impl Entry {
         self.state().options.config.clone()
     }
 
-    /// The config with `${{ env.NAME }}` templates expanded, ready to be
-    /// handed to a plugin as `cordis_rs::Value::new(node)`.
+    /// The config with `${{ env.NAME }}` templates expanded and every
+    /// `!!js` expression node evaluated, ready to be handed to a plugin
+    /// as `cordis_rs::Value::new(node)`. An out-of-subset expression
+    /// (for example one referencing `ctx.*`) fails here.
     pub fn resolved_config(&self) -> Result<Option<crate::node::Node>> {
         match self.config() {
-            Some(node) => interpolate_node(&node).map(Some),
+            Some(node) => evaluate_node(&interpolate_node(&node)?).map(Some),
             None => Ok(None),
         }
     }
@@ -164,18 +167,59 @@ impl Entry {
         parts.join(":")
     }
 
-    /// Whether this entry is itself flagged as disabled.
+    /// The entry's own disable slot, statically viewed: [`Disabled::Flag`]
+    /// yields the flag, an unevaluated expression does not disable. The
+    /// options snapshot ([`Entry::options`]) carries the raw slot for
+    /// write-back.
     pub fn disabled(&self) -> bool {
-        self.state().options.disabled
+        self.state().options.disabled.is_disabled()
     }
 
-    /// Whether the entry and every ancestor are enabled. A disabled group
-    /// cascades to its whole subtree.
+    /// The entry's own disable state with its `!!js` expression evaluated:
+    /// the expression must evaluate to a boolean, or the error propagates.
+    pub fn resolved_disabled(&self) -> Result<bool> {
+        let disabled = self.state().options.disabled.clone();
+        match disabled {
+            Disabled::Flag(flag) => Ok(flag),
+            Disabled::Expr(source) => match crate::expr::evaluate(&source)? {
+                crate::node::Node::Bool(flag) => Ok(flag),
+                other => Err(IncludeError::JsExpression {
+                    message: format!(
+                        "the disabled expression must evaluate to a boolean, found {}",
+                        crate::yaml::node_kind(&other)
+                    ),
+                    expression: source,
+                }),
+            },
+        }
+    }
+
+    /// Whether this entry and every ancestor are statically enabled. A
+    /// disabled group cascades to its whole subtree. `!!js` expressions
+    /// are *not* evaluated here — an unevaluated expression does not
+    /// disable; use [`Entry::resolved_enabled`] for the evaluated
+    /// decision.
     pub fn enabled(&self) -> bool {
         if self.is_root() {
             return true;
         }
         !self.disabled() && self.parent().is_none_or(|parent| parent.enabled())
+    }
+
+    /// Whether this entry and every ancestor are enabled once their
+    /// `!!js` expressions are evaluated (a disabled group cascades to
+    /// its whole subtree). The first evaluation failure propagates.
+    pub fn resolved_enabled(&self) -> Result<bool> {
+        if self.is_root() {
+            return Ok(true);
+        }
+        if self.resolved_disabled()? {
+            return Ok(false);
+        }
+        match self.parent() {
+            Some(parent) => parent.resolved_enabled(),
+            None => Ok(true),
+        }
     }
 
     /// The fiber started for this entry, if any (set by the loader layer).

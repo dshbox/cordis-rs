@@ -324,3 +324,177 @@ fn loader_is_exposed_as_a_weak_service() {
     assert!(handle.upgrade().is_none());
     cleanup(&path);
 }
+
+/// A registry with the counting worker, plus its counter.
+fn worker_registry() -> (PluginRegistry, Arc<AtomicUsize>) {
+    let starts = Arc::new(AtomicUsize::new(0));
+    let mut registry = PluginRegistry::new();
+    registry.register("worker", {
+        let starts = starts.clone();
+        move || counting_plugin("worker", starts.clone())
+    });
+    (registry, starts)
+}
+
+/// `!!js` disabled expressions gate entries by their evaluated result:
+/// the same file starts the entry with the variable unset and skips it
+/// once the expression turns true, and config expressions resolve at the
+/// same hand-off point.
+#[test]
+fn disabled_expressions_gate_entries_by_environment() {
+    // `set_var`/`remove_var` are `unsafe` in edition 2024; the variable is
+    // unique to this test and cleared before it returns.
+    let var = "CORDIS_LOADER_TEST_EXPR_GATE";
+    unsafe { std::env::remove_var(var) };
+    let path = temp_path("expr-gate");
+    std::fs::write(
+        &path,
+        format!(
+            "entries:\n  - id: on\n    name: worker\n    disabled: !!js process.env.{var} === 'off'\n  - id: cfg\n    name: worker\n    config:\n      mode: !!js process.env.{var} ?? 'fallback'\n"
+        ),
+    )
+    .unwrap();
+
+    // Unset: the expression is false, the entry starts, and the config
+    // expression resolved through the hand-off.
+    let (registry, starts) = worker_registry();
+    let root = Context::new();
+    let loader = Loader::open(&root, LoaderConfig::new(&path).with_registry(registry)).unwrap();
+    assert!(loader.tree().resolve("on").unwrap().fiber().is_some());
+    let cfg = loader.tree().resolve("cfg").unwrap();
+    cfg.fiber().unwrap().try_wait().unwrap();
+    let config = cfg.fiber().unwrap().config().downcast::<Node>().unwrap();
+    assert_eq!(config["mode"], Node::String("fallback".to_owned()));
+    assert_eq!(starts.load(Ordering::SeqCst), 2);
+    assert!(loader.last_error().is_none());
+    loader.dispose().unwrap();
+
+    // The expression true: the entry never starts, the sibling still does.
+    unsafe { std::env::set_var(var, "off") };
+    let (registry, starts) = worker_registry();
+    let root = Context::new();
+    let loader = Loader::open(&root, LoaderConfig::new(&path).with_registry(registry)).unwrap();
+    assert!(loader.tree().resolve("on").unwrap().fiber().is_none());
+    assert!(loader.tree().resolve("cfg").unwrap().fiber().is_some());
+    assert_eq!(starts.load(Ordering::SeqCst), 1);
+    assert!(loader.last_error().is_none());
+    unsafe { std::env::remove_var(var) };
+    loader.dispose().unwrap();
+    cleanup(&path);
+}
+
+/// A disabled expression outside the sync subset (`ctx.*`) is a start
+/// failure: the entry is skipped and the error recorded.
+#[test]
+fn out_of_subset_disabled_expressions_fail_the_start() {
+    let path = temp_path("expr-subset");
+    std::fs::write(
+        &path,
+        "entries:\n  - id: gated\n    name: worker\n    disabled: !!js ctx.webStartup.port ?? 3080\n",
+    )
+    .unwrap();
+    let (registry, _) = worker_registry();
+    let root = Context::new();
+    let loader = Loader::open(&root, LoaderConfig::new(&path).with_registry(registry)).unwrap();
+    let gated = loader.tree().resolve("gated").unwrap();
+    assert!(gated.fiber().is_none());
+    let error = loader.last_error().expect("evaluation failure recorded");
+    assert!(error.contains("subset"), "{error}");
+    loader.dispose().unwrap();
+    cleanup(&path);
+}
+
+/// A disabled expression evaluating to a non-boolean is a start failure
+/// too: the slot demands a boolean decision.
+#[test]
+fn non_boolean_disabled_expressions_fail_the_start() {
+    let path = temp_path("expr-non-bool");
+    std::fs::write(
+        &path,
+        "entries:\n  - id: gated\n    name: worker\n    disabled: !!js process.platform\n",
+    )
+    .unwrap();
+    let (registry, _) = worker_registry();
+    let root = Context::new();
+    let loader = Loader::open(&root, LoaderConfig::new(&path).with_registry(registry)).unwrap();
+    assert!(loader.tree().resolve("gated").unwrap().fiber().is_none());
+    let error = loader.last_error().expect("evaluation failure recorded");
+    assert!(error.contains("boolean"), "{error}");
+    loader.dispose().unwrap();
+    cleanup(&path);
+}
+
+/// A config expression outside the subset fails the entry's start the
+/// same way a disabled expression does.
+#[test]
+fn out_of_subset_config_expressions_fail_the_start() {
+    let path = temp_path("expr-config-subset");
+    std::fs::write(
+        &path,
+        "entries:\n  - id: cfg\n    name: worker\n    config:\n      port: !!js dshHomePath('storages')\n",
+    )
+    .unwrap();
+    let (registry, _) = worker_registry();
+    let root = Context::new();
+    let loader = Loader::open(&root, LoaderConfig::new(&path).with_registry(registry)).unwrap();
+    assert!(loader.tree().resolve("cfg").unwrap().fiber().is_none());
+    let error = loader.last_error().expect("evaluation failure recorded");
+    assert!(error.contains("subset"), "{error}");
+    loader.dispose().unwrap();
+    cleanup(&path);
+}
+
+/// Self-dispose persistence overwrites a `!!js` disabled slot with the
+/// static flag — the entry is dead, and recomposition regenerates the
+/// expression from its source anyway.
+#[test]
+fn self_dispose_overwrites_a_disabled_expression_with_the_flag() {
+    let path = temp_path("expr-selfkill");
+    std::fs::write(
+        &path,
+        "entries:\n  - id: v1\n    name: victim\n    disabled: !!js process.platform === 'never'\n",
+    )
+    .unwrap();
+    let victim_fiber: Arc<Mutex<Option<Fiber>>> = Arc::new(Mutex::new(None));
+    let mut registry = PluginRegistry::new();
+    registry.register("victim", {
+        let victim_fiber = victim_fiber.clone();
+        move || {
+            let victim_fiber = victim_fiber.clone();
+            plugin_sync::<Node, _>("victim", Inject::default(), move |ctx, _config| {
+                *victim_fiber.lock().unwrap() = Some(ctx.fiber()?);
+                Ok(PluginOutput::none())
+            })
+        }
+    });
+    let root = Context::new();
+    let loader = Loader::open(&root, LoaderConfig::new(&path).with_registry(registry)).unwrap();
+    let entry = loader.tree().resolve("v1").unwrap();
+    entry.fiber().unwrap().try_wait().unwrap();
+
+    victim_fiber
+        .lock()
+        .unwrap()
+        .clone()
+        .unwrap()
+        .dispose()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let text = std::fs::read_to_string(&path).unwrap();
+        if entry.fiber().is_none() && text.contains("disabled: true") {
+            assert!(
+                !text.contains("!!js"),
+                "expression must be overwritten: {text}"
+            );
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "self-kill persistence never landed: {text}"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    loader.dispose().unwrap();
+    cleanup(&path);
+}

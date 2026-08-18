@@ -52,12 +52,20 @@ assert!(Entry::ptr_eq(&kept, &tree.resolve("srv").unwrap()));
 entries:
   - id: srv
     name: group
-    group:
-      - name: adapter-http
-        config:
-          port: 8080
-          host: ${{ env.HOST }}
+  - id: gated
+    name: adapter-http
+    disabled: !!js process.platform === 'win32'
+    config:
+      port: 8080
+      host: ${{ env.HOST }}
+      mode: !!js process.env.DSH_MODE || 'default'
 ```
+
+交接时（[`Entry::resolved_config`]）每个 `!!js` 表达式经由 [`expr`]
+子集求值 —— 即出厂 bundle 用到的 `process.*` 引用；引用注入上下文
+（`ctx.*`、`dshHomePath(…)`）的表达式会带着清晰的子集外错误失败。
+`disabled` 字段接受同样的 `!!js` 形式：原文在文件中原样往返，
+[`Entry::resolved_disabled`] 在条目激活时求值。
 
 ## 补丁列表
 
@@ -83,7 +91,7 @@ let user = vec![PatchOptions {
 }];
 let entries = compose_layers(&[bundle, user], |_| {});
 assert_eq!(entries.len(), 1);
-assert!(entries[0].disabled);
+assert!(entries[0].disabled.is_disabled());
 # }
 ```
 
@@ -105,5 +113,8 @@ assert!(entries[0].disabled);
 [`apply_entry_patches`]: https://docs.rs/cordis-include/latest/cordis_include/fn.apply_entry_patches.html
 [`compose_layers`]: https://docs.rs/cordis-include/latest/cordis_include/fn.compose_layers.html
 [`render_config_dump`]: https://docs.rs/cordis-include/latest/cordis_include/fn.render_config_dump.html
+[`Entry::resolved_config`]: https://docs.rs/cordis-include/latest/cordis_include/struct.Entry.html#method.resolved_config
+[`Entry::resolved_disabled`]: https://docs.rs/cordis-include/latest/cordis_include/struct.Entry.html#method.resolved_disabled
+[`expr`]: https://docs.rs/cordis-include/latest/cordis_include/expr/index.html
 
 [`Node`]: https://docs.rs/cordis-include/latest/cordis_include/enum.Node.html

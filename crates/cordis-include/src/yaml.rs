@@ -23,7 +23,7 @@
 use crate::Document;
 use crate::error::{IncludeError, Result};
 use crate::node::{Node, NodeMap};
-use crate::options::EntryOptions;
+use crate::options::{Disabled, EntryOptions};
 use crate::patch::PatchOptions;
 
 /// The full tag URI js-yaml's `!!js` resolves to.
@@ -633,7 +633,7 @@ fn parse_f64(scalar: &str) -> Option<f64> {
 }
 
 /// A human name for a node kind, for conversion diagnostics.
-fn node_kind(node: &Node) -> &'static str {
+pub(crate) fn node_kind(node: &Node) -> &'static str {
     match node {
         Node::Null => "null",
         Node::Bool(_) => "a boolean",
@@ -749,15 +749,13 @@ fn entry_from_node(node: Node) -> Result<EntryOptions> {
             }
             "disabled" => {
                 entry.disabled = match value {
-                    Node::Bool(flag) => flag,
-                    Node::Expr(_) => {
-                        return Err(yaml_error(
-                            "disabled: !!js expressions are not supported yet",
-                        ));
-                    }
+                    Node::Bool(flag) => Disabled::Flag(flag),
+                    // The raw text round-trips; evaluation happens at
+                    // activation (Entry::resolved_disabled).
+                    Node::Expr(raw) => Disabled::Expr(raw),
                     other => {
                         return Err(yaml_error(format!(
-                            "disabled: expected a boolean, found {}",
+                            "disabled: expected a boolean or a !!js expression, found {}",
                             node_kind(&other)
                         )));
                     }
@@ -816,12 +814,17 @@ pub(crate) fn patch_from_node(node: Node) -> Result<PatchOptions> {
             "name" => patch.name = optional_string(value, "name")?,
             "config" => patch.config = optional_config(value),
             "disabled" => {
+                // The patch override needs an already-evaluated boolean:
+                // patches apply at composition time, before any activation
+                // could evaluate an expression. Entry rows carry the
+                // expression slot instead.
                 patch.disabled = match value {
                     Node::Null => None,
                     Node::Bool(flag) => Some(flag),
                     Node::Expr(_) => {
                         return Err(yaml_error(
-                            "disabled: !!js expressions are not supported yet",
+                            "disabled: !!js expressions are not supported in patches; put the \
+                             expression on the entry itself",
                         ));
                     }
                     other => {
@@ -943,8 +946,16 @@ fn entry_to_node(entry: &EntryOptions) -> Node {
         map.insert("id".to_owned(), Node::String(id.clone()));
     }
     map.insert("name".to_owned(), Node::String(entry.name.clone()));
-    if entry.disabled {
-        map.insert("disabled".to_owned(), Node::Bool(true));
+    match &entry.disabled {
+        // The default flag is omitted; an expression writes its `!!js`
+        // form back for the next boot to re-evaluate.
+        Disabled::Flag(true) => {
+            map.insert("disabled".to_owned(), Node::Bool(true));
+        }
+        Disabled::Expr(raw) => {
+            map.insert("disabled".to_owned(), Node::Expr(raw.clone()));
+        }
+        Disabled::Flag(false) => {}
     }
     if !entry.inject.is_empty() {
         map.insert(
@@ -1325,14 +1336,51 @@ mod tests {
         let error = parse_entry_list("- disabled: maybe\n")
             .unwrap_err()
             .to_string();
-        assert!(error.contains("disabled: expected a boolean"), "{error}");
-        let error = parse_entry_list("- disabled: !!js process.platform\n")
-            .unwrap_err()
-            .to_string();
         assert!(
-            error.contains("disabled: !!js expressions are not supported yet"),
+            error.contains("disabled: expected a boolean or a !!js expression"),
             "{error}"
         );
+        // Patches need an evaluated boolean; entry rows carry expressions.
+        let error = crate::yaml::patch_list_from_node(
+            parse_node("- id: x\n  disabled: !!js process.platform\n").unwrap(),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            error.contains("disabled: !!js expressions are not supported in patches"),
+            "{error}"
+        );
+    }
+
+    /// `disabled` round-trips through both slot forms: the expression's
+    /// raw text survives parse → emit → parse, and the plain flag stays a
+    /// flag (omitted when off).
+    #[test]
+    fn disabled_expressions_round_trip() {
+        let source = "- id: x\n  name: n\n  disabled: !!js process.platform === 'win32'\n";
+        let entries = parse_entry_list(source).unwrap();
+        assert_eq!(
+            entries[0].disabled,
+            Disabled::Expr("process.platform === 'win32'".to_owned())
+        );
+        let text = emit_entry_list(&entries);
+        assert!(
+            text.contains("disabled: !!js process.platform === 'win32'\n"),
+            "{text}"
+        );
+        assert_eq!(parse_entry_list(&text).unwrap(), entries);
+
+        let entries = parse_entry_list("- name: n\n  disabled: true\n").unwrap();
+        assert_eq!(entries[0].disabled, Disabled::Flag(true));
+        let text = emit_entry_list(&entries);
+        assert!(text.contains("disabled: true\n"), "{text}");
+        assert_eq!(parse_entry_list(&text).unwrap(), entries);
+
+        // The off flag is omitted on write.
+        let entries = parse_entry_list("- name: n\n").unwrap();
+        assert_eq!(entries[0].disabled, Disabled::Flag(false));
+        let text = emit_entry_list(&entries);
+        assert!(!text.contains("disabled"), "{text}");
     }
 
     #[test]
@@ -1452,40 +1500,53 @@ mod tests {
     }
 
     /// A bundle-shaped fixture: every field shape the shipped patch files
-    /// use (`id`, `name`, `inject`, `config`, `!!js`), node-level
-    /// round-tripped (the `disabled: !!js` form needs the typed slot the
-    /// next stage adds, so it stays at node level for now).
+    /// use (`id`, `name`, `inject`, `disabled`, `config`, `!!js`),
+    /// round-tripped through the entry list and the patch list.
     #[test]
     fn bundle_shaped_fixture_round_trips() {
-        let fixture = "\
+        let entries = parse_entry_list(
+            "\
 - id: base-sandbox
   name: '@dsh/base'
   inject: [database]
+  disabled: !!js process.platform === 'darwin'
   config:
     level: !!js process.env.DSH_LOG_LEVEL || 'info'
     retries: 3
     nested:
       keep: true
+",
+        )
+        .unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(
+            entries[0].disabled,
+            Disabled::Expr("process.platform === 'darwin'".to_owned())
+        );
+        let text = emit_entry_list(&entries);
+        assert_eq!(parse_entry_list(&text).unwrap(), entries, "{text}");
+        assert!(
+            text.contains("disabled: !!js process.platform === 'darwin'"),
+            "{text}"
+        );
+
+        let patches = crate::yaml::patch_list_from_node(
+            parse_node(
+                "\
+- id: base-sandbox
+  config:
+    level: !!js process.env.DSH_LOG_LEVEL || 'info'
 - insert:
     - id: web-app
       name: '@dsh/web-app'
       config:
         theme: dark
         gate: !!js process.platform === 'darwin'
-";
-        let node = parse_node(fixture).unwrap();
-        let emitted = {
-            let mut out = String::new();
-            emit_node(&node, 0, "", &mut out);
-            out
-        };
-        assert_eq!(parse_node(&emitted).unwrap(), node, "{emitted}");
-        assert!(
-            emitted.contains("!!js process.platform === 'darwin'"),
-            "{emitted}"
-        );
-
-        let patches = crate::yaml::patch_list_from_node(parse_node(fixture).unwrap()).unwrap();
+",
+            )
+            .unwrap(),
+        )
+        .unwrap();
         assert_eq!(patches.len(), 2);
         assert_eq!(
             patches[1].insert.as_ref().unwrap()[0].id.as_deref(),
