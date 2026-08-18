@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.16](https://github.com/dshbox/cordis-rs/compare/cordis-loader-v0.0.15...cordis-loader-v0.0.16) - 2026-08-18
+
+### Added
+
+- add loader document sources (with_document, update)
+
+### Other
+
+- Merge pull request #53 from dshbox/feat/loader-update
+
 ## [0.0.15](https://github.com/dshbox/cordis-rs/compare/cordis-loader-v0.0.14...cordis-loader-v0.0.15) - 2026-08-18
 
 ### Other
