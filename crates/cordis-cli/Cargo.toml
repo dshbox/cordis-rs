@@ -13,6 +13,11 @@ readme = "README.md"
 [[bin]]
 name = "cordis"
 path = "src/main.rs"
+# The bin shares its rustdoc output path (`doc/cordis/`) with the
+# `cordis` lib of cordis-rs; cargo documents both in parallel and they
+# clobber each other (rust-lang/cargo#6313). The CLI has no rustdoc
+# content of its own, so keep it out of `cargo doc` entirely.
+doc = false
 
 [dependencies]
 cordis-loader = { workspace = true, features = ["watch", "dynamic"] }
