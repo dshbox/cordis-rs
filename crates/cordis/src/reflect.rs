@@ -589,6 +589,22 @@ impl RootInner {
         Some(epoch)
     }
 
+    /// Names from `inject` that currently resolve to nothing, in declaration
+    /// order. The per-name probe is [`dependency_epoch`](Self::dependency_epoch)
+    /// without the early `?` exit, so it only ever holds the reflect state lock
+    /// briefly and is safe wherever that function is.
+    pub(crate) fn missing_dependencies(&self, ctx: &Context, inject: &Inject) -> Vec<String> {
+        inject
+            .iter()
+            .filter(|dependency| {
+                self.reflect
+                    .implementation_epoch(ctx, &dependency.name)
+                    .is_none()
+            })
+            .map(|dependency| dependency.name.clone())
+            .collect()
+    }
+
     pub(crate) fn notify_service(&self, name: &str, scope: Isolation) -> Vec<Fiber> {
         let mut refreshed = Vec::new();
         for fiber in self.registry.fibers_injecting(name) {

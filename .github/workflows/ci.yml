@@ -4,6 +4,9 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+  schedule:
+    # Weekly, Monday 03:00 UTC: catch advisories published between releases.
+    - cron: "0 3 * * 1"
 
 permissions:
   contents: read
@@ -33,6 +36,22 @@ jobs:
 
       - name: Run tests
         run: cargo test --locked --workspace --all-features
+
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+
+      - name: Audit dependencies for RUSTSEC advisories
+        run: cargo audit --deny warnings
 
   test:
     name: Test stable (${{ matrix.os }})

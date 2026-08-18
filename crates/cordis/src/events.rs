@@ -373,7 +373,11 @@ impl EventsService {
 
     fn dispatch(&self, mode: DispatchMode, event: &Event) -> Vec<Callback> {
         // Upstream gates this meta-event on listener presence; skip the
-        // argument construction entirely when nobody listens.
+        // argument construction entirely when nobody listens. The meta-event
+        // itself is always emitted — never dispatched through the observed
+        // mode — so meta-listeners cannot short-circuit each other, and its
+        // errors are dropped so observation cannot fail the dispatch.
+        // `internal/` names are exempt to keep meta-listeners from recursing.
         if !event.name().starts_with("internal/") && self.listener_count("internal/dispatch") > 0 {
             let _ = self.emit(
                 "internal/dispatch",
@@ -426,6 +430,17 @@ impl EventsService {
     }
 
     /// Emit synchronously, returning the first listener error.
+    ///
+    /// Like every dispatch mode, this first fires the `internal/dispatch`
+    /// meta-event with `(mode, name, args)` when anyone listens. Meta-listeners
+    /// always run with `emit` semantics — synchronously, one after another,
+    /// none skipped, none able to short-circuit the rest — regardless of the
+    /// mode being observed: the mode reaches them as data only, and errors
+    /// they return are discarded. That is deliberate — an observer must not
+    /// change what it observes; routing by mode would let one meta-listener's
+    /// bail mute the others or a meta-listener failure fail the observed
+    /// dispatch. Events whose name starts with `internal/` fire no
+    /// meta-event, so meta-listeners cannot recurse.
     pub fn emit(
         &self,
         name: impl Into<String>,
@@ -452,6 +467,9 @@ impl EventsService {
     }
 
     /// Run all listeners concurrently and aggregate failures.
+    ///
+    /// `internal/dispatch` meta-listeners for this event still run with
+    /// [`emit`](Self::emit) semantics; see there.
     pub async fn parallel(
         &self,
         name: impl Into<String>,
@@ -487,6 +505,9 @@ impl EventsService {
     }
 
     /// Run listeners in order, awaiting each, until one bails.
+    ///
+    /// `internal/dispatch` meta-listeners for this event still run with
+    /// [`emit`](Self::emit) semantics; see there.
     pub async fn serial(
         &self,
         name: impl Into<String>,
@@ -503,6 +524,9 @@ impl EventsService {
     }
 
     /// Synchronous ordered bail dispatch.
+    ///
+    /// `internal/dispatch` meta-listeners for this event still run with
+    /// [`emit`](Self::emit) semantics; see there.
     pub fn bail(
         &self,
         name: impl Into<String>,
@@ -519,6 +543,9 @@ impl EventsService {
     }
 
     /// Compose listeners around an innermost asynchronous callback.
+    ///
+    /// `internal/dispatch` meta-listeners for this event still run with
+    /// [`emit`](Self::emit) semantics; see there.
     pub async fn waterfall_async<F, Fut>(
         &self,
         name: impl Into<String>,
@@ -561,8 +588,16 @@ impl EventsService {
         }))
     }
 
-    /// Remove every event hook. Primarily useful for diagnostics/tests; normal
-    /// cleanup should dispose the owning fiber.
+    /// Remove every event hook across the whole root.
+    ///
+    /// The removal is global: hooks live on the root's shared events state,
+    /// so calling this from any context — including a child — drops listeners
+    /// owned by every fiber, bypassing fiber ownership entirely. It races with
+    /// concurrent listener registration: a hook inserted while the clear runs
+    /// may or may not be removed, and either way its `EffectHandle` stays
+    /// registered on the owning fiber — harmless, because the disposer's
+    /// `remove` of an already-cleared hook is a no-op. Positioned for
+    /// diagnostics and tests; normal cleanup should dispose the owning fiber.
     pub fn clear(&self) {
         lock(&self.ctx.root.events.state).hooks.clear();
     }
