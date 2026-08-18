@@ -57,6 +57,34 @@ entries:
           host: ${{ env.HOST }}
 ```
 
+## 补丁列表
+
+条目列表由*补丁*文件组合而来 —— 裸顶层数组的 [`PatchOptions`] 行
+（按 `id` 定向的覆盖与 `insert` 插入列表），即 bundle/profile 的装配模型。
+[`apply_entry_patches`] 是所有消费方共用的唯一应用例程；[`compose_layers`]
+把所有层拍平成单次调用（与 boot 执行的同一次调用）；[`render_config_dump`]
+按来源分组打印组合结果，并附 `# ==` 溯源注释：
+
+```rust
+use cordis_include::{compose_layers, EntryOptions, Node, PatchOptions};
+# fn main() {
+let bundle = vec![PatchOptions {
+    insert: Some(vec![EntryOptions::new("adapter-http")
+        .with_id("http")
+        .with_config(Node::from_iter([("port".to_string(), 8080.into())]))]),
+    ..Default::default()
+}];
+let user = vec![PatchOptions {
+    id: Some("http".into()),
+    disabled: Some(true),
+    ..Default::default()
+}];
+let entries = compose_layers(&[bundle, user], |_| {});
+assert_eq!(entries.len(), 1);
+assert!(entries[0].disabled);
+# }
+```
+
 ## Feature flags
 
 - **`watch`** — 通过 [`notify`](https://crates.io/crates/notify) 实现防抖文件
@@ -71,3 +99,7 @@ entries:
 
 [`LoaderFile`]: https://docs.rs/cordis-include/latest/cordis_include/struct.LoaderFile.html
 [`PluginResolver`]: https://docs.rs/cordis-include/latest/cordis_include/trait.PluginResolver.html
+[`PatchOptions`]: https://docs.rs/cordis-include/latest/cordis_include/struct.PatchOptions.html
+[`apply_entry_patches`]: https://docs.rs/cordis-include/latest/cordis_include/fn.apply_entry_patches.html
+[`compose_layers`]: https://docs.rs/cordis-include/latest/cordis_include/fn.compose_layers.html
+[`render_config_dump`]: https://docs.rs/cordis-include/latest/cordis_include/fn.render_config_dump.html
