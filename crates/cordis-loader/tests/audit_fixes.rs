@@ -2,7 +2,7 @@
 //! (P1), diamond imports (P2), releasing the loader on dispose (P3), inject
 //! merge and structural redefines (P6), and corrupt main files.
 
-use cordis::{Context, Inject, PluginOutput, plugin_sync};
+use cordis::{Context, FiberState, Inject, PluginOutput, plugin_sync};
 use cordis_loader::{Loader, LoaderConfig, PluginRegistry};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -258,6 +258,59 @@ fn config_changes_patch_in_place_and_inject_changes_restart() {
         uid,
         "structural changes restart the fiber"
     );
+
+    let _ = loader.dispose();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A failed reload must leave the last valid tree and its fibers untouched.
+#[test]
+fn a_corrupt_main_file_during_reload_preserves_running_tree() {
+    let dir = temp_dir("corrupt-reload");
+    let config = dir.join("cordis.yml");
+    write(&config, "entries:\n  - id: w\n    name: probe\n");
+
+    let starts = Arc::new(AtomicUsize::new(0));
+    let root = Context::new();
+    let loader = Loader::open(
+        &root,
+        LoaderConfig::new(&config).with_registry(counting_registry("probe", starts.clone())),
+    )
+    .unwrap();
+    let entry = loader.tree().resolve("w").unwrap();
+    let fiber = entry.fiber().unwrap();
+    fiber.try_wait().unwrap();
+    assert_eq!(fiber.state(), FiberState::Active);
+    let uid = fiber.uid();
+    let entry_count = loader.tree().entries().len();
+
+    // A half-written main file is not a new empty configuration. The
+    // reload reports the parse failure while preserving the live state.
+    write(&config, "entries:\n  - id: w\n    name: [\n");
+    let error = loader
+        .reload()
+        .expect_err("a corrupt main file must fail the reload");
+    assert!(error.to_string().contains("parse"), "{error}");
+    assert!(
+        loader
+            .last_error()
+            .is_some_and(|error| error.contains("parse")),
+        "reload error was not recorded: {:?}",
+        loader.last_error()
+    );
+    assert_eq!(loader.tree().entries().len(), entry_count);
+    let preserved = loader.tree().resolve("w").unwrap().fiber().unwrap();
+    assert_eq!(preserved.state(), FiberState::Active);
+    assert_eq!(preserved.uid(), uid);
+
+    // Once the file is valid again, the unchanged entry is reused rather
+    // than unnecessarily stopped and rebuilt.
+    write(&config, "entries:\n  - id: w\n    name: probe\n");
+    assert!(loader.reload().unwrap().is_empty());
+    let recovered = loader.tree().resolve("w").unwrap().fiber().unwrap();
+    assert_eq!(recovered.state(), FiberState::Active);
+    assert_eq!(recovered.uid(), uid);
+    assert_eq!(starts.load(Ordering::SeqCst), 1);
 
     let _ = loader.dispose();
     let _ = std::fs::remove_dir_all(&dir);

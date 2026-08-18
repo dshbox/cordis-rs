@@ -125,7 +125,15 @@ impl Loader {
         // A corrupt or unreadable main file is fatal — booting an empty
         // loader would silently discard the whole configuration. Import
         // files keep the tolerant record-and-skip path inside `compose`.
-        file.read()?;
+        let mut imports = HashMap::new();
+        let mut errors = Vec::new();
+        let (composed, _dirty) = compose(
+            &file,
+            &mut imports,
+            &mut HashSet::new(),
+            &mut HashSet::new(),
+            &mut errors,
+        )?;
         let inner = Arc::new(LoaderInner {
             root: root.clone(),
             file,
@@ -134,27 +142,16 @@ impl Loader {
             state: Mutex::new(LoaderState {
                 entries: HashMap::new(),
                 operating: 0,
-                last_error: None,
+                last_error: errors.pop(),
                 _keep_alive: Vec::new(),
             }),
-            imports: Mutex::new(HashMap::new()),
+            imports: Mutex::new(imports),
             #[cfg(feature = "watch")]
             watched: Mutex::new(HashSet::new()),
             #[cfg(feature = "watch")]
             watchers: Mutex::new(Vec::new()),
             write_debounce: Mutex::new(config.write_debounce),
         });
-        let mut errors = Vec::new();
-        let (composed, _dirty) = compose(
-            &inner.file,
-            &mut lock(&inner.imports),
-            &mut HashSet::new(),
-            &mut HashSet::new(),
-            &mut errors,
-        );
-        for error in errors {
-            lock(&inner.state).last_error = Some(error);
-        }
         inner.tree.update(composed)?;
         // Generated ids from the initial load are persisted lazily, on the
         // first explicit write-back.
@@ -270,13 +267,23 @@ impl Loader {
         let inner = &self.inner;
         let mut imports = HashMap::new();
         let mut errors = Vec::new();
-        let (composed, dirty) = compose(
+        let (composed, dirty) = match compose(
             &inner.file,
             &mut imports,
             &mut HashSet::new(),
             &mut HashSet::new(),
             &mut errors,
-        );
+        ) {
+            Ok(composed) => composed,
+            Err(error) => {
+                // The current tree is still the last known-good state. In
+                // particular, do not feed an empty list to `EntryTree`:
+                // that would dispose every running plugin on a transient
+                // parse or I/O failure.
+                self.record_error(&error);
+                return Err(error.into());
+            }
+        };
         for error in errors {
             self.record_error(LoaderError::Include(
                 cordis_include::IncludeError::Message { message: error },
@@ -432,7 +439,7 @@ impl Loader {
         }
     }
 
-    fn record_error(&self, error: LoaderError) {
+    fn record_error(&self, error: impl std::fmt::Display) {
         lock(&self.inner.state).last_error = Some(error.to_string());
     }
 }
@@ -669,14 +676,11 @@ fn compose(
     active: &mut HashSet<PathBuf>,
     mounted: &mut HashSet<PathBuf>,
     errors: &mut Vec<String>,
-) -> (Vec<EntryOptions>, bool) {
-    let document = match file.read() {
-        Ok(document) => document,
-        Err(error) => {
-            errors.push(format!("cannot read {}: {error}", file.path().display()));
-            return (Vec::new(), false);
-        }
-    };
+) -> cordis_include::Result<(Vec<EntryOptions>, bool)> {
+    // Reading the file passed directly to this call is not recoverable here:
+    // callers loading the main file propagate the error, while callers
+    // mounting an import catch it below and retain the tolerant skip path.
+    let document = file.read()?;
     let mut entries = Vec::with_capacity(document.entries.len());
     let mut dirty = document.entries.iter().any(|options| options.id.is_none());
     for mut options in document.entries {
@@ -700,10 +704,21 @@ fn compose(
             }
             match LoaderFile::open(&path) {
                 Ok(sub_file) => {
-                    let (sub_entries, sub_dirty) =
-                        compose(&sub_file, imports, active, mounted, errors);
-                    dirty |= sub_dirty;
-                    options.group = sub_entries;
+                    match compose(&sub_file, imports, active, mounted, errors) {
+                        Ok((sub_entries, sub_dirty)) => {
+                            dirty |= sub_dirty;
+                            options.group = sub_entries;
+                        }
+                        Err(error) => {
+                            errors.push(format!(
+                                "cannot read import {}: {error}",
+                                sub_file.path().display()
+                            ));
+                            // Never trust children embedded in an import
+                            // marker when its owning file could not be read.
+                            options.group.clear();
+                        }
+                    }
                     imports.insert(canonical.clone(), sub_file);
                 }
                 Err(error) => errors.push(format!(
@@ -718,7 +733,7 @@ fn compose(
         }
         entries.push(options);
     }
-    (entries, dirty)
+    Ok((entries, dirty))
 }
 
 /// Route `internal/status` disposals: a fiber that reached `Disposed`

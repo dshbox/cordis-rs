@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- preserve the current plugin tree when the main config cannot be read during reload
+
 ## [0.0.8](https://github.com/dshbox/cordis-rs/compare/cordis-loader-v0.0.7...cordis-loader-v0.0.8) - 2026-08-17
 
 ### Fixed
