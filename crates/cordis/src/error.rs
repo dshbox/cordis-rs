@@ -172,8 +172,12 @@ impl CordisError {
         self.validation.as_ref()
     }
 
-    /// Attach context to an existing error while preserving its code.
-    pub fn context(mut self, context: impl AsRef<str>) -> Self {
+    /// Prepend context to the message while preserving the code.
+    ///
+    /// Named for what it does: the text lands *in front of* the existing
+    /// message (`"{context}: {message}"`). It is not anyhow's `Context` —
+    /// attaching an underlying cause is [`caused_by`](Self::caused_by).
+    pub fn prefixed_with(mut self, context: impl AsRef<str>) -> Self {
         self.message = format!("{}: {}", context.as_ref(), self.message);
         self
     }
@@ -247,6 +251,27 @@ mod tests {
         let attached = CordisError::new(ErrorCode::Event).caused_by(std::io::Error::other("inner"));
         assert_eq!(
             Error::source(&attached).map(ToString::to_string).as_deref(),
+            Some("inner")
+        );
+    }
+
+    #[test]
+    fn prefixed_with_prepends_and_preserves_code() {
+        let error = CordisError::with_message(ErrorCode::Plugin, "plugin failed")
+            .prefixed_with("loading entry")
+            .prefixed_with("entry main");
+        assert_eq!(
+            error.to_string(),
+            "entry main: loading entry: plugin failed"
+        );
+        assert_eq!(error.code(), ErrorCode::Plugin);
+
+        let chained = CordisError::new(ErrorCode::Event)
+            .prefixed_with("emit")
+            .caused_by(std::io::Error::other("inner"));
+        assert_eq!(chained.to_string(), "emit: event listener failed");
+        assert_eq!(
+            Error::source(&chained).map(ToString::to_string).as_deref(),
             Some("inner")
         );
     }
