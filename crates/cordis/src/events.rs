@@ -587,18 +587,4 @@ impl EventsService {
             async move { result }
         }))
     }
-
-    /// Remove every event hook across the whole root.
-    ///
-    /// The removal is global: hooks live on the root's shared events state,
-    /// so calling this from any context — including a child — drops listeners
-    /// owned by every fiber, bypassing fiber ownership entirely. It races with
-    /// concurrent listener registration: a hook inserted while the clear runs
-    /// may or may not be removed, and either way its `EffectHandle` stays
-    /// registered on the owning fiber — harmless, because the disposer's
-    /// `remove` of an already-cleared hook is a no-op. Positioned for
-    /// diagnostics and tests; normal cleanup should dispose the owning fiber.
-    pub fn clear(&self) {
-        lock(&self.ctx.root.events.state).hooks.clear();
-    }
 }

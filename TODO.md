@@ -6,11 +6,13 @@ test-only nit).
 
 ## API design
 
-- `EventsService::clear()` is global but hangs off a per-context service: any
+- ~~`EventsService::clear()` is global but hangs off a per-context service: any
   context can wipe every hook in the root, bypassing fiber ownership. Either
   remove it, mark it `#[doc(hidden)]`, or scope it to the calling fiber's
-  hooks. Its global scope and the registration race are now documented on the
-  method (2026-08-18, REV-15); the API design question itself stays open.
+  hooks.~~ Resolved 2026-08-18: removed outright. It was a port addition with
+  no upstream counterpart (vendored cordis 4.x has no `clear`), zero callers,
+  and zero external dependents; test isolation already uses one `Context` per
+  test. If a real need appears, re-add with fiber-scoped semantics.
 - `CordisError::context` prepends context to the message, the opposite of
   `anyhow::Context` (attach a source). The name misleads Rust users; a rename
   such as `prefixed_with` would be honest but is a breaking change.
