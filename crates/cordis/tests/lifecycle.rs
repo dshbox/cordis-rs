@@ -526,6 +526,46 @@ fn wait_reports_pending_as_not_ready() -> Result<()> {
     Ok(())
 }
 
+/// A Pending fiber's try_wait() error names the injected services that have
+/// not resolved yet, and stops failing once they arrive.
+#[test]
+fn pending_try_wait_names_missing_services() -> Result<()> {
+    let root = Context::new();
+    let fiber = root.plugin_default(plugin_sync::<(), _>(
+        "needy",
+        Inject::new(["missing-svc"]),
+        |_, _| Ok(PluginOutput::default()),
+    ));
+    assert_eq!(fiber.state(), FiberState::Pending);
+    let error = fiber.try_wait().unwrap_err().to_string();
+    assert_eq!(
+        error,
+        "fiber is not ready (state: Pending; missing services: missing-svc)"
+    );
+
+    let _service = root.provide("missing-svc", 7_u32)?;
+    fiber.try_wait()?;
+    Ok(())
+}
+
+/// With some dependencies already provided, the try_wait() error lists only
+/// the still-unresolved names.
+#[test]
+fn pending_try_wait_lists_only_unresolved_services() -> Result<()> {
+    let root = Context::new();
+    let fiber = root.plugin_default(plugin_sync::<(), _>(
+        "partly",
+        Inject::new(["present-svc", "absent-svc"]),
+        |_, _| Ok(PluginOutput::default()),
+    ));
+    let _present = root.provide("present-svc", 1_u32)?;
+    assert_eq!(fiber.state(), FiberState::Pending);
+    let error = fiber.try_wait().unwrap_err().to_string();
+    assert!(error.contains("absent-svc"), "error was: {error}");
+    assert!(!error.contains("present-svc"), "error was: {error}");
+    Ok(())
+}
+
 /// Regression: restart() on the root fiber disposed every root-owned effect
 /// (including all top-level plugin parent effects) and left the root stuck in
 /// Pending while reporting success. It must fail without side effects.

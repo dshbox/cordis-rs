@@ -652,14 +652,39 @@ impl Fiber {
     /// there is nothing to wait for: the method polls the current state and
     /// never suspends. `Ok` is returned only when `Active`; a startup failure
     /// is rethrown; `Pending` (dependencies missing), in-flight, and
-    /// `Disposed` fibers yield an error rather than a false success. Safe to
-    /// call from lifecycle callbacks.
+    /// `Disposed` fibers yield an error rather than a false success. A
+    /// `Pending` plugin fiber names the injected services that have not
+    /// resolved yet in its error, when the probe can run. Safe to call from
+    /// lifecycle callbacks.
     pub fn try_wait(&self) -> Result<Fiber> {
         match self.state() {
             FiberState::Active => Ok(self.clone()),
             FiberState::Failed => Err(self
                 .error()
                 .unwrap_or_else(|| CordisError::new(ErrorCode::Plugin))),
+            FiberState::Pending => {
+                // Root fibers have an empty inject and every Context dropped
+                // leaves no root to probe; both fall back to the plain message.
+                // The probe holds the reflect state lock only briefly — the
+                // same one reconcile's dependency_epoch takes — so this stays
+                // callable from lifecycle callbacks.
+                let missing = match (self.inner.plugin.is_some(), self.inner.root.upgrade()) {
+                    (true, Some(root)) => match self.context() {
+                        Some(ctx) => root.missing_dependencies(&ctx, &self.inner.inject),
+                        None => Vec::new(),
+                    },
+                    _ => Vec::new(),
+                };
+                let message = if missing.is_empty() {
+                    "fiber is not ready (state: Pending)".to_owned()
+                } else {
+                    format!(
+                        "fiber is not ready (state: Pending; missing services: {})",
+                        missing.join(", ")
+                    )
+                };
+                Err(CordisError::with_message(ErrorCode::Other, message))
+            }
             state => Err(CordisError::with_message(
                 ErrorCode::Other,
                 format!("fiber is not ready (state: {state:?})"),
