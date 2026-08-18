@@ -9,7 +9,8 @@ test-only nit).
 - `EventsService::clear()` is global but hangs off a per-context service: any
   context can wipe every hook in the root, bypassing fiber ownership. Either
   remove it, mark it `#[doc(hidden)]`, or scope it to the calling fiber's
-  hooks.
+  hooks. Its global scope and the registration race are now documented on the
+  method (2026-08-18, REV-15); the API design question itself stays open.
 - `CordisError::context` prepends context to the message, the opposite of
   `anyhow::Context` (attach a source). The name misleads Rust users; a rename
   such as `prefixed_with` would be honest but is a breaking change.
