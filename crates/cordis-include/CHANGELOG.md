@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.17](https://github.com/dshbox/cordis-rs/compare/cordis-include-v0.0.16...cordis-include-v0.0.17) - 2026-08-18
+
+### Added
+
+- add cordis-include YAML dialect (tag-preserving parse and emit)
+
+### Fixed
+
+- avoid implicit autorefs through the raw libyaml parser pointer
+
 ## [0.0.16](https://github.com/dshbox/cordis-rs/compare/cordis-include-v0.0.15...cordis-include-v0.0.16) - 2026-08-18
 
 ### Added
