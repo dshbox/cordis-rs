@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.9](https://github.com/dshbox/cordis-rs/compare/cordis-group-v0.0.8...cordis-group-v0.0.9) - 2026-08-18
+
+### Other
+
+- add Chinese READMEs for the satellite crates
+
 ## [0.0.8](https://github.com/dshbox/cordis-rs/compare/cordis-group-v0.0.7...cordis-group-v0.0.8) - 2026-08-18
 
 ### Other
