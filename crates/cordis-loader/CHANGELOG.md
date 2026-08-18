@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.19](https://github.com/dshbox/cordis-rs/compare/cordis-loader-v0.0.18...cordis-loader-v0.0.19) - 2026-08-18
+
+### Other
+
+- align READMEs with the W1-W3 assembly-layer features ([#60](https://github.com/dshbox/cordis-rs/pull/60))
+
 ## [0.0.18](https://github.com/dshbox/cordis-rs/compare/cordis-loader-v0.0.17...cordis-loader-v0.0.18) - 2026-08-18
 
 ### Added
