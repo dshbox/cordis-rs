@@ -198,6 +198,11 @@ let registry = PluginRegistry::new().with_dynamic_dirs(["/usr/lib/cordis-plugins
   （文件变成纯写回草稿，绝不再作为组合输入），`Loader::update` 用同一
   套机制协调一次全新组合且不写回 —— 分层组合的 HMR 原语。文档组合源
   loader 的 reload 从存储的文档重新组合；只有 import 文件会被重读。
+- **表达式** —— `!!js` 标量（配置值与 `disabled` 槽位）在激活时经
+  cordis-include 的 `process.*` 子集求值；disabled 表达式决定该条目
+  （及其子树）是否启动，子集外或求失败的表达式使该条目启动失败并记
+  录进 `last_error()`（patch 路径上 fiber 保留当前配置，下一次 reload
+  重试）。文件与 dump 始终保留表达式原文。
 - **dispose** —— 停止每个条目，停止文件监视，并释放 loader 的根级
   effect（状态监听器和 `loader` 服务）；之后在同一 root 上重新
   `Loader::open` 依然可用。

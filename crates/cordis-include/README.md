@@ -8,8 +8,10 @@ Config entry trees and YAML/JSON loader files for the
 This crate is the data half of porting upstream Cordis' loader: it maps
 between config files on disk and an in-memory tree of entries, preserving
 object key order for diff-friendly files, expanding `${{ env.NAME }}`
-templates, and providing the suspend guards that break the
-write → watch → write feedback loop.
+templates, evaluating the `!!js` expression subset at hand-off, carrying
+the patch algebra behind bundle/profile composition (apply, layer
+composition, provenance dumps), and providing the suspend guards that
+break the write → watch → write feedback loop.
 
 ```text
 ┌─ cordis-loader   assembly: plugin registry + fiber state machine

@@ -6,8 +6,10 @@
 与 YAML/JSON 配置文件。
 
 本 crate 是 Cordis loader 移植的数据层：它在磁盘配置文件与内存条目树之间
-做映射，为 diff 友好的文件保留对象键序，展开 `${{ env.NAME }}` 模板，并提供
-用于打断 write → watch → write 反馈回路的 suspend guard。
+做映射，为 diff 友好的文件保留对象键序，展开 `${{ env.NAME }}` 模板，在
+交接时求值 `!!js` 表达式子集，承载 bundle/profile 组合背后的补丁代数
+（应用、分层组合、溯源导出），并提供用于打断 write → watch → write
+反馈回路的 suspend guard。
 
 ```text
 ┌─ cordis-loader   组装层：插件注册表 + fiber 状态机

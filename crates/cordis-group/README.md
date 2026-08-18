@@ -8,8 +8,8 @@ Nested plugin groups with cascading disable for the
 A group is an entry with a `group` array in the config file. At runtime the
 loader starts each group as a [`Group`] fiber and starts the child entries
 *beneath that fiber's context*: disposing the group cascades to the whole
-subtree, and a `disabled` flag anywhere on the ancestor chain keeps the
-subtree from starting at all.
+subtree, and a `disabled` slot anywhere on the ancestor chain — a plain
+flag or a `!!js` expression — keeps the subtree from starting at all.
 
 ```yaml
 entries:

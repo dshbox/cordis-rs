@@ -213,6 +213,13 @@ changes. See the `dynamic` module docs for the full safety model.
   through the same machinery without write-back — the HMR primitive for
   layer-based composition. Reloads of a document-backed loader recompose
   from the stored document; only import files are re-read.
+- **expressions** — `!!js` scalars (config values and the `disabled` slot)
+  evaluate at activation through cordis-include's `process.*` subset; a
+  disabled expression decides whether the entry (and its subtree) starts,
+  and an out-of-subset or failing expression fails that entry's start and
+  is recorded in `last_error()` (on the patch path the fiber keeps its
+  current config and the next reload retries). Files and dumps keep the
+  raw expression text.
 - **dispose** — stop every entry, stop watching files, and release the
   loader's root-level effects (the status listener and the `loader`
   service); a fresh `Loader::open` on the same root works afterwards.
