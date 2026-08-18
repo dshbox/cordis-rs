@@ -305,7 +305,7 @@ Override `validate_config()` to normalize config or return `CordisError::validat
 
 ## Runtime notes
 
-The original TypeScript implementation schedules lifecycle work through promises. This crate deliberately reconciles lifecycle transitions eagerly: `provide`, effect disposal, `restart`, and `update` return after affected fibers settle. This makes behavior deterministic without requiring Tokio or another executor. `Fiber::await_ready`, async event modes, async plugins, and async disposers remain available.
+The original TypeScript implementation schedules lifecycle work through promises. This crate deliberately reconciles lifecycle transitions eagerly: `provide`, effect disposal, `restart`, and `update` return after affected fibers settle. This makes behavior deterministic without requiring Tokio or another executor. `Fiber::await_ready`, async event modes, async plugins, and async disposers remain available; `await_ready` and `dispose_async` are synchronous pass-throughs that never yield — awaiting them blocks the calling thread for the duration.
 
 Executor-independent futures work everywhere. If a future creates runtime-specific resources (for example `tokio::time::sleep`), call Cordis while that runtime is entered.
 

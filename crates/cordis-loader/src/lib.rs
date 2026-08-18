@@ -34,11 +34,16 @@
 //!   for free.
 //! - **Self-kill vs. removal**: a fiber that reaches `Disposed` outside
 //!   loader operation was killed by its own plugin; the loader persists
-//!   `disabled: true` for that entry. Removing an entry from the file just
-//!   stops it.
+//!   `disabled: true` for that entry shortly after, deferred off the dying
+//!   fiber's transition lock. Removing an entry from the file just stops
+//!   it.
 //! - **Write-back**: [`Loader::update_config`] is the runtime entry point —
-//!   it updates the fiber *and* persists the config. Reloads never echo
-//!   back (file-level suspend).
+//!   it updates the fiber *and* persists the config. Reloads apply their
+//!   patches without writing them back; only newly generated ids are
+//!   persisted. `reload`, `update_config`, and `dispose` serialize through
+//!   one operation lock (reentrant from event listeners), so a
+//!   watch-thread reload cannot interleave with a plugin-thread
+//!   `update_config`.
 //!
 //! # Example
 //!

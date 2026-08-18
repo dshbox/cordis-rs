@@ -42,7 +42,8 @@ assert!(Entry::ptr_eq(&kept, &tree.resolve("srv").unwrap()));
 # }
 ```
 
-Files round-trip through [`LoaderFile`] with atomic `.tmp` + rename writes,
+Files round-trip through [`LoaderFile`] with atomic, writer-serialized
+`.tmp` + rename writes (concurrent writers cannot interleave),
 readonly detection, unknown top-level keys preserved, and coalesced
 deferred writes (`write_deferred`) for bursty callers:
 
@@ -60,8 +61,8 @@ entries:
 ## Feature flags
 
 - **`watch`** — debounced file watching through [`notify`](https://crates.io/crates/notify).
-  Events observed while the file is suspended (our own writes, or reloads in
-  progress) do not fire the callback.
+  Events observed while the file is suspended — by a caller-held suspend
+  guard, e.g. around the caller's own writes — do not fire the callback.
 
 ## Scope
 
