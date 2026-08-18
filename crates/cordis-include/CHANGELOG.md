@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.12](https://github.com/dshbox/cordis-rs/compare/cordis-include-v0.0.11...cordis-include-v0.0.12) - 2026-08-18
+
+### Other
+
+- add Chinese READMEs for the satellite crates
+- align loader, CLI, and include docs with actual behavior
+
 ## [0.0.11](https://github.com/dshbox/cordis-rs/compare/cordis-include-v0.0.10...cordis-include-v0.0.11) - 2026-08-18
 
 ### Fixed
