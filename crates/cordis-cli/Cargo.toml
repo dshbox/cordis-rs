@@ -19,3 +19,6 @@ cordis-loader = { workspace = true, features = ["watch", "dynamic"] }
 cordis-rs.workspace = true
 ctrlc = { version = "3", features = ["termination"] }
 notify = "8"
+
+[target.'cfg(unix)'.dev-dependencies]
+libc = "0.2"

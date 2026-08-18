@@ -8,7 +8,11 @@
 //! The daemon exits `0` on clean shutdown, `1` when the worker never
 //! booted or died abnormally, and otherwise propagates the worker's code —
 //! deployment pipelines always see the real outcome. `SIGINT` / `SIGTERM`
-//! dispose the root context gracefully and exit `52` (daemon `0`). `.env`
+//! dispose the root context gracefully and exit `52` (daemon `0`); the
+//! daemon forwards its own shutdown to the worker by closing the pipe on
+//! the worker's stdin (so `kill <daemon-pid>` and even a `SIGKILL`ed
+//! daemon take the worker down too, not just terminal-wide signals), and
+//! kills the worker after a grace period if it will not quit. `.env`
 //! and `.env.local` are loaded (without overriding existing variables)
 //! before the worker boots, and the entry file is watched for hot reload.
 //!
@@ -39,6 +43,12 @@ const RESTART_BACKOFF_START: Duration = Duration::from_millis(100);
 const RESTART_BACKOFF_MAX: Duration = Duration::from_secs(5);
 /// A worker that stayed up at least this long resets the restart backoff.
 const RESTART_BACKOFF_RESET_AFTER: Duration = Duration::from_secs(10);
+/// How often the supervisor polls the worker's exit status. Polling keeps
+/// the shutdown flag observable where a blocking `wait()` would hang.
+const WORKER_WAIT_POLL: Duration = Duration::from_millis(50);
+/// Grace period for the worker to exit after the daemon requested shutdown
+/// (by closing the worker's stdin pipe) before it is killed outright.
+const WORKER_SHUTDOWN_GRACE: Duration = Duration::from_secs(10);
 
 /// What the supervisor does after a worker exits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -259,7 +269,7 @@ fn supervise(config: &std::path::Path, plugin_dirs: &[PathBuf]) -> i32 {
     // stayed up long enough resets it.
     let mut backoff: Option<Duration> = None;
     let exit_code;
-    loop {
+    'supervise: loop {
         if shutdown.load(Ordering::SeqCst) {
             exit_code = Some(worker::EXIT_QUIT);
             break;
@@ -270,6 +280,13 @@ fn supervise(config: &std::path::Path, plugin_dirs: &[PathBuf]) -> i32 {
         for dir in plugin_dirs {
             command.arg("--plugin-dir").arg(dir);
         }
+        // The worker watches this pipe: the daemon closes it when shutting
+        // down, and the OS closes it when the daemon dies for any reason —
+        // the std-only stand-in for forwarding SIGTERM, which also covers a
+        // daemon killed with SIGKILL.
+        command
+            .stdin(std::process::Stdio::piped())
+            .env(worker::SUPERVISED_ENV, "1");
         let mut child = match command.spawn() {
             Ok(child) => child,
             Err(error) => {
@@ -277,7 +294,7 @@ fn supervise(config: &std::path::Path, plugin_dirs: &[PathBuf]) -> i32 {
                 return 1;
             }
         };
-        let code = child.wait().ok().and_then(|status| status.code());
+        let code = supervise_worker(&mut child, &shutdown);
         if supervisor_action(code, shutdown.load(Ordering::SeqCst)) == Action::Stop {
             exit_code = code;
             break;
@@ -288,9 +305,54 @@ fn supervise(config: &std::path::Path, plugin_dirs: &[PathBuf]) -> i32 {
             delay.as_millis()
         );
         backoff = Some(delay);
-        std::thread::sleep(delay);
+        // Interruptible backoff: a shutdown request during the delay
+        // aborts the wait instead of deferring the exit by up to 5s.
+        let deadline = std::time::Instant::now() + delay;
+        while std::time::Instant::now() < deadline {
+            if shutdown.load(Ordering::SeqCst) {
+                continue 'supervise;
+            }
+            let now = std::time::Instant::now();
+            std::thread::sleep(WORKER_WAIT_POLL.min(deadline.saturating_duration_since(now)));
+        }
     }
     daemon_exit_code(exit_code, shutdown.load(Ordering::SeqCst))
+}
+
+/// Wait for one worker, forwarding daemon shutdown requests: closing the
+/// worker's stdin pipe triggers its graceful teardown (the same path as a
+/// signal), and a worker that ignores it for [`WORKER_SHUTDOWN_GRACE`] is
+/// killed. Never blocks indefinitely, so the shutdown flag stays
+/// observable.
+fn supervise_worker(child: &mut std::process::Child, shutdown: &AtomicBool) -> Option<i32> {
+    let mut stdin = child.stdin.take();
+    let mut requested = None::<std::time::Instant>;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return status.code(),
+            Ok(None) => {}
+            Err(error) => {
+                eprintln!("cordis: cannot wait for worker: {error}");
+                return None;
+            }
+        }
+        if shutdown.load(Ordering::SeqCst) {
+            match requested {
+                None => {
+                    eprintln!("cordis: forwarding shutdown to the worker");
+                    drop(stdin.take());
+                    requested = Some(std::time::Instant::now());
+                }
+                Some(at) if at.elapsed() >= WORKER_SHUTDOWN_GRACE => {
+                    eprintln!("cordis: worker did not exit in time, killing it");
+                    let _ = child.kill();
+                    return child.wait().ok().and_then(|status| status.code());
+                }
+                _ => {}
+            }
+        }
+        std::thread::sleep(WORKER_WAIT_POLL);
+    }
 }
 
 #[cfg(test)]
