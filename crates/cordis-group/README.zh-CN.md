@@ -8,7 +8,7 @@
 group 是配置文件中携带 `group` 数组的条目。运行时 loader 会把每个 group
 作为一个 [`Group`] fiber 启动，并把子条目启动在**该 fiber 的 context
 之下**：销毁 group 会级联到整棵子树，而祖先链上任意位置的 `disabled`
-标志都会让整棵子树从一开始就不启动。
+槽位（纯标志或 `!!js` 表达式）都会让整棵子树从一开始就不启动。
 
 ```yaml
 entries:
