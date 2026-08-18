@@ -48,6 +48,10 @@ struct FileInner {
     path: PathBuf,
     format: FileFormat,
     suspend: Mutex<usize>,
+    /// Serializes whole write sequences (serialize → tmp write → rename).
+    /// Without it two writers race on the same sibling `.tmp` file and the
+    /// rename can land torn content; see `write_document`.
+    write_lock: Mutex<()>,
     deferred: Mutex<DeferredState>,
     deferred_signal: Condvar,
     flusher: Mutex<Option<std::thread::JoinHandle<()>>>,
@@ -108,6 +112,7 @@ impl LoaderFile {
                 path,
                 format,
                 suspend: Mutex::new(0),
+                write_lock: Mutex::new(()),
                 deferred: Mutex::new(DeferredState::default()),
                 deferred_signal: Condvar::new(),
                 flusher: Mutex::new(None),
@@ -258,7 +263,13 @@ impl LoaderFile {
 
 /// Serialize `document` and atomically replace the file behind `inner`.
 /// A no-op while the file is suspended.
+///
+/// The whole sequence — serialize, write the sibling `.tmp`, fsync, rename —
+/// runs under `write_lock`: concurrent writers (a synchronous `write`, the
+/// deferred flusher, the loader's write-back) would otherwise interleave on
+/// the same `.tmp` path and the rename could publish torn content.
 fn write_document(inner: &FileInner, document: &Document) -> Result<()> {
+    let _write = crate::lock(&inner.write_lock);
     if *crate::lock(&inner.suspend) > 0 {
         return Ok(());
     }
@@ -415,5 +426,101 @@ impl Drop for FileSuspendGuard {
     fn drop(&mut self) {
         let mut suspend = lock(&self.file.inner.suspend);
         *suspend = suspend.saturating_sub(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_file(stem: &str) -> LoaderFile {
+        let path = std::env::temp_dir().join(format!(
+            "cordis-include-write-test-{stem}-{}-{}.yml",
+            std::process::id(),
+            randomish()
+        ));
+        let _ = std::fs::remove_file(&path);
+        LoaderFile::open(path).unwrap()
+    }
+
+    fn randomish() -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_nanos() as u64)
+            .unwrap_or(0)
+    }
+
+    fn padded_document(tag: u64) -> Document {
+        // A large payload widens the torn-write window.
+        let filler = "x".repeat(4096);
+        let config = Node::String(format!("{tag}-{filler}"));
+        Document::with_entries(vec![
+            EntryOptions::new("w").with_id("w").with_config(config),
+        ])
+    }
+
+    /// Regression: two writers racing on the shared sibling `.tmp` could
+    /// interleave and the rename published torn content. The write lock
+    /// serializes whole write sequences; the final file must always parse
+    /// and equal one of the writers' documents in full.
+    #[test]
+    fn concurrent_writers_never_produce_a_torn_file() {
+        for _ in 0..25 {
+            let file = temp_file("race");
+            let writers: Vec<_> = (0..4_u64)
+                .map(|tag| {
+                    let file = file.clone();
+                    std::thread::spawn(move || {
+                        let document = padded_document(tag);
+                        for _ in 0..5 {
+                            file.write(&document).unwrap();
+                        }
+                    })
+                })
+                .collect();
+            for writer in writers {
+                writer.join().unwrap();
+            }
+            let document = file.read().unwrap();
+            let config = document.entries[0].config.clone().unwrap();
+            let Node::String(text) = &config else {
+                panic!("config is not the string one writer wrote: {config:?}");
+            };
+            let tag: u64 = text.split('-').next().unwrap().parse().unwrap();
+            let expected = padded_document(tag);
+            assert_eq!(document, expected, "torn or mixed content survived");
+            let _ = std::fs::remove_file(file.path());
+        }
+    }
+
+    /// The deferred flusher and a synchronous writer share the same file;
+    /// interleaving them must never leave an unparseable result behind.
+    #[test]
+    fn concurrent_deferred_and_sync_writes_stay_parseable() {
+        for _ in 0..25 {
+            let file = temp_file("deferred-race");
+            let deferred = std::thread::spawn({
+                let file = file.clone();
+                move || {
+                    for tag in 0..20_u64 {
+                        file.write_deferred(padded_document(tag), Duration::from_millis(1));
+                    }
+                    file.flush_deferred();
+                }
+            });
+            for tag in 100..120_u64 {
+                file.write(&padded_document(tag)).unwrap();
+            }
+            deferred.join().unwrap();
+            let document = file.read().unwrap();
+            let config = document.entries[0].config.clone().unwrap();
+            let Node::String(text) = &config else {
+                panic!("config is not the string one writer wrote: {config:?}");
+            };
+            let tag: u64 = text.split('-').next().unwrap().parse().unwrap();
+            assert_eq!(document, padded_document(tag));
+            let _ = std::fs::remove_file(file.path());
+        }
     }
 }
