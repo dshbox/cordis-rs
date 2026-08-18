@@ -89,7 +89,7 @@ fn overrides_replace_config_wholesale_and_flip_flags() {
         composed[0].config,
         Some(Node::from_iter([("v".to_string(), Node::Int(2))]))
     );
-    assert!(composed[0].disabled);
+    assert!(composed[0].disabled.is_disabled());
     assert_eq!(composed[0].inject, ["database"]);
 }
 
@@ -142,7 +142,7 @@ fn insert_into_group_children_and_indexing_recurses_into_them() {
     let child = &composed[0].group[0];
     assert_eq!(child.id.as_deref(), Some("child"));
     // The inserted row's own group children are indexed too.
-    assert!(child.group[0].disabled);
+    assert!(child.group[0].disabled.is_disabled());
 }
 
 #[test]
@@ -217,7 +217,7 @@ fn name_is_a_guard_not_an_override() {
     );
     // Matching guard applies; mismatched guard warns and skips; an empty
     // guard string is no guard at all (upstream truthiness).
-    assert!(composed[0].disabled);
+    assert!(composed[0].disabled.is_disabled());
     assert_eq!(composed[0].inject, ["empty-guard"]);
     assert_eq!(composed[0].name, "adapter");
     assert_eq!(
@@ -345,14 +345,17 @@ fn recomposition_from_original_data_reverts_removed_patches() {
 
     let with_both =
         apply_entry_patches(&base, &[layer_a.clone(), layer_b.clone()].concat(), |_| {});
-    assert!(with_both[0].disabled);
+    assert!(with_both[0].disabled.is_disabled());
     assert_eq!(
         with_both[0].config,
         Some(Node::from_iter([("v".to_string(), Node::Int(1))]))
     );
 
     let with_a_only = apply_entry_patches(&base, &layer_a, |_| {});
-    assert!(with_a_only[0].disabled, "removing layer b reverts only b");
+    assert!(
+        with_a_only[0].disabled.is_disabled(),
+        "removing layer b reverts only b"
+    );
     assert!(with_a_only[0].config.is_none(), "layer b's write is gone");
 
     // Inputs were never touched: the patch rows still hold their inserts.
@@ -431,7 +434,7 @@ fn layers_patch_rows_earlier_layers_inserted() {
         |_| {},
     );
     assert_eq!(entries.len(), 1);
-    assert!(entries[0].disabled);
+    assert!(entries[0].disabled.is_disabled());
 }
 
 // ------------------------------------------------------------------ IO ---

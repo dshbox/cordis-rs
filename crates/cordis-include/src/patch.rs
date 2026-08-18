@@ -33,7 +33,7 @@
 
 use crate::error::{IncludeError, Result};
 use crate::node::Node;
-use crate::options::{EntryOptions, GROUP_NAME};
+use crate::options::{Disabled, EntryOptions, GROUP_NAME};
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -258,7 +258,10 @@ pub fn apply_entry_patches(
             target.config = Some(config.clone());
         }
         if let Some(disabled) = patch.disabled {
-            target.disabled = disabled;
+            // Patches carry an already-evaluated boolean; they overwrite
+            // any expression the target declared (later activation
+            // re-evaluates nothing).
+            target.disabled = Disabled::Flag(disabled);
         }
         if let Some(inject) = patch.inject.as_ref() {
             target.inject = inject.clone();
@@ -299,7 +302,7 @@ pub fn apply_entry_patches(
 /// }];
 /// let entries = compose_layers(&[bundle, user], |_| {});
 /// assert_eq!(entries.len(), 1);
-/// assert!(entries[0].disabled);
+/// assert!(entries[0].disabled.is_disabled());
 /// ```
 pub fn compose_layers(layers: &[Vec<PatchOptions>], warn: impl FnMut(&str)) -> Vec<EntryOptions> {
     let flattened: Vec<PatchOptions> = layers.iter().flatten().cloned().collect();

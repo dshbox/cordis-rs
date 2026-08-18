@@ -57,6 +57,15 @@ pub enum IncludeError {
         /// The unsupported expression.
         expression: String,
     },
+    /// A `!!js` expression failed to parse or falls outside the supported
+    /// subset ([`crate::expr`]).
+    JsExpression {
+        /// The raw expression text.
+        expression: String,
+        /// What went wrong: a syntax problem, an operator or reference
+        /// outside the subset, or an unusable result.
+        message: String,
+    },
     /// A `${{` template was never closed with `}}`.
     Unterminated {
         /// The input containing the dangling `${{`.
@@ -107,6 +116,10 @@ impl fmt::Display for IncludeError {
             Self::UnknownExpression { expression } => {
                 write!(f, "unsupported template expression `{expression}`")
             }
+            Self::JsExpression {
+                expression,
+                message,
+            } => write!(f, "!!js expression `{expression}` failed: {message}"),
             Self::Unterminated { input } => {
                 write!(f, "unterminated template `${{{{`}} in `{input}`")
             }

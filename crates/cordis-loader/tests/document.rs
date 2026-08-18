@@ -166,7 +166,7 @@ fn document_backed_reload_ignores_the_draft_file() {
     );
     let w1 = loader.tree().resolve("w1").unwrap();
     assert!(w1.fiber().is_some(), "draft disable leaked into the tree");
-    assert!(!w1.options().disabled);
+    assert!(!w1.options().disabled.is_disabled());
     assert_eq!(
         std::fs::read_to_string(&path).unwrap(),
         draft,
@@ -412,7 +412,7 @@ fn recomposition_drops_a_self_kill_disable_written_to_the_draft() {
         .unwrap();
     let revived = loader.tree().resolve("v1").unwrap();
     revived.fiber().unwrap().try_wait().unwrap();
-    assert!(!revived.options().disabled);
+    assert!(!revived.options().disabled.is_disabled());
 
     loader.dispose().unwrap();
     cleanup(&path);

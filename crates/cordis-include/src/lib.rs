@@ -52,8 +52,12 @@
 //! is handed to a plugin ([`Entry::resolved_config`]); the file itself keeps
 //! the template text. `!!js` scalars parse through the crate's own YAML
 //! dialect (the [`yaml`] module) and round-trip as expression nodes
-//! ([`Node::Expr`]), still unevaluated — evaluation of the expression
-//! subset is the loader's hand-off job.
+//! ([`Node::Expr`]). At the same hand-off point every expression evaluates
+//! through the [`expr`] subset — the `process.*` references the shipped
+//! bundles use; injected-context expressions (`ctx.*`, `dshHomePath(…)`)
+//! fail with a clear subset error. The `disabled` field takes the same
+//! `!!js` form (see [`Disabled`]), evaluated at activation through
+//! [`Entry::resolved_disabled`].
 //!
 //! # Patch lists
 //!
@@ -86,6 +90,7 @@
 
 pub mod entry;
 pub mod error;
+pub mod expr;
 pub mod file;
 pub mod interpolate;
 pub mod node;
@@ -99,9 +104,10 @@ pub mod yaml;
 
 pub use entry::{Entry, EntrySuspendGuard};
 pub use error::{IncludeError, Result};
+pub use expr::{evaluate, evaluate_node};
 pub use file::{Document, FileFormat, FileSuspendGuard, LoaderFile};
 pub use node::{Node, NodeMap};
-pub use options::{EntryOptions, GROUP_NAME, IMPORT_NAME};
+pub use options::{Disabled, EntryOptions, GROUP_NAME, IMPORT_NAME};
 pub use patch::{
     DumpLayer, PatchOptions, Provenance, apply_entry_patches, compose_layers,
     compose_with_provenance, load_optional_patches, load_overlay_patches, render_config_dump,

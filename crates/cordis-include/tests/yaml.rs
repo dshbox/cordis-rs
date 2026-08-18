@@ -2,8 +2,8 @@
 //! config files, patch files, and dumps — parse, round-trip, and emit.
 
 use cordis_include::{
-    Document, DumpLayer, EntryOptions, LoaderFile, Node, PatchOptions, load_overlay_patches,
-    render_config_dump,
+    Disabled, Document, DumpLayer, EntryOptions, LoaderFile, Node, PatchOptions,
+    load_overlay_patches, render_config_dump,
 };
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -60,6 +60,34 @@ fn empty_entries_tail_reads_as_an_empty_document() {
 }
 
 #[test]
+fn entry_files_round_trip_disabled_expressions() {
+    let path = temp_path("disabled-expr");
+    let _ = std::fs::remove_file(&path);
+    std::fs::write(
+        &path,
+        "entries:\n  - id: gate\n    name: adapter\n    disabled: !!js process.platform === 'win32'\n",
+    )
+    .unwrap();
+    let file = LoaderFile::open(&path).unwrap();
+    let document = file.read().unwrap();
+    assert_eq!(
+        document.entries[0].disabled,
+        Disabled::Expr("process.platform === 'win32'".to_owned())
+    );
+    file.write(&document).unwrap();
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        text.contains("disabled: !!js process.platform === 'win32'\n"),
+        "{text}"
+    );
+    // Write-back is stable and the expression survives re-reading.
+    file.write(&document).unwrap();
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
+    assert_eq!(file.read().unwrap(), document);
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
 fn patch_files_keep_expressions_and_reject_them_for_disabled() {
     let path = temp_path("patch-expr");
     let _ = std::fs::remove_file(&path);
@@ -88,8 +116,8 @@ fn patch_files_keep_expressions_and_reject_them_for_disabled() {
     );
     let _ = std::fs::remove_file(&path);
 
-    // Until the typed slot lands, `disabled: !!js` fails loud with a clear
-    // message instead of silently mis-evaluating.
+    // Patch overrides need an evaluated boolean; entry rows carry the
+    // expression slot instead.
     std::fs::write(
         &path,
         "- id: x\n  disabled: !!js process.platform === 'win32'\n",
@@ -97,7 +125,7 @@ fn patch_files_keep_expressions_and_reject_them_for_disabled() {
     .unwrap();
     let error = load_overlay_patches(&path).unwrap_err().to_string();
     assert!(
-        error.contains("disabled: !!js expressions are not supported yet"),
+        error.contains("disabled: !!js expressions are not supported in patches"),
         "{error}"
     );
     let _ = std::fs::remove_file(&path);
@@ -133,5 +161,28 @@ fn dumps_print_expressions_unevaluated() {
     assert_eq!(
         config.as_object().unwrap()["model"],
         Node::Expr("process.env.DSH_MODEL".to_owned())
+    );
+}
+
+/// A `disabled: !!js` slot dumps unevaluated, like the config
+/// expressions — upstream's `--dump-config` never evaluates `!!js`.
+#[test]
+fn dumps_print_disabled_expressions_unevaluated() {
+    let base = [EntryOptions {
+        id: Some("gate".into()),
+        name: "adapter".into(),
+        disabled: Disabled::Expr("process.env.DSH_GATE === 'off'".to_owned()),
+        ..EntryOptions::default()
+    }];
+    let dump = render_config_dump(&base, "base.yml", &[], |_| {}).unwrap();
+    assert!(
+        dump.contains("disabled: !!js process.env.DSH_GATE === 'off'\n"),
+        "{dump}"
+    );
+    // The dump is loadable and the slot round-trips to the expression.
+    let entries = cordis_include::parse_entry_list(&dump).unwrap();
+    assert_eq!(
+        entries[0].disabled,
+        Disabled::Expr("process.env.DSH_GATE === 'off'".to_owned())
     );
 }
