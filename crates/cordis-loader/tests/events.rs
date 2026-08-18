@@ -186,9 +186,22 @@ fn self_kill_emits_partial_dispose() {
     listen(&root, &counts);
 
     lock(&victim).clone().unwrap().dispose().unwrap();
-    assert_eq!(counts.partial_dispose.load(Ordering::SeqCst), 1);
-    let text = std::fs::read_to_string(&config_path).unwrap();
-    assert!(text.contains("disabled: true"), "{text}");
+    // The self-kill persistence (and its PARTIAL_DISPOSE emission) is
+    // deferred off the dying fiber's transition lock; poll for it.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        let persisted = std::fs::read_to_string(&config_path)
+            .unwrap()
+            .contains("disabled: true");
+        if counts.partial_dispose.load(Ordering::SeqCst) == 1 && persisted {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "self-kill events/persistence never landed"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
 
     let _ = std::fs::remove_dir_all(&dir);
 }
