@@ -1,6 +1,6 @@
 [package]
 name = "cordis-cli"
-version = "0.0.10"
+version = "0.0.11"
 description = "Command line runner (daemon/worker) for the cordis-rs plugin framework"
 keywords = ["cordis", "cli", "runner", "daemon", "loader"]
 categories = ["command-line-utilities"]
