@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.9](https://github.com/dshbox/cordis-rs/compare/cordis-cli-v0.0.8...cordis-cli-v0.0.9) - 2026-08-18
+
+### Fixed
+
+- rebuild OsStrings from argument bytes without windows-only APIs
+- forward daemon shutdown to the worker and bound its teardown
+- [**breaking**] keep non-UTF-8 CLI arguments intact through argument parsing
+
 ## [0.0.8](https://github.com/dshbox/cordis-rs/compare/cordis-cli-v0.0.7...cordis-cli-v0.0.8) - 2026-08-18
 
 ### Other
