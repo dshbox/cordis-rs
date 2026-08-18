@@ -1,5 +1,7 @@
 # cordis-loader
 
+**English** | [简体中文](README.zh-CN.md)
+
 Config-file driven plugin loader for the
 [cordis-rs](https://crates.io/crates/cordis-rs) plugin framework.
 

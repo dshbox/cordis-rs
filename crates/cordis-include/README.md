@@ -1,5 +1,7 @@
 # cordis-include
 
+**English** | [简体中文](README.zh-CN.md)
+
 Config entry trees and YAML/JSON loader files for the
 [cordis-rs](https://crates.io/crates/cordis-rs) plugin framework.
 

@@ -1,5 +1,7 @@
 # cordis-cli
 
+**English** | [简体中文](README.zh-CN.md)
+
 Command-line runner for the [cordis-rs](https://crates.io/crates/cordis-rs)
 plugin framework: `cordis run <config.yml>`.
 
