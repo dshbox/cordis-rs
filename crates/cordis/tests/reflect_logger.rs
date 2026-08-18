@@ -1,6 +1,6 @@
 use cordis::{
-    Accessor, Context, ExporterConfig, LogArg, LoggerIntercept, LoggerLevel, Result, Value,
-    default_format,
+    Accessor, Context, ExporterConfig, Inject, LogArg, LoggerIntercept, LoggerLevel, PluginOutput,
+    Result, Value, default_format, plugin_sync,
 };
 use std::sync::{Arc, Mutex};
 
@@ -70,5 +70,49 @@ fn logger_buffers_exports_formats_and_intercepts() -> Result<()> {
     exporter.dispose()?;
     root.logger().info("not exported", []);
     assert_eq!(captured.lock().unwrap().len(), 4);
+    Ok(())
+}
+
+/// Upstream parity (logger.spec name resolution): an explicit name wins over
+/// the intercept name, which wins over the fiber-derived name, which falls
+/// back to "root".
+#[test]
+fn logger_name_resolution_precedence_chain() -> Result<()> {
+    let root = Context::new();
+
+    // Outside any plugin the fiber-derived name falls back to "root".
+    assert_eq!(root.logger().name, "root");
+    // An explicit name beats everything.
+    assert_eq!(root.named_logger("explicit").name, "explicit");
+
+    // An intercept name beats the fiber-derived name...
+    let intercepted = root.intercept(
+        "logger",
+        LoggerIntercept {
+            name: Some("intercepted".to_owned()),
+            level: None,
+        },
+    );
+    assert_eq!(intercepted.logger().name, "intercepted");
+    // ...but an explicit name still beats the intercept.
+    assert_eq!(intercepted.named_logger("explicit").name, "explicit");
+
+    // Inside a named plugin the default logger uses the hyphenated fiber
+    // name, and the intercept wins there too when present.
+    let names = Arc::new(Mutex::new(Vec::new()));
+    let plugin = plugin_sync::<(), _>("MyDriver", Inject::none(), {
+        let names = names.clone();
+        move |ctx, _| {
+            names.lock().unwrap().push(ctx.logger().name.clone());
+            names
+                .lock()
+                .unwrap()
+                .push(ctx.named_logger("mine").name.clone());
+            Ok(PluginOutput::none())
+        }
+    });
+    let fiber = intercepted.plugin_default(plugin);
+    fiber.try_wait()?;
+    assert_eq!(*names.lock().unwrap(), vec!["intercepted", "mine"]);
     Ok(())
 }

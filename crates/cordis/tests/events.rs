@@ -217,3 +217,76 @@ fn once_survives_earlier_bail() -> Result<()> {
     assert_eq!(root.events().listener_count("stop"), 0);
     Ok(())
 }
+
+/// Upstream parity (events.spec 'ctx.serial()'): serial dispatch awaits each
+/// listener in registration order and stops at the first bail value, so
+/// listeners after the bail never run.
+#[test]
+fn serial_awaits_listeners_in_order_until_bail() -> Result<()> {
+    let root = Context::new();
+    let order = Arc::new(Mutex::new(Vec::new()));
+    for value in 1..=2 {
+        let order = order.clone();
+        root.on_async("probe", move |_| {
+            let order = order.clone();
+            async move {
+                order.lock().unwrap().push(value);
+                Ok(None)
+            }
+        })?;
+    }
+    let bailing = order.clone();
+    root.on_async("probe", move |_| {
+        let bailing = bailing.clone();
+        async move {
+            bailing.lock().unwrap().push(3);
+            Ok(Some(Value::new(42_u32)))
+        }
+    })?;
+    let skipped = order.clone();
+    root.on_async("probe", move |_| {
+        let skipped = skipped.clone();
+        async move {
+            skipped.lock().unwrap().push(4);
+            Ok(None)
+        }
+    })?;
+
+    let result = block_on(root.serial("probe", []))?
+        .unwrap()
+        .downcast::<u32>()?;
+    assert_eq!(*result, 42);
+    assert_eq!(*order.lock().unwrap(), vec![1, 2, 3]);
+    Ok(())
+}
+
+/// Upstream parity (events.spec 'ctx.waterfall()'): the synchronous waterfall
+/// convenience wrapper composes listeners around an innermost synchronous
+/// callback, matching the async variant's next() chaining.
+#[test]
+fn sync_waterfall_composes_listeners_around_sync_inner() -> Result<()> {
+    let root = Context::new();
+    let calls = Arc::new(AtomicUsize::new(0));
+    for _ in 0..2 {
+        let calls = calls.clone();
+        root.on_async("pipeline", move |event| {
+            let calls = calls.clone();
+            async move {
+                calls.fetch_add(1, Ordering::SeqCst);
+                let value = *event.arg::<u32>(0)?.unwrap();
+                let next = event.next().await?.unwrap().downcast::<u32>()?;
+                Ok(Some(Value::new(value + *next)))
+            }
+        })?;
+    }
+
+    let result = root
+        .waterfall("pipeline", [Value::new(1_u32)], || {
+            Ok(Some(Value::new(2_u32)))
+        })?
+        .unwrap()
+        .downcast::<u32>()?;
+    assert_eq!(*result, 4);
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    Ok(())
+}
