@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.18](https://github.com/dshbox/cordis-rs/compare/cordis-loader-v0.0.17...cordis-loader-v0.0.18) - 2026-08-18
+
+### Added
+
+- [**breaking**] add the !!js expression evaluator and the disabled expression slot
+
 ## [0.0.17](https://github.com/dshbox/cordis-rs/compare/cordis-loader-v0.0.16...cordis-loader-v0.0.17) - 2026-08-18
 
 ### Other
