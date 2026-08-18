@@ -151,12 +151,15 @@ mod sys {
 
         /// SAFETY: `parser` points to an initialized parser that just
         /// reported a failure; the problem/context fields are C strings or
-        /// null.
+        /// null. The explicit dereference below creates the one shared
+        /// reference every field read goes through — no implicit autoref
+        /// ever forms through the raw pointer.
         unsafe fn error(parser: *mut sys::yaml_parser_t) -> Error {
             unsafe {
-                let problem = cstring((*parser).problem.cast())
+                let parser: &sys::yaml_parser_t = &*parser;
+                let problem = cstring(std::ptr::addr_of!(parser.problem).cast())
                     .unwrap_or_else(|| "libyaml parser failed".to_owned());
-                let mark = (*parser).problem_mark;
+                let mark = std::ptr::addr_of!(parser.problem_mark).read();
                 Error {
                     problem,
                     line: mark.line,
