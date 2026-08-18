@@ -27,6 +27,7 @@
 pub mod dotenv;
 pub mod worker;
 
+use std::ffi::{OsStr, OsString};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -105,41 +106,56 @@ pub struct Options {
 }
 
 /// Parse `cordis` arguments (after the binary name).
-pub fn parse_args(args: &[String]) -> Result<Options, String> {
+///
+/// Arguments stay [`OsString`] end to end so config paths with non-UTF-8
+/// bytes (legal on Unix filesystems) reach the loader intact instead of
+/// being mangled into replacement characters; they are only lossily
+/// rendered for usage and error text.
+pub fn parse_args(args: &[OsString]) -> Result<Options, String> {
     let Some(command) = args.first() else {
         return Err(usage());
     };
-    if command != "run" {
-        return Err(format!("unknown command `{command}`\n\n{}", usage()));
+    if command.as_os_str() != OsStr::new("run") {
+        return Err(format!(
+            "unknown command `{}`\n\n{}",
+            command.to_string_lossy(),
+            usage()
+        ));
     }
     let mut config = None;
     let mut plugin_dirs = Vec::new();
     let mut worker = false;
     let mut rest = args[1..].iter();
     while let Some(arg) = rest.next() {
-        match arg.as_str() {
-            "--worker" | "-w" => worker = true,
-            "--help" | "-h" => return Err(usage()),
-            "--plugin-dir" => {
+        let bytes = arg.as_encoded_bytes();
+        match bytes {
+            b"--worker" | b"-w" => worker = true,
+            b"--help" | b"-h" => return Err(usage()),
+            b"--plugin-dir" => {
                 let Some(value) = rest.next() else {
                     return Err(format!("--plugin-dir requires a directory\n\n{}", usage()));
                 };
                 plugin_dirs.push(PathBuf::from(value));
             }
-            other if other.starts_with("--plugin-dir=") => {
-                let value = other.strip_prefix("--plugin-dir=").unwrap();
+            _ if bytes.starts_with(b"--plugin-dir=") => {
+                let value = os_string_from_encoded_bytes(&bytes[b"--plugin-dir=".len()..]);
                 if value.is_empty() {
                     return Err(format!("--plugin-dir requires a directory\n\n{}", usage()));
                 }
                 plugin_dirs.push(PathBuf::from(value));
             }
-            other if other.starts_with('-') => {
-                return Err(format!("unknown flag `{other}`\n\n{}", usage()));
+            _ if bytes.first() == Some(&b'-') => {
+                return Err(format!(
+                    "unknown flag `{}`\n\n{}",
+                    arg.to_string_lossy(),
+                    usage()
+                ));
             }
-            other => {
-                if config.replace(PathBuf::from(other)).is_some() {
+            _ => {
+                if config.replace(PathBuf::from(arg)).is_some() {
                     return Err(format!(
-                        "unexpected extra argument `{other}`\n\n{}",
+                        "unexpected extra argument `{}`\n\n{}",
+                        arg.to_string_lossy(),
                         usage()
                     ));
                 }
@@ -153,6 +169,28 @@ pub fn parse_args(args: &[String]) -> Result<Options, String> {
             worker,
         }),
         None => Err(format!("missing config file\n\n{}", usage())),
+    }
+}
+
+/// Rebuild an [`OsString`] from the [`OsStr::as_encoded_bytes`]
+/// representation. Lossless on every supported platform: raw bytes on
+/// Unix, validated WTF-8 on Windows, best-effort lossy elsewhere.
+fn os_string_from_encoded_bytes(bytes: &[u8]) -> OsString {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStringExt;
+        OsString::from_vec(bytes.to_vec())
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        OsStr::from_encoded_bytes(bytes)
+            .map(|value| value.into_owned())
+            .unwrap_or_default()
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        OsString::from(String::from_utf8_lossy(bytes).into_owned())
     }
 }
 
@@ -172,12 +210,15 @@ abnormally, otherwise the worker's own code."
 
 /// Entry point used by the `cordis` binary: parse arguments, load dotenv,
 /// then supervise or run as the worker.
+///
+/// Accepts [`OsString`]s so non-UTF-8 arguments (notably config paths on
+/// Unix) survive to the loader unchanged.
 pub fn run<I, S>(args: I) -> i32
 where
     I: IntoIterator<Item = S>,
-    S: Into<String>,
+    S: Into<OsString>,
 {
-    let args: Vec<String> = args.into_iter().map(Into::into).collect();
+    let args: Vec<OsString> = args.into_iter().map(Into::into).collect();
     let options = match parse_args(&args) {
         Ok(options) => options,
         Err(message) => {
@@ -256,8 +297,8 @@ fn supervise(config: &std::path::Path, plugin_dirs: &[PathBuf]) -> i32 {
 mod tests {
     use super::*;
 
-    fn args(list: &[&str]) -> Vec<String> {
-        list.iter().map(ToString::to_string).collect()
+    fn args(list: &[&str]) -> Vec<OsString> {
+        list.iter().map(OsString::from).collect()
     }
 
     #[test]
@@ -353,5 +394,27 @@ mod tests {
             RESTART_BACKOFF_START,
             "a worker that stayed up resets the backoff"
         );
+    }
+
+    /// Regression (#38): arguments with non-UTF-8 bytes (legal config paths
+    /// on Unix) must reach `Options` unchanged, not as replacement
+    /// characters.
+    #[cfg(unix)]
+    #[test]
+    fn non_utf8_arguments_survive_parsing() {
+        use std::os::unix::ffi::OsStringExt;
+        let bad = OsString::from_vec(vec![b'c', 0xff, b'.', b'y', b'm', b'l']);
+        let options = parse_args(&[OsString::from("run"), bad.clone()]).unwrap();
+        assert_eq!(options.config.as_os_str(), bad.as_os_str());
+
+        let bad_dir = OsString::from_vec(vec![b'd', 0xfe, b'i', 0xff, b'r']);
+        let options = parse_args(&[
+            OsString::from("run"),
+            OsString::from("c.yml"),
+            OsString::from("--plugin-dir"),
+            bad_dir.clone(),
+        ])
+        .unwrap();
+        assert_eq!(options.plugin_dirs, [PathBuf::from(bad_dir)]);
     }
 }
