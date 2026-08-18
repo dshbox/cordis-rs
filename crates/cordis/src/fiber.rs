@@ -8,6 +8,7 @@ use crate::{Config, CordisError, ErrorCode, Result, Value};
 use std::fmt::{self, Debug, Formatter};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak};
+use std::time::{Duration, Instant};
 
 /// Plugin lifecycle state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -83,6 +84,27 @@ impl Drop for TransitionGuard<'_> {
     fn drop(&mut self) {
         HELD_TRANSITIONS.with(|held| held.borrow_mut().remove(&self.key));
     }
+}
+
+/// Ceiling on how long `restart`/`dispose` wait for a transition held by
+/// another thread before failing. Generous on purpose: plugin `apply`s and
+/// disposer chains legitimately run under the transition mutex too.
+const TRANSITION_WAIT: Duration = Duration::from_secs(10);
+
+/// Test-only millisecond override for [`TRANSITION_WAIT`]; zero keeps the
+/// default so timeout regressions do not need a real ten-second stall.
+#[cfg(test)]
+static TRANSITION_WAIT_MILLIS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn transition_wait() -> Duration {
+    #[cfg(test)]
+    {
+        let millis = TRANSITION_WAIT_MILLIS.load(Ordering::Relaxed);
+        if millis != 0 {
+            return Duration::from_millis(millis);
+        }
+    }
+    TRANSITION_WAIT
 }
 
 /// Cloneable handle to one plugin lifecycle instance.
@@ -556,6 +578,30 @@ impl Fiber {
         }
     }
 
+    /// Acquire the transition mutex, giving up once [`transition_wait`]
+    /// elapses while another thread holds it.
+    ///
+    /// The std mutex has no timed lock, so contention resolves through a
+    /// try-lock poll with exponential backoff; the interval ceilings keep
+    /// the polling cost negligible next to the transitions being waited out.
+    fn acquire_transition(&self) -> Option<std::sync::MutexGuard<'_, ()>> {
+        let deadline = Instant::now() + transition_wait();
+        let mut backoff = Duration::from_micros(100);
+        loop {
+            match self.inner.transition.try_lock() {
+                Ok(guard) => return Some(guard),
+                Err(std::sync::TryLockError::Poisoned(error)) => return Some(error.into_inner()),
+                Err(std::sync::TryLockError::WouldBlock) => {}
+            }
+            let now = Instant::now();
+            if now >= deadline {
+                return None;
+            }
+            std::thread::sleep(backoff.min(deadline - now));
+            backoff = (backoff * 2).min(Duration::from_millis(5));
+        }
+    }
+
     /// Lock the transition mutex, telling reentrancy apart from contention.
     ///
     /// When the *current thread* already holds the lock — directly or
@@ -565,7 +611,10 @@ impl Fiber {
     /// that situation, while `restart`/`dispose` have no deferrable
     /// semantics and report the reentrancy as an error. When a *different
     /// thread* holds the lock, the call waits for the in-flight transition
-    /// to finish instead of silently dropping the operation.
+    /// to finish instead of silently dropping the operation — but only up
+    /// to [`transition_wait`]: past that it fails with (and logs) an error
+    /// naming the fiber, so a hung `apply` or disposer surfaces instead of
+    /// stalling the caller forever.
     fn try_transition(&self) -> Result<TransitionGuard<'_>> {
         let key = Arc::as_ptr(&self.inner) as usize;
         if HELD_TRANSITIONS.with(|held| held.borrow().contains(&key)) {
@@ -574,10 +623,24 @@ impl Fiber {
                 "lifecycle transition already in progress on this fiber",
             ));
         }
-        let guard = match self.inner.transition.try_lock() {
-            Ok(guard) => guard,
-            Err(std::sync::TryLockError::Poisoned(error)) => error.into_inner(),
-            Err(std::sync::TryLockError::WouldBlock) => lock(&self.inner.transition),
+        let Some(guard) = self.acquire_transition() else {
+            let name = self.name();
+            let uid = self
+                .uid()
+                .map_or_else(|| "?".to_owned(), |uid| uid.to_string());
+            let error = CordisError::with_message(
+                ErrorCode::Other,
+                format!(
+                    "timed out waiting for the in-flight lifecycle transition \
+                     on fiber {name} (uid {uid}); its apply or a disposer may be hung",
+                ),
+            );
+            // The caller only sees the failure; the log records which fiber
+            // is stuck so the hung plugin can be identified.
+            if let Some(ctx) = self.context() {
+                ctx.log_error(&error);
+            }
+            return Err(error);
         };
         HELD_TRANSITIONS.with(|held| held.borrow_mut().insert(key));
         Ok(TransitionGuard { _guard: guard, key })
@@ -642,6 +705,20 @@ impl Fiber {
     }
 
     /// Dispose and immediately reload this plugin with its current config.
+    ///
+    /// When another thread is mid-transition on this fiber (plugin `apply`,
+    /// disposers, a concurrent `restart`/`dispose`), the call waits for it
+    /// to finish — bounded by a ceiling (currently ten seconds) so a hung
+    /// transition fails with an error naming the fiber instead of blocking
+    /// the caller forever.
+    ///
+    /// # Deadlock warning
+    ///
+    /// Calling this on a *different* fiber from inside a lifecycle callback
+    /// (disposer, status listener, plugin `apply`) can stall that callback
+    /// for the full bounded wait: two fibers whose callbacks target each
+    /// other concurrently both time out rather than complete. Trigger
+    /// cross-fiber lifecycle operations from a plain thread instead.
     pub fn restart(&self) -> Result<()> {
         self.assert_active()?;
         if self.inner.plugin.is_none() {
@@ -721,12 +798,24 @@ impl Fiber {
     /// Permanently dispose this plugin fiber. Repeated calls are no-ops.
     ///
     /// A dispose from another thread waits for an in-flight transition on
-    /// this fiber to finish; a reentrant call from inside a lifecycle
-    /// callback fails fast instead of deadlocking.
+    /// this fiber (plugin `apply`, disposers, a concurrent `restart`/
+    /// `dispose`) to finish, bounded by a ceiling (currently ten seconds):
+    /// past it the call fails with an error naming the fiber — and logs it —
+    /// instead of blocking forever. A reentrant call from inside a
+    /// lifecycle callback on the *same* fiber fails fast instead of
+    /// deadlocking.
+    ///
+    /// # Deadlock warning
+    ///
+    /// Calling `dispose` on a *different* fiber from inside a lifecycle
+    /// callback (disposer, status listener, plugin `apply`) can stall that
+    /// callback for the full bounded wait: two fibers whose disposers
+    /// target each other concurrently both time out rather than complete.
+    /// Trigger cross-fiber teardown from a plain thread instead.
     pub fn dispose(&self) -> Result<()> {
         // Take the transition lock up front: reentrant calls fail fast, no
         // partial teardown is left behind, and concurrent callers queue
-        // behind the in-flight transition.
+        // behind the in-flight transition (up to the wait ceiling).
         let _guard = self.try_transition()?;
         if self.inner.plugin.is_none() {
             // Root disposal unloads all root-owned effects but leaves the root
@@ -851,5 +940,165 @@ mod tests {
         assert!(!fiber.inner.dirty.load(Ordering::Acquire));
         assert_eq!(fiber.state(), FiberState::Active);
         assert_eq!(starts.load(Ordering::SeqCst), 2);
+    }
+
+    /// Regression (issue #25): a hung `apply` keeps the transition mutex
+    /// locked forever; `dispose` from another thread must give up with an
+    /// error naming the fiber instead of blocking indefinitely.
+    #[test]
+    fn dispose_times_out_when_apply_hangs() {
+        let root = Context::new();
+        let (tx, rx) = std::sync::mpsc::channel::<()>();
+        // mpsc receivers are not Sync; the mutex makes the callback shareable
+        // while recv() parks the apply under it.
+        let rx = Mutex::new(rx);
+        let fiber = root.plugin_default(plugin_sync::<(), _>(
+            "hung",
+            Inject::new(["svc"]),
+            move |_, _| {
+                // Park until the sender drops: apply never finishes on its
+                // own.
+                let _ = lock(&rx).recv();
+                Ok(PluginOutput::none())
+            },
+        ));
+        assert_eq!(fiber.state(), FiberState::Pending);
+
+        // Providing the dependency drives refresh() — and the parked
+        // apply() — on the provider thread, which then holds the transition
+        // mutex for as long as apply parks.
+        let provider = std::thread::spawn({
+            let root = root.clone();
+            move || root.provide("svc", 1_u32)
+        });
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while fiber.state() != FiberState::Loading {
+            assert!(Instant::now() < deadline, "apply never started");
+            std::thread::yield_now();
+        }
+
+        TRANSITION_WAIT_MILLIS.store(150, Ordering::Relaxed);
+        let started = Instant::now();
+        let error = fiber.dispose().expect_err("dispose must time out");
+        TRANSITION_WAIT_MILLIS.store(0, Ordering::Relaxed);
+
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "dispose blocked far beyond the wait bound"
+        );
+        let message = error.to_string();
+        assert!(message.contains("timed out"), "{message}");
+        assert!(message.contains("hung"), "{message}");
+        assert!(
+            message.contains(&fiber.uid().unwrap().to_string()),
+            "{message}"
+        );
+
+        // Let the parked apply finish so the helper thread can join.
+        drop(tx);
+        provider.join().unwrap().unwrap();
+    }
+
+    /// Regression (issue #25): two fibers whose disposers dispose each
+    /// other deadlocked AB-BA on the transition mutexes. The bounded wait
+    /// turns the standoff into two timeout errors naming the peers.
+    #[test]
+    fn cross_fiber_dispose_from_disposers_times_out_instead_of_deadlocking() {
+        // Register an effect whose disposer disposes the fiber parked in
+        // `target_slot`, but only after rendezvousing with the peer
+        // disposer: the barrier guarantees both transition mutexes are held
+        // when each disposer starts waiting for the other's.
+        fn cross_disposer(
+            ctx: &Context,
+            target_slot: &Arc<Mutex<Option<Fiber>>>,
+            rendezvous: &Arc<std::sync::Barrier>,
+            sink: &Arc<Mutex<Vec<String>>>,
+        ) -> Result<PluginOutput> {
+            let target_slot = target_slot.clone();
+            let rendezvous = rendezvous.clone();
+            let sink = sink.clone();
+            ctx.effect("cross", move || {
+                let other = lock(&target_slot).clone();
+                let Some(other) = other else {
+                    return Ok(());
+                };
+                rendezvous.wait();
+                match other.dispose() {
+                    Ok(()) => lock(&sink).push("disposed".to_owned()),
+                    Err(error) => {
+                        lock(&sink).push(error.to_string());
+                        // Keep this fiber's transition held a while longer so
+                        // the peer's wait also expires: otherwise this side's
+                        // teardown can release the lock inside the peer's
+                        // deadline and the loser no-ops with Ok instead.
+                        std::thread::sleep(Duration::from_millis(300));
+                    }
+                }
+                Ok(())
+            })?;
+            Ok(PluginOutput::none())
+        }
+
+        let root = Context::new();
+        let barrier = Arc::new(std::sync::Barrier::new(2));
+        let outcomes = Arc::new(Mutex::new(Vec::<String>::new()));
+        let target_of_a = Arc::new(Mutex::new(None::<Fiber>));
+        let target_of_b = Arc::new(Mutex::new(None::<Fiber>));
+
+        let a = root.plugin_default(plugin_sync::<(), _>("peer-a", Inject::none(), {
+            let (target, rendezvous, sink) =
+                (target_of_b.clone(), barrier.clone(), outcomes.clone());
+            move |ctx, _| cross_disposer(&ctx, &target, &rendezvous, &sink)
+        }));
+        let b = root.plugin_default(plugin_sync::<(), _>("peer-b", Inject::none(), {
+            let (target, rendezvous, sink) =
+                (target_of_a.clone(), barrier.clone(), outcomes.clone());
+            move |ctx, _| cross_disposer(&ctx, &target, &rendezvous, &sink)
+        }));
+        *lock(&target_of_a) = Some(a.clone());
+        *lock(&target_of_b) = Some(b.clone());
+        assert_eq!(a.state(), FiberState::Active);
+        assert_eq!(b.state(), FiberState::Active);
+
+        TRANSITION_WAIT_MILLIS.store(150, Ordering::Relaxed);
+        let (tx_a, rx_a) = std::sync::mpsc::channel();
+        let (tx_b, rx_b) = std::sync::mpsc::channel();
+        let disposer_a = std::thread::spawn({
+            let a = a.clone();
+            move || {
+                let _ = tx_a.send(a.dispose());
+            }
+        });
+        let disposer_b = std::thread::spawn({
+            let b = b.clone();
+            move || {
+                let _ = tx_b.send(b.dispose());
+            }
+        });
+        for rx in [rx_a, rx_b] {
+            // The outer dispose results are irrelevant here: completing
+            // within the bound — not their values — is the regression check.
+            let _ = rx
+                .recv_timeout(Duration::from_secs(5))
+                .expect("deadlock: cross-fiber dispose never returned");
+        }
+        TRANSITION_WAIT_MILLIS.store(0, Ordering::Relaxed);
+        disposer_a.join().unwrap();
+        disposer_b.join().unwrap();
+
+        let messages = lock(&outcomes).clone();
+        assert_eq!(messages.len(), 2, "{messages:?}");
+        assert!(
+            messages.iter().all(|message| message.contains("timed out")),
+            "{messages:?}"
+        );
+        assert!(
+            messages.iter().any(|message| message.contains("peer-a")),
+            "{messages:?}"
+        );
+        assert!(
+            messages.iter().any(|message| message.contains("peer-b")),
+            "{messages:?}"
+        );
     }
 }
