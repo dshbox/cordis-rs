@@ -62,6 +62,47 @@ fn import_mounts_sub_file_entries_as_a_subtree() {
 }
 
 #[test]
+fn corrupt_import_is_recorded_and_skipped_without_failing_the_main_file() {
+    let dir = temp_dir("corrupt");
+    let main = dir.join("main.yml");
+    let sub = dir.join("extra.yml");
+    std::fs::write(
+        &main,
+        "entries:\n  - id: imp\n    name: import\n    config:\n      url: extra.yml\n",
+    )
+    .unwrap();
+    std::fs::write(&sub, "entries:\n  - id: w1\n    name: [\n").unwrap();
+
+    let starts = Arc::new(AtomicUsize::new(0));
+    let root = Context::new();
+    let loader = Loader::open(
+        &root,
+        LoaderConfig::new(&main).with_registry(worker_registry(starts.clone())),
+    )
+    .unwrap();
+
+    assert!(loader.tree().resolve("imp").is_some());
+    assert!(loader.tree().resolve("imp:w1").is_none());
+    assert!(
+        loader
+            .last_error()
+            .is_some_and(|error| error.contains("parse")),
+        "import error was not recorded: {:?}",
+        loader.last_error()
+    );
+
+    // Once the import is readable, a normal reload mounts and starts it.
+    std::fs::write(&sub, "entries:\n  - id: w1\n    name: worker\n").unwrap();
+    let diff = loader.reload().unwrap();
+    assert!(diff.created.iter().any(|entry| entry.path() == "imp:w1"));
+    assert!(loader.tree().resolve("imp:w1").unwrap().fiber().is_some());
+    assert_eq!(starts.load(Ordering::SeqCst), 1);
+
+    let _ = loader.dispose();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn import_sub_file_reload_diffs_only_its_children() {
     let dir = temp_dir("reload");
     let main = dir.join("main.yml");
