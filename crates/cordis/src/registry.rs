@@ -437,6 +437,21 @@ impl RegistryRoot {
     }
 }
 
+/// Drop dead weak fiber references, then the runtimes left without a single
+/// live fiber. Called under the registry state lock by the read APIs
+/// (`len`, `contains`, `values`) so a plugin whose fibers were all dropped
+/// without `dispose()` — documented as legitimate — stops being reported
+/// instead of lingering forever.
+fn prune_runtimes(state: &mut RegistryState) {
+    state.runtimes.retain(|_, runtime| {
+        runtime.fibers.retain(|weak| {
+            weak.upgrade()
+                .is_some_and(|fiber| fiber.uid_value().is_some())
+        });
+        !runtime.fibers.is_empty()
+    });
+}
+
 /// Read-only snapshot of one plugin runtime.
 #[derive(Debug, Clone)]
 pub struct RuntimeInfo {
@@ -460,8 +475,14 @@ impl RegistryService {
     }
 
     /// Number of registered plugin callbacks.
+    ///
+    /// Dead weak references are pruned as a side effect (see
+    /// [`contains`](Self::contains)), so runtimes whose fibers were all
+    /// dropped without `dispose()` stop being counted here.
     pub fn len(&self) -> usize {
-        lock(&self.ctx.root.registry.state).runtimes.len()
+        let mut state = lock(&self.ctx.root.registry.state);
+        prune_runtimes(&mut state);
+        state.runtimes.len()
     }
 
     /// Whether no plugins are registered.
@@ -475,41 +496,32 @@ impl RegistryService {
     /// fibers were all dropped without `dispose()` stops being reported here.
     pub fn contains(&self, plugin: &PluginHandle) -> bool {
         let mut state = lock(&self.ctx.root.registry.state);
-        let Some(runtime) = state.runtimes.get_mut(&plugin.key()) else {
-            return false;
-        };
-        runtime
-            .fibers
-            .retain(|weak| weak.upgrade().and_then(|fiber| fiber.uid_value()).is_some());
-        if runtime.fibers.is_empty() {
-            state.runtimes.remove(&plugin.key());
-            false
-        } else {
-            true
-        }
+        prune_runtimes(&mut state);
+        state
+            .runtimes
+            .get(&plugin.key())
+            .is_some_and(|runtime| !runtime.fibers.is_empty())
     }
 
     /// Return runtime snapshots.
+    ///
+    /// Like [`contains`](Self::contains), dead weak references are pruned
+    /// and a runtime whose fibers were all dropped without `dispose()` is
+    /// removed, so it disappears from later [`len`](Self::len) counts too.
     pub fn values(&self) -> Vec<RuntimeInfo> {
         let mut state = lock(&self.ctx.root.registry.state);
+        prune_runtimes(&mut state);
         state
             .runtimes
-            .iter_mut()
-            .map(|(key, runtime)| {
-                let mut fibers = Vec::new();
-                runtime.fibers.retain(|fiber| {
-                    if let Some(fiber) = fiber.upgrade() {
-                        fibers.push(Fiber::from_inner(fiber));
-                        true
-                    } else {
-                        false
-                    }
-                });
-                RuntimeInfo {
-                    key: *key,
-                    name: runtime.handle.name().to_owned(),
-                    fibers,
-                }
+            .values()
+            .map(|runtime| RuntimeInfo {
+                key: runtime.handle.key(),
+                name: runtime.handle.name().to_owned(),
+                fibers: runtime
+                    .fibers
+                    .iter()
+                    .filter_map(|weak| weak.upgrade().map(Fiber::from_inner))
+                    .collect(),
             })
             .collect()
     }
@@ -581,5 +593,39 @@ impl RegistryService {
             }
         }
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Context, Inject, PluginOutput};
+
+    /// Regression: values()/len() used to keep a runtime alive forever once
+    /// its fibers were dropped without dispose() (the documented case for
+    /// contains()'s pruning). Fabricating a runtime whose only weak is
+    /// already dead exercises the pruning directly.
+    #[test]
+    fn read_apis_prune_runtimes_with_only_dead_fibers() {
+        let root = Context::new();
+        let handle =
+            crate::plugin_sync::<(), _>(
+                "ghost",
+                Inject::none(),
+                |_, _| Ok(PluginOutput::default()),
+            );
+        {
+            let mut state = lock(&root.root.registry.state);
+            state.runtimes.insert(
+                handle.key(),
+                RuntimeRecord {
+                    handle: handle.clone(),
+                    fibers: vec![Weak::new()],
+                },
+            );
+        }
+        assert_eq!(root.registry().len(), 0, "len prunes empty runtimes");
+        assert!(root.registry().values().is_empty());
+        assert!(!root.registry().contains(&handle));
     }
 }
