@@ -295,6 +295,19 @@ impl LoggerRoot {
         }
     }
 
+    /// Whether anything would consume a record of `kind`: the bounded
+    /// buffer (gated by `default_level`) or at least one exporter. Cheap on
+    /// purpose — a short lock probe, no allocation — so `Logger::write` can
+    /// bail out before assembling arguments. Per-exporter thresholds may
+    /// still drop the record later; this only rules out records nobody
+    /// could ever see.
+    fn enabled(&self, default_level: Option<LoggerLevel>, kind: LoggerType) -> bool {
+        let state = lock(&self.state);
+        let buffered =
+            state.buffer_size > 0 && default_level.unwrap_or(LoggerLevel::Info) >= kind.level();
+        buffered || !state.exporter_snapshot.is_empty()
+    }
+
     fn send(
         &self,
         name: String,
@@ -494,6 +507,13 @@ pub struct Logger {
 
 impl Logger {
     fn write(&self, kind: LoggerType, format: impl Into<String>, args: Vec<LogArg>) {
+        // Fast path: when neither the bounded buffer nor any exporter would
+        // consume this record, skip the argument assembly and fiber-name
+        // resolution entirely — the level check inside send() would only
+        // throw the message away afterwards.
+        if !self.ctx.root.logger.enabled(self.level, kind) {
+            return;
+        }
         let mut all = Vec::with_capacity(args.len() + 1);
         all.push(LogArg::String(format.into()));
         all.extend(args);
@@ -688,6 +708,7 @@ fn hyphenate(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Context;
 
     #[test]
     fn hyphenate_splits_camel_case_and_acronyms() {
@@ -696,5 +717,30 @@ mod tests {
         assert_eq!(hyphenate("HTTPServer"), "http-server");
         assert_eq!(hyphenate("ABC"), "abc");
         assert_eq!(hyphenate("A"), "a");
+    }
+
+    /// The filtered fast path must exactly predict what send() keeps: with
+    /// no exporters, only records the buffer accepts are observable. Debug
+    /// under the default info threshold is dropped before any allocation;
+    /// records the buffer accepts still land in it.
+    #[test]
+    fn filtered_records_skip_the_buffer_entirely() {
+        let root = Context::new();
+        let service = root.logger_service();
+        let logger = root.logger();
+        assert_eq!(service.exporter_count(), 0);
+        assert_eq!(service.buffer().len(), 0);
+
+        logger.debug("dropped %d", [LogArg::Integer(1)]);
+        assert_eq!(service.buffer().len(), 0, "debug below the default level");
+
+        logger.error("kept %d", [LogArg::Integer(2)]);
+        let buffer = service.buffer();
+        assert_eq!(buffer.len(), 1);
+        assert_eq!(buffer[0].kind, LoggerType::Error);
+        assert!(matches!(
+            &buffer[0].args[0],
+            LogArg::String(text) if text == "kept %d"
+        ));
     }
 }
