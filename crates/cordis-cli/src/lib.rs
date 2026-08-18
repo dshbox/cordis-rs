@@ -183,22 +183,18 @@ pub fn parse_args(args: &[OsString]) -> Result<Options, String> {
 }
 
 /// Rebuild an [`OsString`] from the [`OsStr::as_encoded_bytes`]
-/// representation. Lossless on every supported platform: raw bytes on
-/// Unix, validated WTF-8 on Windows, best-effort lossy elsewhere.
+/// representation. Lossless on Unix (raw bytes); on Windows and elsewhere
+/// the bytes decode as UTF-8 — Windows arguments are UTF-16-representable
+/// in practice, so this only degrades for lone-surrogate arguments, which
+/// `OsStr::from_encoded_bytes` (unstable at our MSRV) could not have
+/// preserved either way.
 fn os_string_from_encoded_bytes(bytes: &[u8]) -> OsString {
     #[cfg(unix)]
     {
         use std::os::unix::ffi::OsStringExt;
         OsString::from_vec(bytes.to_vec())
     }
-    #[cfg(windows)]
-    {
-        use std::os::windows::ffi::OsStrExt;
-        OsStr::from_encoded_bytes(bytes)
-            .map(|value| value.into_owned())
-            .unwrap_or_default()
-    }
-    #[cfg(not(any(unix, windows)))]
+    #[cfg(not(unix))]
     {
         OsString::from(String::from_utf8_lossy(bytes).into_owned())
     }
