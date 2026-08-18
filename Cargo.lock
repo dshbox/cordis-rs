@@ -31,7 +31,7 @@ checksum = "f079e83a288787bcd14a6aea84cee5c87a67c5a3e660c30f557a3d24761b3527"
 
 [[package]]
 name = "cordis-cli"
-version = "0.0.13"
+version = "0.0.14"
 dependencies = [
  "cordis-loader",
  "cordis-rs",
@@ -49,7 +49,7 @@ dependencies = [
 
 [[package]]
 name = "cordis-include"
-version = "0.0.15"
+version = "0.0.16"
 dependencies = [
  "cordis-rs",
  "indexmap",
@@ -61,7 +61,7 @@ dependencies = [
 
 [[package]]
 name = "cordis-loader"
-version = "0.0.14"
+version = "0.0.15"
 dependencies = [
  "cordis-group",
  "cordis-include",
