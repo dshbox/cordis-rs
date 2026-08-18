@@ -21,6 +21,12 @@ pub struct LoaderConfig {
     pub filename: PathBuf,
     /// Document written on first run when the file does not exist yet.
     pub initial: Option<cordis_include::Document>,
+    /// Document composed from instead of reading the entry file. When set,
+    /// the file is never read at boot or reload — it only receives
+    /// write-backs (self-disable persistence, id materialization). Takes
+    /// precedence over [`LoaderConfig::initial`], whose boot-time write it
+    /// also suppresses.
+    pub document: Option<cordis_include::Document>,
     /// Plugin registry used to resolve entry names; defaults to a fresh
     /// [`PluginRegistry`] with only the `group` builtin.
     pub registry: Option<PluginRegistry>,
@@ -35,6 +41,7 @@ impl LoaderConfig {
         Self {
             filename: filename.into(),
             initial: None,
+            document: None,
             registry: None,
             write_debounce: None,
         }
@@ -43,6 +50,21 @@ impl LoaderConfig {
     /// Provide the document written when the file is missing.
     pub fn with_initial(mut self, initial: cordis_include::Document) -> Self {
         self.initial = Some(initial);
+        self
+    }
+
+    /// Compose from the given document instead of reading the entry file.
+    ///
+    /// The loader treats the file as a pure write-back draft: nothing is
+    /// read from or written to it at boot, and reloads recompose from this
+    /// document (import files are still read). This is the composition
+    /// source profile boot needs — the naive "compose → write draft →
+    /// open" races between concurrent boots on one profile (another
+    /// process's draft could land between this one's write and read) and
+    /// requires a writable directory. Replace the source at runtime with
+    /// [`Loader::update`].
+    pub fn with_document(mut self, document: cordis_include::Document) -> Self {
+        self.document = Some(document);
         self
     }
 
@@ -86,14 +108,21 @@ pub(crate) struct LoaderInner {
     registry: Mutex<PluginRegistry>,
     state: Mutex<LoaderState>,
     /// Serializes the loader's state transitions end to end — `reload`,
-    /// `update_config`, `dispose`, and deferred self-kill persistence — so
-    /// file reads, tree diffs, fiber patches, and write-backs always run in
-    /// a consistent order. Without it a watch-thread `reload` can interleave
-    /// with a plugin-thread `update_config` and leave the fiber serving a
-    /// different config than the tree and the file claim, with no later
-    /// event to reconcile the difference. Reentrancy-aware because loader
-    /// event listeners legitimately call back into the loader.
+    /// `update`, `update_config`, `dispose`, and deferred self-kill
+    /// persistence — so file reads, tree diffs, fiber patches, and
+    /// write-backs always run in a consistent order. Without it a
+    /// watch-thread `reload` can interleave with a plugin-thread
+    /// `update_config` and leave the fiber serving a different config than
+    /// the tree and the file claim, with no later event to reconcile the
+    /// difference. Reentrancy-aware because loader event listeners
+    /// legitimately call back into the loader.
     operation: OperationLock,
+    /// Composition source override; `None` for file-backed loaders. Set by
+    /// [`LoaderConfig::with_document`] and replaced by every
+    /// [`Loader::update`]: reloads recompose from it instead of re-reading
+    /// the root file (import files are still read), so rows a write-back
+    /// baked into the draft can never re-enter the composition.
+    document: Mutex<Option<cordis_include::Document>>,
     /// Canonical path -> file of every import currently mounted.
     imports: Mutex<HashMap<PathBuf, LoaderFile>>,
     /// Paths already armed by [`Loader::watch`] (watch feature).
@@ -130,7 +159,10 @@ impl Loader {
     /// offending entry simply has no (or a failed) fiber.
     pub fn open(root: &Context, config: LoaderConfig) -> Result<Loader> {
         let file = LoaderFile::open(&config.filename)?;
-        if !file.path().exists() {
+        // A document-backed loader never writes its draft at boot either:
+        // the root file exists only as a write-back target, so `initial`
+        // (a file-backed concern) is ignored entirely.
+        if config.document.is_none() && !file.path().exists() {
             if let Some(initial) = &config.initial {
                 file.write(initial)?;
             }
@@ -140,13 +172,24 @@ impl Loader {
         // files keep the tolerant record-and-skip path inside `compose`.
         let mut imports = HashMap::new();
         let mut errors = Vec::new();
-        let (composed, _dirty) = compose(
-            &file,
-            &mut imports,
-            &mut HashSet::new(),
-            &mut HashSet::new(),
-            &mut errors,
-        )?;
+        let document = config.document;
+        let (composed, _dirty) = match document.clone() {
+            Some(document) => compose_entries(
+                document.entries,
+                &file,
+                &mut imports,
+                &mut HashSet::new(),
+                &mut HashSet::new(),
+                &mut errors,
+            ),
+            None => compose(
+                &file,
+                &mut imports,
+                &mut HashSet::new(),
+                &mut HashSet::new(),
+                &mut errors,
+            )?,
+        };
         let inner = Arc::new(LoaderInner {
             root: root.clone(),
             file,
@@ -159,6 +202,7 @@ impl Loader {
                 _keep_alive: Vec::new(),
             }),
             operation: OperationLock::default(),
+            document: Mutex::new(document),
             imports: Mutex::new(imports),
             #[cfg(feature = "watch")]
             watched: Mutex::new(HashSet::new()),
@@ -284,83 +328,93 @@ impl Loader {
     pub fn reload(&self) -> Result<TreeDiff> {
         let inner = &self.inner;
         // Whole-reload exclusion: compose, diff, fiber transitions, and the
-        // id write-back must not interleave with update_config() or dispose().
+        // id write-back must not interleave with update() or update_config()
+        // or dispose().
         let _operation = inner.operation.guard();
         let mut imports = HashMap::new();
         let mut errors = Vec::new();
-        let (composed, dirty) = match compose(
-            &inner.file,
-            &mut imports,
-            &mut HashSet::new(),
-            &mut HashSet::new(),
-            &mut errors,
-        ) {
-            Ok(composed) => composed,
-            Err(error) => {
-                // The current tree is still the last known-good state. In
-                // particular, do not feed an empty list to `EntryTree`:
-                // that would dispose every running plugin on a transient
-                // parse or I/O failure.
-                self.record_error(&error);
-                return Err(error.into());
-            }
+        let (composed, dirty) = match lock(&inner.document).clone() {
+            // A document-backed loader never re-reads its root file: the
+            // file is a write-back draft, and rows a write-back baked into
+            // it would re-enter the composition and duplicate every insert.
+            Some(document) => compose_entries(
+                document.entries,
+                &inner.file,
+                &mut imports,
+                &mut HashSet::new(),
+                &mut HashSet::new(),
+                &mut errors,
+            ),
+            None => match compose(
+                &inner.file,
+                &mut imports,
+                &mut HashSet::new(),
+                &mut HashSet::new(),
+                &mut errors,
+            ) {
+                Ok(composed) => composed,
+                Err(error) => {
+                    // The current tree is still the last known-good state. In
+                    // particular, do not feed an empty list to `EntryTree`:
+                    // that would dispose every running plugin on a transient
+                    // parse or I/O failure.
+                    self.record_error(&error);
+                    return Err(error.into());
+                }
+            },
         };
         for error in errors {
             self.record_error(LoaderError::Include(
                 cordis_include::IncludeError::Message { message: error },
             ));
         }
-        let diff = inner.tree.update(composed)?;
-        *lock(&inner.imports) = imports;
-
-        for removed in &diff.removed {
-            if let Err(error) = stop_entry(inner, &removed.entry) {
-                self.record_error(error);
-            }
-        }
-        for entry in &diff.moved {
-            if let Err(error) = stop_entry(inner, entry) {
-                self.record_error(error);
-            }
-        }
-        for entry in &diff.redefined {
-            if let Err(error) = stop_entry(inner, entry) {
-                self.record_error(error);
-            }
-        }
-        for entry in &diff.updated {
-            if let Err(error) = patch_entry(inner, entry) {
-                self.record_error(error);
-            }
-        }
-        for entry in &diff.created {
-            if let Err(error) = start_entry(inner, entry) {
-                self.record_error(error);
-            }
-        }
-
-        // Restart what this reload stopped, parents first so re-parented
-        // entries find their group fibers: moved entries under their new
-        // parents, redefined entries with their new options, and updated
-        // entries that had no live fiber.
-        let mut restarts: Vec<&Entry> = diff
-            .moved
-            .iter()
-            .chain(&diff.redefined)
-            .chain(diff.updated.iter().filter(|entry| entry.fiber().is_none()))
-            .collect();
-        restarts.sort_by_key(|entry| entry_depth(entry));
-        for entry in restarts {
-            if let Err(error) = start_subtree(inner, entry) {
-                self.record_error(error);
-            }
-        }
+        let diff = reconcile(inner, composed, imports)?;
 
         // Entries created without explicit ids had one generated; persist
         // it to the file that owns them so the next reload can match them.
         if dirty {
             write_back(inner)?;
         }
+        #[cfg(feature = "watch")]
+        self.arm_import_watchers();
+        Ok(diff)
+    }
+
+    /// Recompose from a caller-supplied document — the in-memory twin of
+    /// [`reload`](Self::reload): the same full reconcile (diff → stop →
+    /// patch → start) under the same operation lock, but composed from
+    /// `document` instead of any file, and **without write-back**. A
+    /// recomposition is not a file edit (upstream's `internal/update`
+    /// persists nothing either); ids generated for id-less rows stay in
+    /// memory, so those rows restart on every recomposition — the draft is
+    /// regenerated anyway.
+    ///
+    /// The document also becomes the loader's composition source: later
+    /// reloads recompose from it instead of re-reading the root file
+    /// (import files are still read). This is the core HMR primitive — a
+    /// watcher recomposes fresh layers and hands the result to `update`.
+    pub fn update(&self, document: cordis_include::Document) -> Result<TreeDiff> {
+        let inner = &self.inner;
+        // Same exclusion as reload(): the source swap, tree diff, and fiber
+        // transitions must land as one unit.
+        let _operation = inner.operation.guard();
+        let mut imports = HashMap::new();
+        let mut errors = Vec::new();
+        let (composed, _dirty) = compose_entries(
+            document.entries.clone(),
+            &inner.file,
+            &mut imports,
+            &mut HashSet::new(),
+            &mut HashSet::new(),
+            &mut errors,
+        );
+        for error in errors {
+            self.record_error(LoaderError::Include(
+                cordis_include::IncludeError::Message { message: error },
+            ));
+        }
+        *lock(&inner.document) = Some(document);
+        let diff = reconcile(inner, composed, imports)?;
         #[cfg(feature = "watch")]
         self.arm_import_watchers();
         Ok(diff)
@@ -468,7 +522,7 @@ impl Loader {
     }
 
     fn record_error(&self, error: impl std::fmt::Display) {
-        lock(&self.inner.state).last_error = Some(error.to_string());
+        record_error(&self.inner, &error);
     }
 }
 
@@ -554,6 +608,69 @@ fn emit(inner: &LoaderInner, name: &str, args: Vec<Value>) {
     if let Err(error) = inner.root.events().emit(name, args) {
         lock(&inner.state).last_error = Some(format!("{name} listener failed: {error}"));
     }
+}
+
+/// Record a background error against the loader's state.
+fn record_error(inner: &LoaderInner, error: &dyn std::fmt::Display) {
+    lock(&inner.state).last_error = Some(error.to_string());
+}
+
+/// Apply a freshly composed entry list to tree and fibers: commit the tree
+/// diff, stop removed, moved, and redefined subtrees, patch config-only
+/// updates in place, start created entries, and restart what was stopped
+/// (parents first). Transition errors are recorded and the reconcile
+/// continues — the tree is the source of truth and the next pass retries.
+fn reconcile(
+    inner: &LoaderInner,
+    composed: Vec<EntryOptions>,
+    imports: HashMap<PathBuf, LoaderFile>,
+) -> Result<TreeDiff> {
+    let diff = inner.tree.update(composed)?;
+    *lock(&inner.imports) = imports;
+
+    for removed in &diff.removed {
+        if let Err(error) = stop_entry(inner, &removed.entry) {
+            record_error(inner, &error);
+        }
+    }
+    for entry in &diff.moved {
+        if let Err(error) = stop_entry(inner, entry) {
+            record_error(inner, &error);
+        }
+    }
+    for entry in &diff.redefined {
+        if let Err(error) = stop_entry(inner, entry) {
+            record_error(inner, &error);
+        }
+    }
+    for entry in &diff.updated {
+        if let Err(error) = patch_entry(inner, entry) {
+            record_error(inner, &error);
+        }
+    }
+    for entry in &diff.created {
+        if let Err(error) = start_entry(inner, entry) {
+            record_error(inner, &error);
+        }
+    }
+
+    // Restart what this pass stopped, parents first so re-parented entries
+    // find their group fibers: moved entries under their new parents,
+    // redefined entries with their new options, and updated entries that
+    // had no live fiber.
+    let mut restarts: Vec<&Entry> = diff
+        .moved
+        .iter()
+        .chain(&diff.redefined)
+        .chain(diff.updated.iter().filter(|entry| entry.fiber().is_none()))
+        .collect();
+    restarts.sort_by_key(|entry| entry_depth(entry));
+    for entry in restarts {
+        if let Err(error) = start_subtree(inner, entry) {
+            record_error(inner, &error);
+        }
+    }
+    Ok(diff)
 }
 
 /// Start one entry's fiber beneath its parent group's context.
@@ -778,11 +895,10 @@ fn import_canonical(inner: &LoaderInner, entry: &Entry) -> PathBuf {
 /// composed top-level entries and whether any file carried entries without
 /// ids (whose generated ids need persisting).
 ///
-/// `active` holds the files on the current import chain (cycle detection);
-/// `mounted` holds every file mounted anywhere in this compose. The entry
-/// tree keys entries by globally unique id, so the import graph must be a
-/// tree: real cycles and diamonds (the same file mounted twice) are both
-/// reported and their reference dropped, but with distinct diagnoses.
+/// Reading the file passed directly to this call is not recoverable here:
+/// callers loading the main file propagate the error, while callers
+/// mounting an import catch it above themselves and retain the tolerant
+/// skip path.
 fn compose(
     file: &LoaderFile,
     imports: &mut HashMap<PathBuf, LoaderFile>,
@@ -790,15 +906,41 @@ fn compose(
     mounted: &mut HashSet<PathBuf>,
     errors: &mut Vec<String>,
 ) -> cordis_include::Result<(Vec<EntryOptions>, bool)> {
-    // Reading the file passed directly to this call is not recoverable here:
-    // callers loading the main file propagate the error, while callers
-    // mounting an import catch it below and retain the tolerant skip path.
     let document = file.read()?;
-    let mut entries = Vec::with_capacity(document.entries.len());
-    let mut dirty = document.entries.iter().any(|options| options.id.is_none());
-    for mut options in document.entries {
+    Ok(compose_entries(
+        document.entries,
+        file,
+        imports,
+        active,
+        mounted,
+        errors,
+    ))
+}
+
+/// Mount import subtrees under base rows supplied in memory — the entries
+/// half of [`compose`], used by document-backed composition sources
+/// ([`LoaderConfig::with_document`], [`Loader::update`]). `base` resolves
+/// relative import urls. Infallible: import failures follow the tolerant
+/// record-and-skip path.
+///
+/// `active` holds the files on the current import chain (cycle detection);
+/// `mounted` holds every file mounted anywhere in this compose. The entry
+/// tree keys entries by globally unique id, so the import graph must be a
+/// tree: real cycles and diamonds (the same file mounted twice) are both
+/// reported and their reference dropped, but with distinct diagnoses.
+fn compose_entries(
+    entries: Vec<EntryOptions>,
+    base: &LoaderFile,
+    imports: &mut HashMap<PathBuf, LoaderFile>,
+    active: &mut HashSet<PathBuf>,
+    mounted: &mut HashSet<PathBuf>,
+    errors: &mut Vec<String>,
+) -> (Vec<EntryOptions>, bool) {
+    let mut composed = Vec::with_capacity(entries.len());
+    let mut dirty = entries.iter().any(|options| options.id.is_none());
+    for mut options in entries {
         if let Some(url) = options.import_url().map(str::to_owned) {
-            let path = import_path(file, &url);
+            let path = import_path(base, &url);
             let canonical = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
             if !active.insert(canonical.clone()) {
                 errors.push(format!("import cycle detected at {}", path.display()));
@@ -837,16 +979,16 @@ fn compose(
                 Err(error) => errors.push(format!(
                     "cannot open import {} ({}: {error})",
                     path.display(),
-                    file.path().display()
+                    base.path().display()
                 )),
             }
             // A file is "active" only while its own subtree composes, so
             // sibling imports of different files never look like cycles.
             active.remove(&canonical);
         }
-        entries.push(options);
+        composed.push(options);
     }
-    Ok((entries, dirty))
+    (composed, dirty)
 }
 
 /// Route `internal/status` disposals: a fiber that reached `Disposed`

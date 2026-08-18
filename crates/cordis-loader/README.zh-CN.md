@@ -89,6 +89,55 @@ entries:
 它们来源的文件（包括生成的 id）。import 环会被记录到 `last_error()` 并
 跳过。
 
+## 文档组合源
+
+[`LoaderConfig::with_document`] 从内存文档组合，而不是读取条目文件；
+[`Loader::update`] 以同样的方式协调一次全新组合 —— 分层装配模型：
+先离线组合各层，再挂载结果。boot 因此既不读也不写该文件（同一份共享
+草稿上的并发 boot 不会竞态，目录也可以保持只读），reload 从存储的文档
+重新组合（import 文件仍会读取），`update` 不落任何盘 —— 文件只是纯
+写回草稿：
+
+```rust
+use cordis::{plugin_sync, Inject, PluginOutput};
+use cordis_include::{Document, EntryOptions, Node};
+use cordis_loader::{Loader, LoaderConfig, PluginRegistry};
+
+# fn main() -> cordis_loader::Result<()> {
+# let mut registry = PluginRegistry::new();
+# registry.register("worker", || {
+#     plugin_sync::<Node, _>("worker", Inject::default(), |_, _| Ok(PluginOutput::none()))
+# });
+let path = std::env::temp_dir().join(format!("cordis-loader-doc-{}.yml", std::process::id()));
+let _ = std::fs::remove_file(&path);
+let root = cordis::Context::new();
+let loader = Loader::open(
+    &root,
+    LoaderConfig::new(&path).with_registry(registry).with_document(Document::with_entries(
+        vec![EntryOptions::new("worker").with_id("w1")],
+    )),
+)?;
+assert!(!path.exists(), "boot touched the draft");
+
+// 重组合：完整 diff → stop → patch → start，不写回。
+let diff = loader.update(Document::with_entries(vec![
+    EntryOptions::new("worker").with_id("w1").with_config(
+        [("port".to_string(), Node::Int(8080))].into_iter().collect(),
+    ),
+]))?;
+assert_eq!(diff.updated.len(), 1);
+assert!(!path.exists(), "recomposition touched the draft");
+
+// 草稿只在写回时被触碰：
+loader.update_config("w1", [("port".to_string(), Node::Int(9090))].into_iter().collect())?;
+assert!(path.exists(), "write-back landed in the draft");
+
+loader.dispose()?;
+let _ = std::fs::remove_file(&path);
+# Ok(())
+# }
+```
+
 ## 动态库插件
 
 启用 `dynamic` feature 后，条目还可以解析为编译成 `cdylib` 库的插件——
@@ -145,6 +194,10 @@ let registry = PluginRegistry::new().with_dynamic_dirs(["/usr/lib/cordis-plugins
   变化原地 patch——被插件拒绝的 patch 会让 fiber 保留旧配置，并在下一
   次 reload 时重试。之后会持久化新生成的 id，让下一次 reload 能匹配
   它们。
+- **文档组合源** —— `LoaderConfig::with_document` 从内存文档 boot
+  （文件变成纯写回草稿，绝不再作为组合输入），`Loader::update` 用同一
+  套机制协调一次全新组合且不写回 —— 分层组合的 HMR 原语。文档组合源
+  loader 的 reload 从存储的文档重新组合；只有 import 文件会被重读。
 - **dispose** —— 停止每个条目，停止文件监视，并释放 loader 的根级
   effect（状态监听器和 `loader` 服务）；之后在同一 root 上重新
   `Loader::open` 依然可用。
@@ -188,3 +241,5 @@ let loader = Loader::open(&root, config)?;
 构建了 `cordis run` 命令。
 
 [`Loader::reload`]: https://docs.rs/cordis-loader/latest/cordis_loader/struct.Loader.html#method.reload
+[`Loader::update`]: https://docs.rs/cordis-loader/latest/cordis_loader/struct.Loader.html#method.update
+[`LoaderConfig::with_document`]: https://docs.rs/cordis-loader/latest/cordis_loader/struct.LoaderConfig.html#method.with_document
