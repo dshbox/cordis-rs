@@ -3,11 +3,15 @@
 use crate::error::{LoaderError, Result};
 use crate::lock;
 use crate::registry::{PluginRegistry, WithInject};
-use cordis::{Config, Context, EffectHandle, EventOptions, Fiber, FiberState, PluginHandle, Value};
+use cordis::{
+    Config, Context, CordisError, EffectHandle, ErrorCode, EventOptions, Fiber, FiberState,
+    PluginHandle, Value,
+};
 use cordis_include::{Entry, EntryOptions, EntryTree, LoaderFile, Node, PluginResolver, TreeDiff};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, Condvar, Mutex, Weak};
+use std::thread::ThreadId;
 use std::time::Duration;
 
 /// Where the loader reads and writes its entry file.
@@ -81,6 +85,15 @@ pub(crate) struct LoaderInner {
     tree: EntryTree,
     registry: Mutex<PluginRegistry>,
     state: Mutex<LoaderState>,
+    /// Serializes the loader's state transitions end to end — `reload`,
+    /// `update_config`, `dispose`, and deferred self-kill persistence — so
+    /// file reads, tree diffs, fiber patches, and write-backs always run in
+    /// a consistent order. Without it a watch-thread `reload` can interleave
+    /// with a plugin-thread `update_config` and leave the fiber serving a
+    /// different config than the tree and the file claim, with no later
+    /// event to reconcile the difference. Reentrancy-aware because loader
+    /// event listeners legitimately call back into the loader.
+    operation: OperationLock,
     /// Canonical path -> file of every import currently mounted.
     imports: Mutex<HashMap<PathBuf, LoaderFile>>,
     /// Paths already armed by [`Loader::watch`] (watch feature).
@@ -145,6 +158,7 @@ impl Loader {
                 last_error: errors.pop(),
                 _keep_alive: Vec::new(),
             }),
+            operation: OperationLock::default(),
             imports: Mutex::new(imports),
             #[cfg(feature = "watch")]
             watched: Mutex::new(HashSet::new()),
@@ -265,6 +279,9 @@ impl Loader {
     /// written back; generated ids are persisted afterwards.
     pub fn reload(&self) -> Result<TreeDiff> {
         let inner = &self.inner;
+        // Whole-reload exclusion: compose, diff, fiber transitions, and the
+        // id write-back must not interleave with update_config() or dispose().
+        let _operation = inner.operation.guard();
         let mut imports = HashMap::new();
         let mut errors = Vec::new();
         let (composed, dirty) = match compose(
@@ -349,6 +366,10 @@ impl Loader {
     /// restarted when active) and the new config is persisted to the file.
     pub fn update_config(&self, id: &str, config: Node) -> Result<()> {
         let inner = &self.inner;
+        // Same exclusion as reload(): the fiber update, tree commit, and
+        // file write-back must land as one unit, or a concurrent reload
+        // could patch the fiber back to the file's previous content.
+        let _operation = inner.operation.guard();
         let entry = inner.tree.resolve(id).ok_or_else(|| {
             LoaderError::Include(cordis_include::IncludeError::EntryNotFound { id: id.to_owned() })
         })?;
@@ -375,6 +396,9 @@ impl Loader {
     /// same root works afterwards.
     pub fn dispose(&self) -> Result<()> {
         let inner = &self.inner;
+        // Excluded against reload()/update_config() so entry teardown cannot
+        // interleave with a reconcile pass touching the same fibers.
+        let _operation = inner.operation.guard();
         for entry in inner.tree.top_level() {
             if let Err(error) = stop_entry(inner, &entry) {
                 self.record_error(error);
@@ -464,6 +488,62 @@ impl Drop for OperatingGuard<'_> {
     }
 }
 
+/// Reentrancy-aware exclusion for the loader's state transitions.
+///
+/// Foreign threads block until the current transition finishes; acquisition
+/// from the *owning* thread passes through instead of deadlocking. That
+/// matters because loader events (`ENTRY_INIT`, `PARTIAL_DISPOSE`, patch
+/// events) run listener code inline, and a listener calling back into
+/// `reload()`/`update_config()` re-enters on the same thread — a plain
+/// `std::sync::Mutex` would deadlock there.
+#[derive(Default)]
+struct OperationLock {
+    state: Mutex<OperationState>,
+    released: Condvar,
+}
+
+#[derive(Default)]
+struct OperationState {
+    owner: Option<ThreadId>,
+    depth: usize,
+}
+
+impl OperationLock {
+    /// Acquire the lock, blocking only foreign threads.
+    fn guard(&self) -> OperationGuard<'_> {
+        let current = std::thread::current().id();
+        let mut state = lock(&self.state);
+        loop {
+            if state.owner.is_none_or(|owner| owner == current) {
+                state.owner = Some(current);
+                state.depth += 1;
+                return OperationGuard { lock: self };
+            }
+            let guard = self
+                .released
+                .wait(state)
+                .unwrap_or_else(|error| error.into_inner());
+            state = guard;
+        }
+    }
+}
+
+struct OperationGuard<'a> {
+    lock: &'a OperationLock,
+}
+
+impl Drop for OperationGuard<'_> {
+    fn drop(&mut self) {
+        let mut state = lock(&self.lock.state);
+        state.depth = state.depth.saturating_sub(1);
+        if state.depth == 0 {
+            state.owner = None;
+            drop(state);
+            self.lock.released.notify_all();
+        }
+    }
+}
+
 /// Emit a loader event; listener failures are recorded, never propagated
 /// into the state machine.
 fn emit(inner: &LoaderInner, name: &str, args: Vec<Value>) {
@@ -490,10 +570,21 @@ fn start_entry(inner: &LoaderInner, entry: &Entry) -> Result<()> {
         .and_then(|fiber| fiber.context())
         .unwrap_or_else(|| inner.root.clone());
     let fiber = parent_ctx.plugin(handle, config);
+    let Some(uid) = fiber.uid() else {
+        // The parent context's registry rejected the start (its fiber was
+        // disposed concurrently, so the parent-effect registration failed
+        // and the new fiber came back with its uid cleared). Recording the
+        // rejected fiber here would wedge the entry forever: every later
+        // reload sees a fiber and skips the start. Leave the entry
+        // unstarted so the next reload retries it, and surface why.
+        return Err(LoaderError::Cordis(
+            fiber
+                .error()
+                .unwrap_or_else(|| CordisError::new(ErrorCode::InactiveEffect)),
+        ));
+    };
     entry.set_fiber(Some(fiber.clone()));
-    if let Some(uid) = fiber.uid() {
-        lock(&inner.state).entries.insert(uid, entry.clone());
-    }
+    lock(&inner.state).entries.insert(uid, entry.clone());
     emit(
         inner,
         crate::events::ENTRY_INIT,
@@ -542,7 +633,25 @@ fn patch_entry(inner: &LoaderInner, entry: &Entry) -> Result<()> {
             crate::events::BEFORE_PATCH,
             vec![Value::new(entry.clone())],
         );
-        fiber.update_value(Config::new(new_config))?;
+        if let Err(error) = fiber.update_value(Config::new(new_config)) {
+            // tree.update() already committed the new options before this
+            // patch ran. Rolling the entry's stored config back to what the
+            // fiber actually runs keeps the tree honest and — crucially —
+            // makes the next reload's diff see a change again, so a config
+            // that failed validation is retried instead of silently pinning
+            // the fiber to the stale config forever.
+            if let Some(old_config) = current {
+                let mut options = entry_options_with_children(entry);
+                options.config = Some(old_config);
+                if let Err(revert) = inner.tree.update_entry(&entry.path(), options, None, None) {
+                    lock(&inner.state).last_error = Some(format!(
+                        "failed to roll back config of {}: {revert}",
+                        entry.path()
+                    ));
+                }
+            }
+            return Err(LoaderError::Cordis(error));
+        }
         emit(
             inner,
             crate::events::AFTER_PATCH,
@@ -739,7 +848,15 @@ fn compose(
 /// Route `internal/status` disposals: a fiber that reached `Disposed`
 /// outside loader operation was killed by its own plugin, so record
 /// `disabled: true` in the tree and persist it.
-fn handle_status(inner: &LoaderInner, event: &cordis::Event) -> cordis::EventResult {
+///
+/// The status event fires while the dying fiber still holds its transition
+/// mutex, so the persistence itself — a tree mutation, file serialize +
+/// fsync + rename, and `PARTIAL_DISPOSE` listeners — is deferred to a
+/// short-lived thread. Running it inline would stretch that critical
+/// section across disk I/O and arbitrary user code, making other threads'
+/// restart/dispose on the same fiber time out on stalls that have nothing
+/// to do with the fiber's own teardown.
+fn handle_status(inner: &Arc<LoaderInner>, event: &cordis::Event) -> cordis::EventResult {
     let Some(fiber) = event.arg::<Fiber>(0).ok().flatten() else {
         return Ok(None);
     };
@@ -757,8 +874,32 @@ fn handle_status(inner: &LoaderInner, event: &cordis::Event) -> cordis::EventRes
     else {
         return Ok(None);
     };
-    if let Err(error) = persist_self_dispose(inner, &entry) {
-        lock(&inner.state).last_error = Some(error.to_string());
+    let deferred = std::thread::Builder::new()
+        .name("cordis-self-dispose".to_owned())
+        .spawn({
+            // A strong reference keeps the loader alive until the record
+            // lands, even if the caller drops every Loader handle at once.
+            let inner = Arc::clone(inner);
+            let entry = entry.clone();
+            move || {
+                // Serialized with reload()/update_config()/dispose() so the
+                // self-kill write-back cannot interleave with a reconcile.
+                let _operation = inner.operation.guard();
+                if let Err(error) = persist_self_dispose(&inner, &entry) {
+                    lock(&inner.state).last_error = Some(error.to_string());
+                }
+            }
+        });
+    match deferred {
+        Ok(_join) => {}
+        Err(_) => {
+            // Could not spawn a thread: persist inline rather than losing
+            // the self-kill record.
+            let _operation = inner.operation.guard();
+            if let Err(error) = persist_self_dispose(inner, &entry) {
+                lock(&inner.state).last_error = Some(error.to_string());
+            }
+        }
     }
     Ok(None)
 }
@@ -789,4 +930,69 @@ fn persist_self_dispose(inner: &LoaderInner, entry: &Entry) -> Result<()> {
         vec![Value::new(entry.clone())],
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cordis::{Inject, PluginOutput, plugin_sync};
+
+    /// Regression (#36): when the parent group's fiber dies before a child
+    /// entry starts, the registry rejects the new fiber (uid cleared,
+    /// state Disposed). start_entry must surface the rejection and leave
+    /// the entry without a fiber — recording the rejected fiber wedged the
+    /// entry forever, since every later reload saw a fiber and skipped the
+    /// start.
+    #[test]
+    fn rejected_start_leaves_the_entry_retryable() {
+        let path = std::env::temp_dir().join(format!(
+            "cordis-loader-rejected-start-{}-{}.yml",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_nanos() as u64)
+                .unwrap_or(0)
+        ));
+        let _ = std::fs::remove_file(&path);
+        let mut registry = PluginRegistry::new();
+        registry.register("worker", || {
+            plugin_sync::<Node, _>("worker", Inject::default(), |_, _| Ok(PluginOutput::none()))
+        });
+        let root = Context::new();
+        let loader = Loader::open(
+            &root,
+            LoaderConfig::new(&path)
+                .with_registry(registry)
+                .with_initial(cordis_include::Document::with_entries(vec![
+                    EntryOptions::new("group")
+                        .with_id("g1")
+                        .with_group(vec![EntryOptions::new("worker").with_id("c1")]),
+                ])),
+        )
+        .unwrap();
+        let inner = &loader.inner;
+        let group = inner.tree.resolve("g1").unwrap();
+        let child = inner.tree.resolve("g1:c1").unwrap();
+        assert!(group.fiber().is_some() && child.fiber().is_some());
+
+        // Kill the parent group while the loader looks away (no self-kill
+        // bookkeeping), then model the child as not-yet-started.
+        {
+            let _operating = OperatingGuard::new(&inner.state);
+            group.fiber().unwrap().dispose().unwrap();
+        }
+        child.set_fiber(None);
+
+        let result = start_entry(inner, &child);
+        assert!(result.is_err(), "the registry rejection must surface");
+        assert!(child.fiber().is_none(), "no rejected fiber recorded");
+
+        // Still eligible: retrying fails the same way instead of silently
+        // doing nothing because a dead fiber occupies the entry.
+        assert!(start_entry(inner, &child).is_err());
+        assert!(child.fiber().is_none());
+
+        drop(loader);
+        let _ = std::fs::remove_file(&path);
+    }
 }

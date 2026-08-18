@@ -149,11 +149,30 @@ impl EffectCell {
         if self.disposed.swap(true, Ordering::AcqRel) {
             return;
         }
-        lock(&self.disposer).take();
-        lock(&self.children).clear();
         if let Some(owner) = self.owner.upgrade() {
             owner.remove_effect(self.id);
         }
+        // Adopted children were detached from their owning fiber's effect
+        // list at adopt() time, so nobody else will ever dispose them; drop
+        // them through the normal disposal path or their cleanup callbacks
+        // leak. Only this effect's own disposer is skipped — that is what
+        // "cancel" means.
+        let children = {
+            let mut children = lock(&self.children);
+            std::mem::take(&mut *children)
+        };
+        for child in children.into_iter().rev() {
+            if let Err(error) = crate::utils::block_on(child.dispose()) {
+                // Surface the failure on the fiber's log like dispose does;
+                // cancellation itself must stay infallible.
+                if let Some(owner) = child.owner.upgrade() {
+                    if let Some(ctx) = Fiber::from_inner(owner).context() {
+                        ctx.log_error(&error);
+                    }
+                }
+            }
+        }
+        lock(&self.disposer).take();
     }
 
     fn adopt(self: &Arc<Self>, child: Arc<EffectCell>) -> Result<()> {
@@ -204,7 +223,13 @@ impl EffectHandle {
         self.cell.dispose().await
     }
 
-    /// Stop owning this effect without running its cleanup callback.
+    /// Stop owning this effect without running *its own* cleanup callback.
+    ///
+    /// Adopted children are unaffected by the cancellation of their parent:
+    /// they were detached from their owning fiber at [`adopt`](Self::adopt)
+    /// time, so cancelling runs each child's disposer exactly as
+    /// [`dispose`](Self::dispose) would — otherwise those children would be
+    /// orphaned with cleanup that never runs.
     ///
     /// This is intended for framework structural effects. Application code
     /// normally wants [`dispose`](Self::dispose).
@@ -314,5 +339,47 @@ mod tests {
         assert!(adopt_handle.join().unwrap().is_err());
         dispose_handle.join().unwrap().unwrap();
         assert!(!child_ran.load(Ordering::SeqCst));
+    }
+
+    /// Regression: cancel() used to clear the children list without
+    /// disposing them; since adopt() already detached those children from
+    /// their owning fiber, their disposers were lost forever. Cancelling a
+    /// parent must run adopted children's disposers, exactly once, while
+    /// still skipping the parent's own.
+    #[test]
+    fn cancel_disposes_adopted_children_but_not_the_parent() {
+        let runs = Arc::new(Mutex::new(Vec::new()));
+        let parent_ran = Arc::new(AtomicBool::new(false));
+        let parent_ran_in_disposer = parent_ran.clone();
+        let parent = EffectCell::new(
+            1,
+            Weak::new(),
+            "parent",
+            AsyncDisposer::from_sync(move || {
+                parent_ran_in_disposer.store(true, Ordering::SeqCst);
+                Ok(())
+            }),
+        );
+        for id in [2_u64, 3] {
+            let runs = runs.clone();
+            let child = EffectCell::new(
+                id,
+                Weak::new(),
+                "child",
+                AsyncDisposer::from_sync(move || {
+                    lock(&runs).push(id);
+                    Ok(())
+                }),
+            );
+            parent.adopt(child).unwrap();
+        }
+        parent.cancel();
+        assert_eq!(*lock(&runs), vec![3, 2], "children disposed, reverse order");
+        assert!(!parent_ran.load(Ordering::SeqCst), "own disposer skipped");
+        // Second cancel (or a later dispose) must not double-run anything.
+        parent.cancel();
+        let _ = block_on(parent.dispose());
+        assert_eq!(*lock(&runs), vec![3, 2]);
+        assert!(!parent_ran.load(Ordering::SeqCst));
     }
 }

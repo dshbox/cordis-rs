@@ -13,10 +13,11 @@ test-only nit).
 - `CordisError::context` prepends context to the message, the opposite of
   `anyhow::Context` (attach a source). The name misleads Rust users; a rename
   such as `prefixed_with` would be honest but is a breaking change.
-- `Fiber::await_ready` and `Fiber::dispose_async` are transparent pass-throughs
-  to their synchronous versions. They exist for upstream signature parity but
-  imply cancellable/async semantics that do not exist. Consider documenting
-  more loudly or removing.
+- ~~`Fiber::await_ready` and `Fiber::dispose_async` are transparent
+  pass-throughs to their synchronous versions. They exist for upstream
+  signature parity but imply cancellable/async semantics that do not exist.~~
+  Resolved 2026-08-18 (issue #34): both methods now document loudly that they
+  are synchronous pass-throughs that never suspend or yield.
 - `Value` (and thus `Config`) has no `PartialEq`/`Display`; plugin config
   comparison in `update_value` relies on `Arc` pointer identity (`ptr_eq`).
   Two structurally equal configs are treated as different allocations.

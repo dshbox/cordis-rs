@@ -8,7 +8,11 @@
 //! The daemon exits `0` on clean shutdown, `1` when the worker never
 //! booted or died abnormally, and otherwise propagates the worker's code —
 //! deployment pipelines always see the real outcome. `SIGINT` / `SIGTERM`
-//! dispose the root context gracefully and exit `52` (daemon `0`). `.env`
+//! dispose the root context gracefully and exit `52` (daemon `0`); the
+//! daemon forwards its own shutdown to the worker by closing the pipe on
+//! the worker's stdin (so `kill <daemon-pid>` and even a `SIGKILL`ed
+//! daemon take the worker down too, not just terminal-wide signals), and
+//! kills the worker after a grace period if it will not quit. `.env`
 //! and `.env.local` are loaded (without overriding existing variables)
 //! before the worker boots, and the entry file is watched for hot reload.
 //!
@@ -27,6 +31,7 @@
 pub mod dotenv;
 pub mod worker;
 
+use std::ffi::{OsStr, OsString};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -38,6 +43,12 @@ const RESTART_BACKOFF_START: Duration = Duration::from_millis(100);
 const RESTART_BACKOFF_MAX: Duration = Duration::from_secs(5);
 /// A worker that stayed up at least this long resets the restart backoff.
 const RESTART_BACKOFF_RESET_AFTER: Duration = Duration::from_secs(10);
+/// How often the supervisor polls the worker's exit status. Polling keeps
+/// the shutdown flag observable where a blocking `wait()` would hang.
+const WORKER_WAIT_POLL: Duration = Duration::from_millis(50);
+/// Grace period for the worker to exit after the daemon requested shutdown
+/// (by closing the worker's stdin pipe) before it is killed outright.
+const WORKER_SHUTDOWN_GRACE: Duration = Duration::from_secs(10);
 
 /// What the supervisor does after a worker exits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -105,41 +116,56 @@ pub struct Options {
 }
 
 /// Parse `cordis` arguments (after the binary name).
-pub fn parse_args(args: &[String]) -> Result<Options, String> {
+///
+/// Arguments stay [`OsString`] end to end so config paths with non-UTF-8
+/// bytes (legal on Unix filesystems) reach the loader intact instead of
+/// being mangled into replacement characters; they are only lossily
+/// rendered for usage and error text.
+pub fn parse_args(args: &[OsString]) -> Result<Options, String> {
     let Some(command) = args.first() else {
         return Err(usage());
     };
-    if command != "run" {
-        return Err(format!("unknown command `{command}`\n\n{}", usage()));
+    if command.as_os_str() != OsStr::new("run") {
+        return Err(format!(
+            "unknown command `{}`\n\n{}",
+            command.to_string_lossy(),
+            usage()
+        ));
     }
     let mut config = None;
     let mut plugin_dirs = Vec::new();
     let mut worker = false;
     let mut rest = args[1..].iter();
     while let Some(arg) = rest.next() {
-        match arg.as_str() {
-            "--worker" | "-w" => worker = true,
-            "--help" | "-h" => return Err(usage()),
-            "--plugin-dir" => {
+        let bytes = arg.as_encoded_bytes();
+        match bytes {
+            b"--worker" | b"-w" => worker = true,
+            b"--help" | b"-h" => return Err(usage()),
+            b"--plugin-dir" => {
                 let Some(value) = rest.next() else {
                     return Err(format!("--plugin-dir requires a directory\n\n{}", usage()));
                 };
                 plugin_dirs.push(PathBuf::from(value));
             }
-            other if other.starts_with("--plugin-dir=") => {
-                let value = other.strip_prefix("--plugin-dir=").unwrap();
+            _ if bytes.starts_with(b"--plugin-dir=") => {
+                let value = os_string_from_encoded_bytes(&bytes[b"--plugin-dir=".len()..]);
                 if value.is_empty() {
                     return Err(format!("--plugin-dir requires a directory\n\n{}", usage()));
                 }
                 plugin_dirs.push(PathBuf::from(value));
             }
-            other if other.starts_with('-') => {
-                return Err(format!("unknown flag `{other}`\n\n{}", usage()));
+            _ if bytes.first() == Some(&b'-') => {
+                return Err(format!(
+                    "unknown flag `{}`\n\n{}",
+                    arg.to_string_lossy(),
+                    usage()
+                ));
             }
-            other => {
-                if config.replace(PathBuf::from(other)).is_some() {
+            _ => {
+                if config.replace(PathBuf::from(arg)).is_some() {
                     return Err(format!(
-                        "unexpected extra argument `{other}`\n\n{}",
+                        "unexpected extra argument `{}`\n\n{}",
+                        arg.to_string_lossy(),
                         usage()
                     ));
                 }
@@ -153,6 +179,24 @@ pub fn parse_args(args: &[String]) -> Result<Options, String> {
             worker,
         }),
         None => Err(format!("missing config file\n\n{}", usage())),
+    }
+}
+
+/// Rebuild an [`OsString`] from the [`OsStr::as_encoded_bytes`]
+/// representation. Lossless on Unix (raw bytes); on Windows and elsewhere
+/// the bytes decode as UTF-8 — Windows arguments are UTF-16-representable
+/// in practice, so this only degrades for lone-surrogate arguments, which
+/// `OsStr::from_encoded_bytes` (unstable at our MSRV) could not have
+/// preserved either way.
+fn os_string_from_encoded_bytes(bytes: &[u8]) -> OsString {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStringExt;
+        OsString::from_vec(bytes.to_vec())
+    }
+    #[cfg(not(unix))]
+    {
+        OsString::from(String::from_utf8_lossy(bytes).into_owned())
     }
 }
 
@@ -172,12 +216,15 @@ abnormally, otherwise the worker's own code."
 
 /// Entry point used by the `cordis` binary: parse arguments, load dotenv,
 /// then supervise or run as the worker.
+///
+/// Accepts [`OsString`]s so non-UTF-8 arguments (notably config paths on
+/// Unix) survive to the loader unchanged.
 pub fn run<I, S>(args: I) -> i32
 where
     I: IntoIterator<Item = S>,
-    S: Into<String>,
+    S: Into<OsString>,
 {
-    let args: Vec<String> = args.into_iter().map(Into::into).collect();
+    let args: Vec<OsString> = args.into_iter().map(Into::into).collect();
     let options = match parse_args(&args) {
         Ok(options) => options,
         Err(message) => {
@@ -218,7 +265,7 @@ fn supervise(config: &std::path::Path, plugin_dirs: &[PathBuf]) -> i32 {
     // stayed up long enough resets it.
     let mut backoff: Option<Duration> = None;
     let exit_code;
-    loop {
+    'supervise: loop {
         if shutdown.load(Ordering::SeqCst) {
             exit_code = Some(worker::EXIT_QUIT);
             break;
@@ -229,6 +276,13 @@ fn supervise(config: &std::path::Path, plugin_dirs: &[PathBuf]) -> i32 {
         for dir in plugin_dirs {
             command.arg("--plugin-dir").arg(dir);
         }
+        // The worker watches this pipe: the daemon closes it when shutting
+        // down, and the OS closes it when the daemon dies for any reason —
+        // the std-only stand-in for forwarding SIGTERM, which also covers a
+        // daemon killed with SIGKILL.
+        command
+            .stdin(std::process::Stdio::piped())
+            .env(worker::SUPERVISED_ENV, "1");
         let mut child = match command.spawn() {
             Ok(child) => child,
             Err(error) => {
@@ -236,7 +290,7 @@ fn supervise(config: &std::path::Path, plugin_dirs: &[PathBuf]) -> i32 {
                 return 1;
             }
         };
-        let code = child.wait().ok().and_then(|status| status.code());
+        let code = supervise_worker(&mut child, &shutdown);
         if supervisor_action(code, shutdown.load(Ordering::SeqCst)) == Action::Stop {
             exit_code = code;
             break;
@@ -247,17 +301,62 @@ fn supervise(config: &std::path::Path, plugin_dirs: &[PathBuf]) -> i32 {
             delay.as_millis()
         );
         backoff = Some(delay);
-        std::thread::sleep(delay);
+        // Interruptible backoff: a shutdown request during the delay
+        // aborts the wait instead of deferring the exit by up to 5s.
+        let deadline = std::time::Instant::now() + delay;
+        while std::time::Instant::now() < deadline {
+            if shutdown.load(Ordering::SeqCst) {
+                continue 'supervise;
+            }
+            let now = std::time::Instant::now();
+            std::thread::sleep(WORKER_WAIT_POLL.min(deadline.saturating_duration_since(now)));
+        }
     }
     daemon_exit_code(exit_code, shutdown.load(Ordering::SeqCst))
+}
+
+/// Wait for one worker, forwarding daemon shutdown requests: closing the
+/// worker's stdin pipe triggers its graceful teardown (the same path as a
+/// signal), and a worker that ignores it for [`WORKER_SHUTDOWN_GRACE`] is
+/// killed. Never blocks indefinitely, so the shutdown flag stays
+/// observable.
+fn supervise_worker(child: &mut std::process::Child, shutdown: &AtomicBool) -> Option<i32> {
+    let mut stdin = child.stdin.take();
+    let mut requested = None::<std::time::Instant>;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return status.code(),
+            Ok(None) => {}
+            Err(error) => {
+                eprintln!("cordis: cannot wait for worker: {error}");
+                return None;
+            }
+        }
+        if shutdown.load(Ordering::SeqCst) {
+            match requested {
+                None => {
+                    eprintln!("cordis: forwarding shutdown to the worker");
+                    drop(stdin.take());
+                    requested = Some(std::time::Instant::now());
+                }
+                Some(at) if at.elapsed() >= WORKER_SHUTDOWN_GRACE => {
+                    eprintln!("cordis: worker did not exit in time, killing it");
+                    let _ = child.kill();
+                    return child.wait().ok().and_then(|status| status.code());
+                }
+                _ => {}
+            }
+        }
+        std::thread::sleep(WORKER_WAIT_POLL);
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn args(list: &[&str]) -> Vec<String> {
-        list.iter().map(ToString::to_string).collect()
+    fn args(list: &[&str]) -> Vec<OsString> {
+        list.iter().map(OsString::from).collect()
     }
 
     #[test]
@@ -353,5 +452,27 @@ mod tests {
             RESTART_BACKOFF_START,
             "a worker that stayed up resets the backoff"
         );
+    }
+
+    /// Regression (#38): arguments with non-UTF-8 bytes (legal config paths
+    /// on Unix) must reach `Options` unchanged, not as replacement
+    /// characters.
+    #[cfg(unix)]
+    #[test]
+    fn non_utf8_arguments_survive_parsing() {
+        use std::os::unix::ffi::OsStringExt;
+        let bad = OsString::from_vec(vec![b'c', 0xff, b'.', b'y', b'm', b'l']);
+        let options = parse_args(&[OsString::from("run"), bad.clone()]).unwrap();
+        assert_eq!(options.config.as_os_str(), bad.as_os_str());
+
+        let bad_dir = OsString::from_vec(vec![b'd', 0xfe, b'i', 0xff, b'r']);
+        let options = parse_args(&[
+            OsString::from("run"),
+            OsString::from("c.yml"),
+            OsString::from("--plugin-dir"),
+            bad_dir.clone(),
+        ])
+        .unwrap();
+        assert_eq!(options.plugin_dirs, [PathBuf::from(bad_dir)]);
     }
 }

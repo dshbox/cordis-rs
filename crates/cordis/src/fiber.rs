@@ -699,7 +699,12 @@ impl Fiber {
         )
     }
 
-    /// Async equivalent of [`try_wait`](Self::try_wait): also never suspends.
+    /// Async equivalent of [`try_wait`](Self::try_wait).
+    ///
+    /// **This never suspends.** It is a synchronous poll despite the
+    /// `async` signature — the eager lifecycle model means there is nothing
+    /// to wait for — so awaiting it runs to completion without ever
+    /// yielding to the executor.
     pub async fn await_ready(&self) -> Result<Fiber> {
         self.try_wait()
     }
@@ -856,6 +861,14 @@ impl Fiber {
     }
 
     /// Async equivalent of [`dispose`](Self::dispose).
+    ///
+    /// **This is a synchronous pass-through, not an offload.** Awaiting it
+    /// runs the whole disposal chain — disposers included — on the calling
+    /// thread before the future resolves; it never yields to the executor.
+    /// Inside an async runtime, treat `.await`ing this like calling any
+    /// blocking function: a slow disposer stalls the executor thread for
+    /// the duration. Trigger disposals of long-teardown fibers from a plain
+    /// thread (or [`dispose`](Self::dispose) on a worker) instead.
     pub async fn dispose_async(&self) -> Result<()> {
         self.dispose()
     }
@@ -878,6 +891,32 @@ mod tests {
     use crate::{Inject, PluginOutput};
     use std::sync::atomic::AtomicUsize;
     use std::time::{Duration, Instant};
+
+    /// `dispose_async` is a synchronous pass-through: awaited from an async
+    /// context it completes the whole disposal without deadlocking or
+    /// needing an executor to make progress.
+    #[test]
+    fn dispose_async_completes_from_an_async_context() {
+        let root = Context::new();
+        let disposed = Arc::new(AtomicUsize::new(0));
+        let disposed_in_disposer = disposed.clone();
+        let fiber = root.plugin_default(plugin_sync::<(), _>(
+            "teardown",
+            Inject::default(),
+            move |_, _| {
+                let disposed_in_disposer = disposed_in_disposer.clone();
+                Ok(PluginOutput::infallible(move || {
+                    disposed_in_disposer.fetch_add(1, Ordering::SeqCst);
+                }))
+            },
+        ));
+        fiber.try_wait().unwrap();
+        // A minimal waker-less block_on: the future never actually pending
+        // is exactly what this test pins down.
+        block_on(fiber.dispose_async()).unwrap();
+        assert_eq!(fiber.state(), FiberState::Disposed);
+        assert_eq!(disposed.load(Ordering::SeqCst), 1);
+    }
 
     #[test]
     fn idle_reflects_and_probes_transitions() {

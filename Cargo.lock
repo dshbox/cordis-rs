@@ -36,6 +36,7 @@ dependencies = [
  "cordis-loader",
  "cordis-rs",
  "ctrlc",
+ "libc",
  "notify",
 ]
 

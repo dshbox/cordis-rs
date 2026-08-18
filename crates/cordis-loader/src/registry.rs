@@ -7,6 +7,7 @@ use cordis_group::Group;
 use cordis_include::IMPORT_NAME;
 use cordis_include::resolver::unknown_plugin;
 use std::collections::HashMap;
+#[cfg(feature = "dynamic")]
 use std::path::PathBuf;
 use std::sync::Arc;
 

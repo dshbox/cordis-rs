@@ -3,6 +3,7 @@
 use cordis::Context;
 use cordis_loader::{Loader, LoaderConfig, PluginRegistry};
 use notify::{Config as NotifyConfig, RecursiveMode, Watcher};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::mpsc;
@@ -15,6 +16,11 @@ pub const EXIT_QUIT: i32 = 52;
 /// Exit code reporting that the loader never came up (bad config,
 /// unreadable file); the daemon exits non-zero instead of masking it.
 pub const EXIT_BOOT: i32 = 53;
+/// Environment marker set by the daemon on workers it supervises. Such
+/// workers watch their stdin pipe: the daemon holds the write end, so EOF
+/// means the daemon is going away (clean shutdown or sudden death) and the
+/// worker tears itself down gracefully.
+pub const SUPERVISED_ENV: &str = "CORDIS_SUPERVISED";
 
 /// Quiet window a plugin library must stay unchanged before the worker
 /// restarts, so incremental linker output does not restart mid-write.
@@ -99,6 +105,33 @@ pub fn run(config_path: &Path, plugin_dirs: &[PathBuf]) -> ! {
     .is_err()
     {
         eprintln!("cordis: could not install signal handlers");
+    }
+
+    // Under the daemon, watch the supervisor's stdin pipe. EOF (or an
+    // errored pipe) means the daemon is gone or asked us to stop — the
+    // same graceful teardown a signal triggers, and the only notification
+    // a SIGKILLed daemon can still send. Not spawned for manually-run
+    // workers, so a terminal's stdin stays untouched.
+    if std::env::var_os(SUPERVISED_ENV).is_some() {
+        let inner = Arc::clone(&inner);
+        let watched = std::thread::Builder::new()
+            .name("cordis-supervisor-watch".to_owned())
+            .spawn(move || {
+                let mut stdin = std::io::stdin();
+                let mut byte = [0_u8];
+                loop {
+                    match stdin.read(&mut byte) {
+                        Ok(0) | Err(_) => break,
+                        Ok(_) => continue,
+                    }
+                }
+                eprintln!("cordis: supervisor went away, shutting down");
+                inner.teardown();
+                std::process::exit(EXIT_QUIT);
+            });
+        if watched.is_err() {
+            eprintln!("cordis: could not watch the supervisor pipe");
+        }
     }
 
     match loader.watch() {

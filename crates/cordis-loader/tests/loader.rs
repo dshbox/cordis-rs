@@ -162,7 +162,9 @@ fn self_disposed_plugin_is_disabled_in_the_file() {
     let entry = loader.tree().resolve("v1").unwrap();
     entry.fiber().unwrap().try_wait().unwrap();
 
-    // The plugin tears itself down outside the loader.
+    // The plugin tears itself down outside the loader. The `disabled: true`
+    // persistence is deferred off the dying fiber's transition lock, so
+    // poll briefly for it to land.
     victim_fiber
         .lock()
         .unwrap()
@@ -171,9 +173,22 @@ fn self_disposed_plugin_is_disabled_in_the_file() {
         .dispose()
         .unwrap();
 
-    assert!(entry.fiber().is_none());
-    let text = std::fs::read_to_string(&path).unwrap();
-    assert!(text.contains("disabled: true"), "{text}");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if entry.fiber().is_none()
+            && std::fs::read_to_string(&path)
+                .unwrap()
+                .contains("disabled: true")
+        {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "self-kill persistence never landed: {}",
+            std::fs::read_to_string(&path).unwrap()
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
     // Loader-driven disposals must NOT be misclassified: stop the loader and
     // confirm no further rewrite happened beyond the persisted state.
     let before = std::fs::read_to_string(&path).unwrap();
