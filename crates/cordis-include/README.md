@@ -47,7 +47,10 @@ assert!(Entry::ptr_eq(&kept, &tree.resolve("srv").unwrap()));
 Files round-trip through [`LoaderFile`] with atomic, writer-serialized
 `.tmp` + rename writes (concurrent writers cannot interleave),
 readonly detection, unknown top-level keys preserved, and coalesced
-deferred writes (`write_deferred`) for bursty callers:
+deferred writes (`write_deferred`) for bursty callers. YAML parses
+through the crate's own dialect: it matches the previous serde-based
+reader (verified by A/B tests) while keeping `!!js` scalars as
+expression nodes ([`Node`]) that round-trip verbatim, unevaluated:
 
 ```yaml
 entries:
@@ -109,3 +112,5 @@ lifecycle.
 [`apply_entry_patches`]: https://docs.rs/cordis-include/latest/cordis_include/fn.apply_entry_patches.html
 [`compose_layers`]: https://docs.rs/cordis-include/latest/cordis_include/fn.compose_layers.html
 [`render_config_dump`]: https://docs.rs/cordis-include/latest/cordis_include/fn.render_config_dump.html
+
+[`Node`]: https://docs.rs/cordis-include/latest/cordis_include/enum.Node.html

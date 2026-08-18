@@ -31,6 +31,12 @@ pub enum Node {
     Float(f64),
     /// String literal (subject to `${{ ... }}` interpolation).
     String(String),
+    /// A `!!js` expression scalar, kept verbatim and unevaluated: it
+    /// round-trips through YAML (`!!js <expr>`) and only takes effect when
+    /// config is handed to a plugin. Produced by the crate's own YAML
+    /// dialect parser ([`crate::yaml`]); serde paths (JSON) never yield it
+    /// and serialize it as its raw text.
+    Expr(String),
     /// Array of nodes.
     Array(Vec<Node>),
     /// Ordered object.
@@ -57,6 +63,7 @@ impl Serialize for Node {
             Self::UInt(value) => serializer.serialize_u64(*value),
             Self::Float(value) => serializer.serialize_f64(*value),
             Self::String(value) => serializer.serialize_str(value),
+            Self::Expr(value) => serializer.serialize_str(value),
             Self::Array(items) => items.serialize(serializer),
             Self::Object(map) => {
                 let mut map_serializer = serializer.serialize_map(Some(map.len()))?;

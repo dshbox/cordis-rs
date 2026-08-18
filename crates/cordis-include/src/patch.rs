@@ -429,10 +429,8 @@ fn flush_group(
         return Ok(());
     }
     let label = label.expect("a non-empty group always has a label");
-    let text = serde_yaml_ng::to_string(&group).map_err(|error| IncludeError::Parse {
-        format: "yaml",
-        source: Box::new(error),
-    })?;
+    let rows: Vec<EntryOptions> = group.iter().map(|entry| (*entry).clone()).collect();
+    let text = crate::yaml::emit_entry_list(&rows);
     sections.push(format!("# == {label}\n{}", text.trim_end()));
     Ok(())
 }
@@ -503,12 +501,10 @@ pub fn load_overlay_patches(path: impl AsRef<Path>) -> Result<Vec<PatchOptions>>
 /// Parse one patch list: a bare top-level YAML array of [`PatchOptions`]
 /// rows, each a mapping.
 fn parse_patch_list(path: &Path, content: &str, label: &str) -> Result<Vec<PatchOptions>> {
-    let parsed = serde_yaml_ng::from_str::<serde_yaml_ng::Value>(content).map_err(|error| {
-        IncludeError::Message {
-            message: format!("failed to parse {label} {}: {error}", path.display()),
-        }
+    let node = crate::yaml::parse_node(content).map_err(|error| IncludeError::Message {
+        message: format!("failed to parse {label} {}: {error}", path.display()),
     })?;
-    let Some(rows) = parsed.as_sequence() else {
+    let Some(rows) = node.as_array() else {
         return Err(IncludeError::Message {
             message: format!(
                 "{label} {} must be a top-level YAML array of loader patch entries",
@@ -518,7 +514,7 @@ fn parse_patch_list(path: &Path, content: &str, label: &str) -> Result<Vec<Patch
     };
     let mut patches = Vec::with_capacity(rows.len());
     for (index, row) in rows.iter().enumerate() {
-        if !row.is_mapping() {
+        if row.as_object().is_none() {
             return Err(IncludeError::Message {
                 message: format!(
                     "{label} entry {} in {} must be a mapping (a loader patch entry)",
@@ -527,8 +523,8 @@ fn parse_patch_list(path: &Path, content: &str, label: &str) -> Result<Vec<Patch
                 ),
             });
         }
-        let patch: PatchOptions =
-            serde_yaml_ng::from_value(row.clone()).map_err(|error| IncludeError::Message {
+        let patch =
+            crate::yaml::patch_from_node(row.clone()).map_err(|error| IncludeError::Message {
                 message: format!(
                     "failed to parse {label} entry {} in {}: {error}",
                     index + 1,
