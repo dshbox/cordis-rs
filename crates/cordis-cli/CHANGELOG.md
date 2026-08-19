@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.20](https://github.com/dshbox/cordis-rs/compare/cordis-cli-v0.0.19...cordis-cli-v0.0.20) - 2026-08-19
+
+### Other
+
+- updated the following local packages: cordis-rs, cordis-loader
+
 ## [0.0.19](https://github.com/dshbox/cordis-rs/compare/cordis-cli-v0.0.18...cordis-cli-v0.0.19) - 2026-08-19
 
 ### Other
