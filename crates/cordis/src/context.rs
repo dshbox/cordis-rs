@@ -430,6 +430,24 @@ impl Context {
             .on_async(name, listener, EventOptions::default())
     }
 
+    /// Register an asynchronous listener with placement and filtering
+    /// options.
+    ///
+    /// See [`EventsService::on_async`](crate::EventsService::on_async) for the
+    /// blocking-executor caveats before awaiting thread-local work here.
+    pub fn on_async_with<F, Fut>(
+        &self,
+        name: impl Into<String>,
+        listener: F,
+        options: EventOptions,
+    ) -> Result<EffectHandle>
+    where
+        F: Fn(Event) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = EventResult> + Send + 'static,
+    {
+        self.events().on_async(name, listener, options)
+    }
+
     /// Register a one-shot event listener.
     pub fn once<F>(&self, name: impl Into<String>, listener: F) -> Result<EffectHandle>
     where
@@ -485,6 +503,20 @@ impl Context {
         F: Fn() -> EventResult + Send + Sync + 'static,
     {
         self.events().waterfall(name, args, inner)
+    }
+
+    /// Compose listeners around an innermost asynchronous callback.
+    pub async fn waterfall_async<F, Fut>(
+        &self,
+        name: impl Into<String>,
+        args: impl IntoIterator<Item = EventValue>,
+        inner: F,
+    ) -> EventResult
+    where
+        F: Fn() -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = EventResult> + Send + 'static,
+    {
+        self.events().waterfall_async(name, args, inner).await
     }
 
     /// Start a plugin and return its lifecycle fiber.
