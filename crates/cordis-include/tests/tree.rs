@@ -99,6 +99,68 @@ fn update_reuses_entries_and_reports_the_diff() {
     assert_eq!(fresh.id.as_deref().map(str::len), Some(6));
 }
 
+/// Regression (review 2026-08-19, REV-01): a whole-tree update re-parents a
+/// top-level entry into a nested group during `sync_children`, and the
+/// root's final `set_children` pass used to clear that fresh parent link —
+/// the moved entry lost `path()`, ancestor cascades, and (at the loader
+/// layer) its group fiber context.
+#[test]
+fn update_keeps_the_parent_link_of_entries_moved_into_groups() {
+    let tree = EntryTree::new();
+    tree.update(vec![
+        EntryOptions::new("keep").with_id("k"),
+        EntryOptions::new("mover").with_id("d"),
+        EntryOptions::new("worker").with_id("w"),
+    ])
+    .unwrap();
+
+    let reload = vec![
+        EntryOptions::new("keep").with_id("k"),
+        // "d" moves from the top level directly into g; "w" moves into
+        // g's child, so its re-parenting happens two levels below the root.
+        EntryOptions::new("group").with_id("g").with_group(vec![
+            EntryOptions::new("mover")
+                .with_id("d")
+                .with_group(vec![EntryOptions::new("worker").with_id("w")]),
+        ]),
+    ];
+    let diff = tree.update(reload).unwrap();
+    assert!(diff.moved.iter().any(|e| e.id() == "d"));
+    assert!(diff.moved.iter().any(|e| e.id() == "w"));
+    assert!(diff.removed.is_empty());
+
+    let group = tree.resolve("g").unwrap();
+    let moved = tree.resolve("g:d").unwrap();
+    let nested = tree.resolve("g:d:w").unwrap();
+    assert_eq!(moved.path(), "g:d");
+    assert_eq!(nested.path(), "g:d:w");
+    assert!(moved.parent().is_some_and(|p| Entry::ptr_eq(&p, &group)));
+    assert!(nested.parent().is_some_and(|p| Entry::ptr_eq(&p, &moved)));
+    assert!(moved.enabled() && nested.enabled());
+
+    // Disabling the group must cascade through the preserved links.
+    tree.update(vec![
+        EntryOptions::new("group")
+            .with_id("g")
+            .with_disabled(true)
+            .with_group(vec![
+                EntryOptions::new("mover")
+                    .with_id("d")
+                    .with_group(vec![EntryOptions::new("worker").with_id("w")]),
+            ]),
+    ])
+    .unwrap();
+    assert!(!moved.enabled(), "ancestor cascade reaches moved entry");
+    assert!(!nested.enabled(), "ancestor cascade reaches nested entry");
+
+    // Genuine removal still detaches: the parent link of a dropped child
+    // is cleared, not kept by mistake.
+    tree.update(vec![EntryOptions::new("group").with_id("g")])
+        .unwrap();
+    assert_eq!(moved.parent().map(|p| p.id().to_string()), None);
+    assert_eq!(moved.path(), "d");
+}
+
 #[test]
 fn update_rejects_duplicate_ids_atomically() {
     let tree = EntryTree::new();

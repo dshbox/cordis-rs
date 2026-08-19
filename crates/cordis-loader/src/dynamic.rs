@@ -1,10 +1,19 @@
 //! Dynamic-library plugins (behind the `dynamic` feature).
 //!
 //! Rust has no stable ABI, so a `.so`/`.dylib`/`.dll` and the process
-//! loading it are only compatible when they were produced by the *same*
-//! toolchain, target, panic strategy, and `cordis-rs` core version. This
-//! module enforces exactly that through a build fingerprint, then lets the
-//! two sides exchange a [`Plugin`] trait object directly.
+//! loading it are only compatible when their ABI-determining build
+//! ingredients match. This module gates on a build [`fingerprint`] that
+//! pins exactly those: the export protocol version, the `cordis-rs` core
+//! version, the exact rustc release *and* commit hash, the target triple,
+//! and the panic strategy. With the gate passed, the two sides exchange a
+//! [`Plugin`] trait object directly.
+//!
+//! Codegen knobs — opt-level, LTO, codegen units, `-C target-feature`/
+//! `target-cpu`, debug-assertions, or the debug/release profile — are
+//! intentionally **not** fingerprinted: they do not take part in Rust's
+//! type and vtable layout, which is what the pinned ingredients determine
+//! for a given rustc. Should that ever change, the ingredient list (and
+//! [`DYNAMIC_ABI`]) is where the fix belongs.
 //!
 //! A plugin library is a `cdylib` crate that implements [`Plugin`] and ends
 //! with [`export_plugin!`]:
@@ -93,6 +102,10 @@ type CreateFn = unsafe extern "C" fn() -> *mut c_void;
 /// [`cordis`] core version (trait/vtable source of truth), the exact rustc
 /// release *and* commit hash, the target triple, and the panic strategy —
 /// `panic=abort` versus `unwind` changes both unwinding and codegen.
+/// Codegen options (opt-level, LTO, target-feature, debug/release
+/// profile) are deliberately excluded: they do not influence Rust type or
+/// vtable layout, which the pinned ingredients fully determine for a
+/// given rustc.
 ///
 /// The ingredients come from this crate's build script and are baked into
 /// the dependent's compilation: evaluating them inside a plugin build and
