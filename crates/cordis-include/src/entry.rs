@@ -136,6 +136,11 @@ impl Entry {
     /// Replace the child list, re-pointing moved-in children and clearing
     /// the parent link of children that were dropped. Detached children
     /// keep their own subtrees intact for teardown.
+    ///
+    /// A dropped child that is no longer *ours* is left alone: during a
+    /// whole-tree update a nested `set_children` pass may have re-parented
+    /// it already (a top-level entry moved into a group), and clearing
+    /// that fresh link would orphan the entry from ancestor cascades.
     pub(crate) fn set_children(&self, new_children: Vec<Entry>) {
         let old_children = {
             let mut state = self.state();
@@ -146,7 +151,7 @@ impl Entry {
         }
         for child in &old_children {
             let still_present = new_children.iter().any(|kept| Entry::ptr_eq(kept, child));
-            if !still_present {
+            if !still_present && child.parent().is_some_and(|p| Entry::ptr_eq(&p, self)) {
                 child.state().parent = None;
             }
         }
