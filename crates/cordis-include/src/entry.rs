@@ -176,7 +176,11 @@ impl Entry {
     /// yields the flag, an unevaluated expression does not disable. The
     /// options snapshot ([`Entry::options`]) carries the raw slot for
     /// write-back.
-    pub fn disabled(&self) -> bool {
+    ///
+    /// Scope: this looks at the entry's **own** slot only, so it is not the
+    /// negation of [`is_enabled`](Self::is_enabled), which also cascades
+    /// through every ancestor.
+    pub fn is_disabled(&self) -> bool {
         self.state().options.disabled.is_disabled()
     }
 
@@ -203,12 +207,13 @@ impl Entry {
     /// disabled group cascades to its whole subtree. `!!js` expressions
     /// are *not* evaluated here — an unevaluated expression does not
     /// disable; use [`Entry::resolved_enabled`] for the evaluated
-    /// decision.
-    pub fn enabled(&self) -> bool {
+    /// decision. Unlike [`is_disabled`](Self::is_disabled), this walks the
+    /// whole ancestor chain, so the two predicates are not complements.
+    pub fn is_enabled(&self) -> bool {
         if self.is_root() {
             return true;
         }
-        !self.disabled() && self.parent().is_none_or(|parent| parent.enabled())
+        !self.is_disabled() && self.parent().is_none_or(|parent| parent.is_enabled())
     }
 
     /// Whether this entry and every ancestor are enabled once their

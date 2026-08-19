@@ -58,7 +58,7 @@ fn update_reuses_entries_and_reports_the_diff() {
         EntryOptions::new("keep").with_id("k"),
         EntryOptions::new("mover").with_id("d"),
     ];
-    let diff = tree.update(initial).unwrap();
+    let diff = tree.reconcile(initial).unwrap();
     assert_eq!(diff.created.len(), 2);
     assert!(!diff.is_empty());
 
@@ -76,7 +76,7 @@ fn update_reuses_entries_and_reports_the_diff() {
             .with_id("g")
             .with_group(vec![EntryOptions::new("mover").with_id("d")]),
     ];
-    let diff = tree.update(reload).unwrap();
+    let diff = tree.reconcile(reload).unwrap();
     assert!(diff.created.iter().any(|e| e.id() == "g"));
     assert!(diff.updated.iter().any(|e| e.id() == "k"));
     assert!(diff.moved.iter().any(|e| e.id() == "d"));
@@ -107,7 +107,7 @@ fn update_reuses_entries_and_reports_the_diff() {
 #[test]
 fn update_keeps_the_parent_link_of_entries_moved_into_groups() {
     let tree = EntryTree::new();
-    tree.update(vec![
+    tree.reconcile(vec![
         EntryOptions::new("keep").with_id("k"),
         EntryOptions::new("mover").with_id("d"),
         EntryOptions::new("worker").with_id("w"),
@@ -124,7 +124,7 @@ fn update_keeps_the_parent_link_of_entries_moved_into_groups() {
                 .with_group(vec![EntryOptions::new("worker").with_id("w")]),
         ]),
     ];
-    let diff = tree.update(reload).unwrap();
+    let diff = tree.reconcile(reload).unwrap();
     assert!(diff.moved.iter().any(|e| e.id() == "d"));
     assert!(diff.moved.iter().any(|e| e.id() == "w"));
     assert!(diff.removed.is_empty());
@@ -136,10 +136,10 @@ fn update_keeps_the_parent_link_of_entries_moved_into_groups() {
     assert_eq!(nested.path(), "g:d:w");
     assert!(moved.parent().is_some_and(|p| Entry::ptr_eq(&p, &group)));
     assert!(nested.parent().is_some_and(|p| Entry::ptr_eq(&p, &moved)));
-    assert!(moved.enabled() && nested.enabled());
+    assert!(moved.is_enabled() && nested.is_enabled());
 
     // Disabling the group must cascade through the preserved links.
-    tree.update(vec![
+    tree.reconcile(vec![
         EntryOptions::new("group")
             .with_id("g")
             .with_disabled(true)
@@ -150,12 +150,15 @@ fn update_keeps_the_parent_link_of_entries_moved_into_groups() {
             ]),
     ])
     .unwrap();
-    assert!(!moved.enabled(), "ancestor cascade reaches moved entry");
-    assert!(!nested.enabled(), "ancestor cascade reaches nested entry");
+    assert!(!moved.is_enabled(), "ancestor cascade reaches moved entry");
+    assert!(
+        !nested.is_enabled(),
+        "ancestor cascade reaches nested entry"
+    );
 
     // Genuine removal still detaches: the parent link of a dropped child
     // is cleared, not kept by mistake.
-    tree.update(vec![EntryOptions::new("group").with_id("g")])
+    tree.reconcile(vec![EntryOptions::new("group").with_id("g")])
         .unwrap();
     assert_eq!(moved.parent().map(|p| p.id().to_string()), None);
     assert_eq!(moved.path(), "d");
@@ -164,14 +167,14 @@ fn update_keeps_the_parent_link_of_entries_moved_into_groups() {
 #[test]
 fn update_rejects_duplicate_ids_atomically() {
     let tree = EntryTree::new();
-    tree.update(vec![EntryOptions::new("a").with_id("one")])
+    tree.reconcile(vec![EntryOptions::new("a").with_id("one")])
         .unwrap();
     let bad = vec![
         EntryOptions::new("a").with_id("same"),
         EntryOptions::new("b").with_id("same"),
     ];
     assert!(matches!(
-        tree.update(bad),
+        tree.reconcile(bad),
         Err(IncludeError::DuplicateId { .. })
     ));
     // The failed reload left the existing tree untouched.
@@ -199,7 +202,7 @@ fn remove_detaches_but_keeps_the_subtree() {
 }
 
 #[test]
-fn update_entry_moves_and_rejects_cycles() {
+fn reconcile_entry_moves_and_rejects_cycles() {
     let tree = EntryTree::new();
     let outer = tree
         .create(EntryOptions::new("group").with_id("outer"), None, None)
@@ -214,13 +217,13 @@ fn update_entry_moves_and_rejects_cycles() {
 
     // Move `outer` beneath its own child: must fail.
     assert!(matches!(
-        tree.update_entry("outer", EntryOptions::new("group"), Some(&inner), None),
+        tree.reconcile_entry("outer", EntryOptions::new("group"), Some(&inner), None),
         Err(IncludeError::Cycle)
     ));
 
     // Move `inner` (nested under `outer`) to the top level and rename it.
     let moved = tree
-        .update_entry(
+        .reconcile_entry(
             "outer:inner",
             EntryOptions::new("renamed"),
             Some(tree.root()),
@@ -235,7 +238,7 @@ fn update_entry_moves_and_rejects_cycles() {
 #[test]
 fn disabled_cascades_through_ancestors() {
     let tree = EntryTree::new();
-    tree.update(vec![
+    tree.reconcile(vec![
         EntryOptions::new("group")
             .with_id("g")
             .with_group(vec![EntryOptions::new("child").with_id("c")]),
@@ -244,24 +247,24 @@ fn disabled_cascades_through_ancestors() {
     let group = tree.resolve("g").unwrap();
     let child = tree.resolve("g:c").unwrap();
 
-    assert!(child.enabled());
-    tree.update(vec![
+    assert!(child.is_enabled());
+    tree.reconcile(vec![
         EntryOptions::new("group")
             .with_id("g")
             .with_disabled(true)
             .with_group(vec![EntryOptions::new("child").with_id("c")]),
     ])
     .unwrap();
-    assert!(!group.enabled());
-    assert!(group.disabled());
-    assert!(!child.disabled(), "own flag untouched");
-    assert!(!child.enabled(), "ancestor cascade applies");
+    assert!(!group.is_enabled());
+    assert!(group.is_disabled());
+    assert!(!child.is_disabled(), "own flag untouched");
+    assert!(!child.is_enabled(), "ancestor cascade applies");
 }
 
 #[test]
 fn serialize_round_trips_nested_groups() {
     let tree = EntryTree::new();
-    tree.update(vec![EntryOptions::new("group").with_id("g").with_group(
+    tree.reconcile(vec![EntryOptions::new("group").with_id("g").with_group(
         vec![
         EntryOptions::new("child").with_id("c").with_config(node(&[("n", 1.into())])),
     ],
@@ -278,7 +281,7 @@ fn serialize_round_trips_nested_groups() {
 
     // Reload from the serialized form: identity is preserved by id.
     let before = tree.resolve("g:c").unwrap();
-    tree.update(options).unwrap();
+    tree.reconcile(options).unwrap();
     let after = tree.resolve("g:c").unwrap();
     assert!(Entry::ptr_eq(&before, &after));
 }

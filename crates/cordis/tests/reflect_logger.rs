@@ -42,7 +42,7 @@ fn logger_buffers_exports_formats_and_intercepts() -> Result<()> {
         .insert("default".to_owned(), LoggerLevel::Debug);
     let exporter = root
         .logger_service()
-        .exporter_fn(config.clone(), move |message| {
+        .exporter_with(config.clone(), move |message| {
             sink.lock().unwrap().push(message.clone());
         })?;
 

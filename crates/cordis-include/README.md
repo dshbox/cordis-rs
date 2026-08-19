@@ -28,7 +28,7 @@ use cordis_include::{Entry, EntryOptions, EntryTree, Node};
 let tree = EntryTree::new();
 
 // Load a set of entries (from a file, or built by hand).
-let diff = tree.update(vec![
+let diff = tree.reconcile(vec![
     EntryOptions::new("group").with_id("srv").with_group(vec![
         EntryOptions::new("adapter-http").with_config(
             [("port".to_string(), Node::Int(8080))].into_iter().collect(),
@@ -37,10 +37,10 @@ let diff = tree.update(vec![
 ])?;
 assert_eq!(diff.created.len(), 2);
 
-// A full reload matches entries by id across groups: existing entry
+// A full reconcile matches entries by id across groups: existing entry
 // objects are reused (same pointer), so callers can keep their handles.
 let kept = tree.resolve("srv").unwrap();
-tree.update(vec![EntryOptions::new("group").with_id("srv")])?;
+tree.reconcile(vec![EntryOptions::new("group").with_id("srv")])?;
 assert!(Entry::ptr_eq(&kept, &tree.resolve("srv").unwrap()));
 # Ok(())
 # }

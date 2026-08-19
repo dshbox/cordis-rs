@@ -62,7 +62,7 @@ impl LoaderConfig {
     /// open" races between concurrent boots on one profile (another
     /// process's draft could land between this one's write and read) and
     /// requires a writable directory. Replace the source at runtime with
-    /// [`Loader::update`].
+    /// [`Loader::recompose`].
     pub fn with_document(mut self, document: cordis_include::Document) -> Self {
         self.document = Some(document);
         self
@@ -119,7 +119,7 @@ pub(crate) struct LoaderInner {
     operation: OperationLock,
     /// Composition source override; `None` for file-backed loaders. Set by
     /// [`LoaderConfig::with_document`] and replaced by every
-    /// [`Loader::update`]: reloads recompose from it instead of re-reading
+    /// [`Loader::recompose`]: reloads recompose from it instead of re-reading
     /// the root file (import files are still read), so rows a write-back
     /// baked into the draft can never re-enter the composition.
     document: Mutex<Option<cordis_include::Document>>,
@@ -212,7 +212,7 @@ impl Loader {
             watchers: Mutex::new(Vec::new()),
             write_debounce: Mutex::new(config.write_debounce),
         });
-        inner.tree.update(composed)?;
+        inner.tree.reconcile(composed)?;
         // Generated ids from the initial load are persisted lazily, on the
         // first explicit write-back.
 
@@ -330,8 +330,8 @@ impl Loader {
     pub fn reload(&self) -> Result<TreeDiff> {
         let inner = &self.inner;
         // Whole-reload exclusion: compose, diff, fiber transitions, and the
-        // id write-back must not interleave with update() or update_config()
-        // or dispose().
+        // id write-back must not interleave with recompose() or
+        // update_config() or dispose().
         let _operation = inner.operation.guard();
         let mut imports = HashMap::new();
         let mut errors = Vec::new();
@@ -366,7 +366,7 @@ impl Loader {
             },
         };
         // Id-less rows at any depth — including entries nested inside
-        // groups — get a generated id during the tree update below; the
+        // groups — get a generated id during the tree reconcile below; the
         // write-back must fire for them, or every reload would regenerate
         // a different id and churn the entry's fiber.
         let dirty = missing_id(&composed);
@@ -399,8 +399,8 @@ impl Loader {
     /// The document also becomes the loader's composition source: later
     /// reloads recompose from it instead of re-reading the root file
     /// (import files are still read). This is the core HMR primitive — a
-    /// watcher recomposes fresh layers and hands the result to `update`.
-    pub fn update(&self, document: cordis_include::Document) -> Result<TreeDiff> {
+    /// watcher recomposes fresh layers and hands the result to `recompose`.
+    pub fn recompose(&self, document: cordis_include::Document) -> Result<TreeDiff> {
         let inner = &self.inner;
         // Same exclusion as reload(): the source swap, tree diff, and fiber
         // transitions must land as one unit.
@@ -431,7 +431,7 @@ impl Loader {
     /// restarted when active) and the new config is persisted to the file.
     pub fn update_config(&self, id: &str, config: Node) -> Result<()> {
         let inner = &self.inner;
-        // Same exclusion as reload(): the fiber update, tree commit, and
+        // Same exclusion as reload(): the fiber transitions, tree commit, and
         // file write-back must land as one unit, or a concurrent reload
         // could patch the fiber back to the file's previous content.
         let _operation = inner.operation.guard();
@@ -445,7 +445,7 @@ impl Loader {
         options.config = Some(config.clone());
         inner
             .tree
-            .update_entry(&entry.path(), options, None, None)?;
+            .reconcile_entry(&entry.path(), options, None, None)?;
         write_back(inner)?;
         emit(
             inner,
@@ -632,7 +632,7 @@ fn reconcile(
     composed: Vec<EntryOptions>,
     imports: HashMap<PathBuf, LoaderFile>,
 ) -> Result<TreeDiff> {
-    let diff = inner.tree.update(composed)?;
+    let diff = inner.tree.reconcile(composed)?;
     *lock(&inner.imports) = imports;
 
     for removed in &diff.removed {
@@ -771,7 +771,7 @@ fn patch_entry(inner: &LoaderInner, entry: &Entry) -> Result<()> {
             vec![Value::new(entry.clone())],
         );
         if let Err(error) = fiber.update_value(Config::new(new_config)) {
-            // tree.update() already committed the new options before this
+            // tree.reconcile() already committed the new options before this
             // patch ran. Rolling the entry's stored config back to what the
             // fiber actually runs keeps the tree honest and — crucially —
             // makes the next reload's diff see a change again, so a config
@@ -780,7 +780,10 @@ fn patch_entry(inner: &LoaderInner, entry: &Entry) -> Result<()> {
             if let Some(old_config) = current {
                 let mut options = entry_options_with_children(entry);
                 options.config = Some(old_config);
-                if let Err(revert) = inner.tree.update_entry(&entry.path(), options, None, None) {
+                if let Err(revert) = inner
+                    .tree
+                    .reconcile_entry(&entry.path(), options, None, None)
+                {
                     lock(&inner.state).last_error = Some(format!(
                         "failed to roll back config of {}: {revert}",
                         entry.path()
@@ -820,7 +823,7 @@ fn entry_depth(entry: &Entry) -> usize {
     depth
 }
 
-/// Serialize an entry together with its live subtree (used by update paths
+/// Serialize an entry together with its live subtree (used by reconcile paths
 /// that must not disturb children).
 fn entry_options_with_children(entry: &Entry) -> EntryOptions {
     let mut options = entry.options();
@@ -906,7 +909,7 @@ fn import_canonical(inner: &LoaderInner, entry: &Entry) -> PathBuf {
 }
 
 /// Whether any entry in the list — at any nesting depth — lacks an
-/// explicit id. `EntryTree::update` generates one for each, and the file
+/// explicit id. `EntryTree::reconcile` generates one for each, and the file
 /// must be written back afterwards or the next reload matches nothing and
 /// churns those entries' fibers.
 fn missing_id(entries: &[EntryOptions]) -> bool {
@@ -917,7 +920,7 @@ fn missing_id(entries: &[EntryOptions]) -> bool {
 
 /// Read `file` and recursively mount import subtrees: every `import`
 /// entry's `group` becomes the entries of the file its `url` names, so one
-/// `EntryTree::update` diffs across all files uniformly. Returns the
+/// `EntryTree::reconcile` diffs across all files uniformly. Returns the
 /// composed top-level entries (import children included, so id-less
 /// detection sees the whole tree).
 ///
@@ -945,7 +948,7 @@ fn compose(
 
 /// Mount import subtrees under base rows supplied in memory — the entries
 /// half of [`compose`], used by document-backed composition sources
-/// ([`LoaderConfig::with_document`], [`Loader::update`]). `base` resolves
+/// ([`LoaderConfig::with_document`], [`Loader::recompose`]). `base` resolves
 /// relative import urls. Infallible: import failures follow the tolerant
 /// record-and-skip path.
 ///
@@ -1096,7 +1099,7 @@ fn persist_self_dispose(inner: &LoaderInner, entry: &Entry) -> Result<()> {
     options.disabled = cordis_include::Disabled::Flag(true);
     inner
         .tree
-        .update_entry(&entry.path(), options, None, None)?;
+        .reconcile_entry(&entry.path(), options, None, None)?;
     write_back(inner)?;
     emit(
         inner,

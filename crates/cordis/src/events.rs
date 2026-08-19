@@ -100,7 +100,11 @@ impl Event {
     }
 
     /// Invoke the next waterfall listener or innermost behavior.
-    pub fn next(&self) -> BoxFuture<EventResult> {
+    ///
+    /// Renamed from upstream's `next()` to avoid colliding with
+    /// [`Iterator::next`]; the [`Next`] type
+    /// alias keeps the upstream vocabulary.
+    pub fn call_next(&self) -> BoxFuture<EventResult> {
         match self.next.clone() {
             Some(next) => next(),
             None => Box::pin(async { Ok(None) }),
@@ -218,7 +222,7 @@ impl EventsService {
         once: bool,
     ) -> Result<EffectHandle> {
         let fiber = self.ctx.fiber()?;
-        fiber.assert_active()?;
+        fiber.ensure_active()?;
         let id = self.ctx.root.events.next_id();
 
         // Register the owning effect first: failure leaves no hook behind,

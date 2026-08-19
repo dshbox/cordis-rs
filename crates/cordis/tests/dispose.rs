@@ -1,6 +1,5 @@
 use cordis::{
-    Context, CordisError, EffectMeta, ErrorCode, Inject, LoggerType, PluginOutput, Result,
-    plugin_sync,
+    Context, CordisError, EffectMeta, ErrorCode, Inject, LogKind, PluginOutput, Result, plugin_sync,
 };
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -38,11 +37,7 @@ fn failing_disposer_is_isolated_and_teardown_completes() -> Result<()> {
 
     // The failure reached the logger rather than being silently swallowed.
     let buffer = root.logger_service().buffer();
-    assert!(
-        buffer
-            .iter()
-            .any(|message| message.kind == LoggerType::Error)
-    );
+    assert!(buffer.iter().any(|message| message.kind == LogKind::Error));
     Ok(())
 }
 

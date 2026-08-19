@@ -26,7 +26,7 @@ use cordis_include::{Entry, EntryOptions, EntryTree, Node};
 let tree = EntryTree::new();
 
 // 载入一组条目（来自文件，或手工构建）。
-let diff = tree.update(vec![
+let diff = tree.reconcile(vec![
     EntryOptions::new("group").with_id("srv").with_group(vec![
         EntryOptions::new("adapter-http").with_config(
             [("port".to_string(), Node::Int(8080))].into_iter().collect(),
@@ -35,10 +35,10 @@ let diff = tree.update(vec![
 ])?;
 assert_eq!(diff.created.len(), 2);
 
-// 整树重载按 id 跨 group 匹配：既有条目对象会被复用（同一指针），
+// 整树 reconcile 按 id 跨 group 匹配：既有条目对象会被复用（同一指针），
 // 调用方可以保留自己的句柄。
 let kept = tree.resolve("srv").unwrap();
-tree.update(vec![EntryOptions::new("group").with_id("srv")])?;
+tree.reconcile(vec![EntryOptions::new("group").with_id("srv")])?;
 assert!(Entry::ptr_eq(&kept, &tree.resolve("srv").unwrap()));
 # Ok(())
 # }

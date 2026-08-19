@@ -18,7 +18,7 @@
 //! let mut document = file.read()?;
 //!
 //! let tree = EntryTree::new();
-//! let diff = tree.update(document.entries)?;
+//! let diff = tree.reconcile(document.entries)?;
 //! for entry in &diff.created {
 //!     println!("new entry {} ({})", entry.path(), entry.name());
 //! }

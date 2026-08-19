@@ -68,12 +68,12 @@ fn bail_serial_parallel_and_waterfall() -> Result<()> {
 
     root.on_async("sum", |event| async move {
         let value = *event.arg::<u32>(0)?.unwrap();
-        let next = event.next().await?.unwrap().downcast::<u32>()?;
+        let next = event.call_next().await?.unwrap().downcast::<u32>()?;
         Ok(Some(Value::new(value + *next)))
     })?;
     root.on_async("sum", |event| async move {
         let value = *event.arg::<u32>(0)?.unwrap();
-        let next = event.next().await?.unwrap().downcast::<u32>()?;
+        let next = event.call_next().await?.unwrap().downcast::<u32>()?;
         Ok(Some(Value::new(value + *next)))
     })?;
     let result = block_on(
@@ -274,7 +274,7 @@ fn sync_waterfall_composes_listeners_around_sync_inner() -> Result<()> {
             async move {
                 calls.fetch_add(1, Ordering::SeqCst);
                 let value = *event.arg::<u32>(0)?.unwrap();
-                let next = event.next().await?.unwrap().downcast::<u32>()?;
+                let next = event.call_next().await?.unwrap().downcast::<u32>()?;
                 Ok(Some(Value::new(value + *next)))
             }
         })?;
