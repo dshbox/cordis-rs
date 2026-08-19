@@ -7,6 +7,10 @@
 //! objects, and decorators.  The Rust API keeps the same runtime model while
 //! replacing those language features with explicit, typed methods.
 //!
+//! Naming note: the package is published as `cordis-rs`, but the library
+//! name and import path are `cordis` (matching upstream), and the sources
+//! live under `crates/cordis` in the repository.
+//!
 //! # Quick start
 //!
 //! ```

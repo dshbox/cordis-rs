@@ -219,6 +219,11 @@ impl EffectHandle {
     }
 
     /// Dispose this effect asynchronously.
+    ///
+    /// There is no background executor: awaiting this runs the child and
+    /// disposer chain inline on the calling thread — like
+    /// [`dispose`](Self::dispose), only without wrapping the future in a
+    /// blocking poll.
     pub async fn dispose_async(&self) -> Result<()> {
         self.cell.dispose().await
     }

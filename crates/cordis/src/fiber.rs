@@ -252,6 +252,10 @@ impl Fiber {
     }
 
     /// Normalized service dependency declaration.
+    ///
+    /// Read-back accessor for the declaration this fiber was started with.
+    /// The same-named [`Context::inject`](crate::Context::inject) is the
+    /// startup shortcut that creates an anonymous fiber from a declaration.
     pub fn inject(&self) -> &Inject {
         &self.inner.inject
     }
@@ -781,7 +785,8 @@ impl Fiber {
         self.try_wait().map(|_| ())
     }
 
-    /// Validate and apply new config, then restart when dependencies are active.
+    /// Validate and apply new config, then restart when dependencies are
+    /// active.
     ///
     /// An `Active` fiber is validated first — a validation failure keeps the
     /// running plugin untouched — then restarted, so the returned result
@@ -793,6 +798,10 @@ impl Fiber {
     /// upstream Cordis, `Ok(())` then only means the config was accepted, not
     /// that startup succeeded; inspect [`state`](Self::state) or call
     /// [`try_wait`](Self::try_wait) when the outcome matters.
+    ///
+    /// The `cordis-loader` crate wraps this as
+    /// `Loader::update_config`, which additionally re-commits the tree
+    /// entry and persists the config to the file.
     pub fn update<C>(&self, config: C) -> Result<()>
     where
         C: Send + Sync + 'static,
@@ -896,15 +905,17 @@ impl Fiber {
         Ok(())
     }
 
-    /// Async equivalent of [`dispose`](Self::dispose).
+    /// Async signature kept for upstream `disposeAsync` parity — this is a
+    /// synchronous pass-through to [`dispose`](Self::dispose), not an
+    /// offload.
     ///
-    /// **This is a synchronous pass-through, not an offload.** Awaiting it
-    /// runs the whole disposal chain — disposers included — on the calling
-    /// thread before the future resolves; it never yields to the executor.
-    /// Inside an async runtime, treat `.await`ing this like calling any
-    /// blocking function: a slow disposer stalls the executor thread for
-    /// the duration. Trigger disposals of long-teardown fibers from a plain
-    /// thread (or [`dispose`](Self::dispose) on a worker) instead.
+    /// **It never yields.** Awaiting it runs the whole disposal chain —
+    /// disposers included — on the calling thread before the future
+    /// resolves. Inside an async runtime, treat `.await`ing this like
+    /// calling any blocking function: a slow disposer stalls the executor
+    /// thread for the duration. Trigger disposals of long-teardown fibers
+    /// from a plain thread (or [`dispose`](Self::dispose) on a worker)
+    /// instead.
     pub async fn dispose_async(&self) -> Result<()> {
         self.dispose()
     }

@@ -105,17 +105,27 @@ fn next_backoff(previous: Option<Duration>, ran_for: Duration) -> Duration {
 }
 
 /// Parsed command line.
+///
+/// Mirrors `cordis run <config> [--plugin-dir <dir>]… [--worker|-w]`:
+/// [`config`](Options::config) is the positional entry file,
+/// [`plugin_dirs`](Options::plugin_dirs) collects every `--plugin-dir`
+/// (repeatable), and [`worker`](Options::worker) is set by `--worker`/`-w`.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Options {
-    /// Entry config file.
+    /// Entry config file (the positional `cordis run` argument).
     pub config: PathBuf,
-    /// Directories searched for dynamic-library plugins (repeatable).
+    /// Directories searched for dynamic-library plugins (repeatable
+    /// `--plugin-dir <dir>`).
     pub plugin_dirs: Vec<PathBuf>,
-    /// Run as the daemon's worker process instead of supervising.
+    /// Run as the daemon's worker process instead of supervising
+    /// (`--worker`/`-w`).
     pub worker: bool,
 }
 
 /// Parse `cordis` arguments (after the binary name).
+///
+/// Accepted shape: `cordis run <config> [--plugin-dir <dir>]…
+/// [--worker|-w]` — the result is [`Options`].
 ///
 /// Arguments stay [`OsString`] end to end so config paths with non-UTF-8
 /// bytes (legal on Unix filesystems) reach the loader intact instead of

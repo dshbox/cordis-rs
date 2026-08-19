@@ -12,6 +12,8 @@ Cordis is a context-based plugin framework for applications that need explicit d
 
 ## Status
 
+> **Rapid development.** This project is pre-1.0 and iterates quickly: public APIs, crate boundaries, and naming may change between releases (while the crates are 0.x, breaking changes land as minor bumps). Do not use it in production systems yet.
+
 The crate currently ports the complete **core runtime**:
 
 | TypeScript Cordis | Rust API | Status |
