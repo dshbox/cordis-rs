@@ -3,18 +3,18 @@ resolver = "3"
 members = ["crates/*"]
 
 [workspace.package]
-version = "0.6.0"
+version = "0.6.1"
 edition = "2024"
 rust-version = "1.85"
 license = "MIT"
 repository = "https://github.com/dshbox/cordis-rs"
 
 [workspace.dependencies]
-cordis-cli = { version = "0.0.20", path = "crates/cordis-cli" }
-cordis-group = { version = "0.0.15", path = "crates/cordis-group" }
-cordis-include = { version = "0.0.21", path = "crates/cordis-include" }
-cordis-loader = { version = "0.0.21", path = "crates/cordis-loader" }
-cordis-rs = { version = "0.6.0", path = "crates/cordis" }
+cordis-cli = { version = "0.0.21", path = "crates/cordis-cli" }
+cordis-group = { version = "0.0.16", path = "crates/cordis-group" }
+cordis-include = { version = "0.0.22", path = "crates/cordis-include" }
+cordis-loader = { version = "0.0.22", path = "crates/cordis-loader" }
+cordis-rs = { version = "0.6.1", path = "crates/cordis" }
 indexmap = { version = "2", features = ["serde"] }
 libloading = "0.8"
 ryu = "1"

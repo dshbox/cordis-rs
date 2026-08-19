@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.21](https://github.com/dshbox/cordis-rs/compare/cordis-cli-v0.0.20...cordis-cli-v0.0.21) - 2026-08-19
+
+### Other
+
+- annotate same-name APIs and add rapid-development notice (naming review Wave 3) ([#66](https://github.com/dshbox/cordis-rs/pull/66))
+
 ## [0.0.20](https://github.com/dshbox/cordis-rs/compare/cordis-cli-v0.0.19...cordis-cli-v0.0.20) - 2026-08-19
 
 ### Other
