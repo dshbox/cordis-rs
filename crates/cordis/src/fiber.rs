@@ -602,6 +602,23 @@ impl Fiber {
         }
     }
 
+    /// The error for a transition that never became available within
+    /// [`transition_wait`], naming the fiber so the hung `apply` or
+    /// disposer can be identified.
+    fn transition_timeout_error(&self) -> CordisError {
+        let name = self.name();
+        let uid = self
+            .uid()
+            .map_or_else(|| "?".to_owned(), |uid| uid.to_string());
+        CordisError::with_message(
+            ErrorCode::Other,
+            format!(
+                "timed out waiting for the in-flight lifecycle transition \
+                 on fiber {name} (uid {uid}); its apply or a disposer may be hung",
+            ),
+        )
+    }
+
     /// Lock the transition mutex, telling reentrancy apart from contention.
     ///
     /// When the *current thread* already holds the lock — directly or
@@ -624,17 +641,7 @@ impl Fiber {
             ));
         }
         let Some(guard) = self.acquire_transition() else {
-            let name = self.name();
-            let uid = self
-                .uid()
-                .map_or_else(|| "?".to_owned(), |uid| uid.to_string());
-            let error = CordisError::with_message(
-                ErrorCode::Other,
-                format!(
-                    "timed out waiting for the in-flight lifecycle transition \
-                     on fiber {name} (uid {uid}); its apply or a disposer may be hung",
-                ),
-            );
+            let error = self.transition_timeout_error();
             // The caller only sees the failure; the log records which fiber
             // is stuck so the hung plugin can be identified.
             if let Some(ctx) = self.context() {
@@ -694,12 +701,26 @@ impl Fiber {
 
     /// Block until no lifecycle transition is in progress on this fiber.
     ///
+    /// The wait honors the same ceiling as `restart`/`dispose` (currently
+    /// ten seconds): a transition held longer — a hung `apply` or disposer
+    /// on another thread — surfaces as a logged error naming the fiber
+    /// instead of blocking the caller forever. `await_idle` has no result
+    /// channel, so the log is where the timeout lands.
+    ///
     /// Never call this from a lifecycle callback (status listener, disposer,
-    /// plugin apply) on the same thread: the transition mutex is held while
-    /// those run, and blocking on it here would deadlock.
+    /// plugin apply) on the same fiber: the transition mutex is held while
+    /// those run, so the call stalls the callback for the full bound before
+    /// logging the timeout. Probe [`idle`](Self::idle) from callbacks
+    /// instead.
     pub fn await_idle(&self) {
         {
-            let _guard = lock(&self.inner.transition);
+            let Some(_guard) = self.acquire_transition() else {
+                let error = self.transition_timeout_error();
+                if let Some(ctx) = self.context() {
+                    ctx.log_error(&error);
+                }
+                return;
+            };
         }
         // A concurrent refresh whose try_lock lost to the guard above only
         // set the dirty flag. Unlike refresh/restart/dispose, the guard here
@@ -1056,6 +1077,56 @@ mod tests {
         assert!(
             message.contains(&fiber.uid().unwrap().to_string()),
             "{message}"
+        );
+
+        // Let the parked apply finish so the helper thread can join.
+        drop(tx);
+        provider.join().unwrap().unwrap();
+    }
+
+    /// Regression (review 2026-08-19, REV-03): `await_idle` used an
+    /// unbounded blocking lock on the transition mutex; with a hung apply
+    /// holding it, the caller parked forever. It must honor the same wait
+    /// ceiling as `restart`/`dispose` and return (logging the timeout)
+    /// instead.
+    #[test]
+    fn await_idle_times_out_when_apply_hangs() {
+        let root = Context::new();
+        let (tx, rx) = std::sync::mpsc::channel::<()>();
+        // mpsc receivers are not Sync; the mutex makes the callback shareable
+        // while recv() parks the apply under it.
+        let rx = Mutex::new(rx);
+        let fiber = root.plugin_default(plugin_sync::<(), _>(
+            "hung-idle",
+            Inject::new(["svc"]),
+            move |_, _| {
+                let _ = lock(&rx).recv();
+                Ok(PluginOutput::none())
+            },
+        ));
+        assert_eq!(fiber.state(), FiberState::Pending);
+
+        // Providing the dependency parks apply() on the provider thread,
+        // which then holds the transition mutex indefinitely.
+        let provider = std::thread::spawn({
+            let root = root.clone();
+            move || root.provide("svc", 1_u32)
+        });
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while fiber.state() != FiberState::Loading {
+            assert!(Instant::now() < deadline, "apply never started");
+            std::thread::yield_now();
+        }
+
+        TRANSITION_WAIT_MILLIS.store(150, Ordering::Relaxed);
+        let started = Instant::now();
+        fiber.await_idle();
+        let elapsed = started.elapsed();
+        TRANSITION_WAIT_MILLIS.store(0, Ordering::Relaxed);
+
+        assert!(
+            elapsed >= Duration::from_millis(150) && elapsed < Duration::from_secs(5),
+            "await_idle returned in {elapsed:?} instead of timing out at the bound"
         );
 
         // Let the parked apply finish so the helper thread can join.
