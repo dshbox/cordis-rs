@@ -17,8 +17,9 @@
 //!   without parentheses
 //! - strict equality `===` / `!==` (loose `==`/`!=` is outside the subset)
 //! - unary `!`
-//! - string literals in single or double quotes, decimal integers and
-//!   floats, `true`/`false`/`null`/`undefined`
+//! - string literals in single or double quotes with JavaScript escapes
+//!   (`\n`-style plus `\xNN`, `\uNNNN`, and `\u{…}`), decimal integers
+//!   and floats, `true`/`false`/`null`/`undefined`
 //! - member access limited to `process.platform`, `process.env.NAME`
 //!   (unset variables are `undefined`), and `process.cwd()`
 //!
@@ -163,37 +164,105 @@ fn lex(source: &str) -> Vec<Token> {
 
 /// One quoted string literal with JS-style escapes; `None` when the
 /// string is unterminated. Returns the unescaped text and the consumed
-/// width.
+/// width. `\xNN`, `\uNNNN`, and `\u{…}` decode like JavaScript string
+/// literals; a malformed one collapses to the escaped character, matching
+/// the unknown-escape fallback.
 fn lex_string(rest: &str) -> Option<(String, usize)> {
     let quote = rest.chars().next()?;
+    let tail = &rest[quote.len_utf8()..];
     let mut text = String::new();
-    let mut width = quote.len_utf8();
-    let mut chars = rest[width..].chars();
-    while let Some(character) = chars.next() {
-        width += character.len_utf8();
+    let mut cursor = 0;
+    while let Some(character) = tail[cursor..].chars().next() {
+        cursor += character.len_utf8();
         if character == quote {
-            return Some((text, width));
+            return Some((text, quote.len_utf8() + cursor));
         }
         if character == '\n' {
             return None;
         }
-        if character == '\\' {
-            let escaped = chars.next()?;
-            width += escaped.len_utf8();
-            text.push(match escaped {
-                'n' => '\n',
-                't' => '\t',
-                'r' => '\r',
-                '0' => '\0',
-                // Unknown escapes collapse to the escaped character, like
-                // JavaScript string literals.
-                other => other,
-            });
-        } else {
+        if character != '\\' {
             text.push(character);
+            continue;
+        }
+        let escaped = tail[cursor..].chars().next()?;
+        cursor += escaped.len_utf8();
+        match escaped {
+            'n' => text.push('\n'),
+            't' => text.push('\t'),
+            'r' => text.push('\r'),
+            '0' => text.push('\0'),
+            'x' => match take_hex(&tail[cursor..], 2) {
+                // Two hex digits cap the value at 0xFF, so the narrowing
+                // is lossless.
+                Some((code, width)) => {
+                    cursor += width;
+                    text.push(code as u8 as char);
+                }
+                None => text.push('x'),
+            },
+            'u' => match take_unicode(&tail[cursor..]) {
+                Some((character, width)) => {
+                    cursor += width;
+                    text.push(character);
+                }
+                None => text.push('u'),
+            },
+            // Unknown escapes collapse to the escaped character, like
+            // JavaScript string literals.
+            other => text.push(other),
         }
     }
     None
+}
+
+/// Take exactly `count` leading ASCII hex digits, returning their value
+/// and byte width; `None` when the run is shorter or overflows.
+fn take_hex(slice: &str, count: usize) -> Option<(u32, usize)> {
+    let mut value = 0_u32;
+    let mut width = 0;
+    for character in slice.chars().take(count) {
+        let digit = character.to_digit(16)?;
+        value = value.checked_mul(16)?.checked_add(digit)?;
+        width += character.len_utf8();
+    }
+    (width == count).then_some((value, width))
+}
+
+/// Decode the body of a `\u` escape — four hex digits or a braced
+/// `{…}` run — into the character and its byte width; `None` when
+/// malformed (then the escape collapses to a literal `u`).
+///
+/// A high surrogate pairs with an immediately following `\uNNNN` low
+/// surrogate like JavaScript; a lone surrogate, which a Rust string cannot
+/// hold, decodes to U+FFFD.
+fn take_unicode(tail: &str) -> Option<(char, usize)> {
+    if let Some(braced) = tail.strip_prefix('{') {
+        let digits: String = braced
+            .chars()
+            .take_while(|character| character.is_ascii_hexdigit())
+            .collect();
+        if digits.is_empty() || braced.as_bytes().get(digits.len()) != Some(&b'}') {
+            return None;
+        }
+        let value = u32::from_str_radix(&digits, 16).ok()?;
+        // '{', the digits, and '}' — one byte each, all ASCII.
+        return char::from_u32(value).map(|character| (character, digits.len() + 2));
+    }
+    let (code, width) = take_hex(tail, 4)?;
+    if (0xD800..0xDC00).contains(&code) {
+        // High surrogate: a following "\u" + low surrogate completes the
+        // pair; anything else leaves it unpaired (U+FFFD below).
+        if let Some((low, low_width)) = tail[width..]
+            .strip_prefix("\\u")
+            .and_then(|rest| take_hex(rest, 4))
+            .filter(|(low, _)| (0xDC00..0xE000).contains(low))
+        {
+            let combined = 0x10000 + ((code - 0xD800) << 10) + (low - 0xDC00);
+            let character = char::from_u32(combined)?;
+            return Some((character, width + 2 + low_width));
+        }
+    }
+    char::from_u32(code).map(|character| (character, width))
 }
 
 /// One decimal number: integer when it fits `i64` and has no fraction or
@@ -757,6 +826,33 @@ mod tests {
     }
 
     // --- operator semantics ---
+
+    #[test]
+    fn string_escapes_decode_like_javascript() {
+        assert_eq!(eval(r"'a\tb\nc'", &[]), Node::String("a\tb\nc".to_owned()));
+        assert_eq!(eval(r"'\x41'", &[]), Node::String("A".to_owned()));
+        assert_eq!(eval(r"'\x4a'", &[]), Node::String("J".to_owned()));
+        assert_eq!(eval(r"'\u0041'", &[]), Node::String("A".to_owned()));
+        assert_eq!(eval(r"'\u{41}'", &[]), Node::String("A".to_owned()));
+        assert_eq!(eval(r"'\u{1F600}'", &[]), Node::String("😀".to_owned()));
+        // A surrogate pair combines, as in JavaScript string literals.
+        assert_eq!(eval(r"'\uD83D\uDE00'", &[]), Node::String("😀".to_owned()));
+        // Malformed hex escapes collapse to the escaped character, like
+        // unknown escapes.
+        assert_eq!(eval(r"'\xZ1'", &[]), Node::String("xZ1".to_owned()));
+        assert_eq!(eval(r"'\u12'", &[]), Node::String("u12".to_owned()));
+        assert_eq!(eval(r"'\u{}'", &[]), Node::String("u{}".to_owned()));
+        assert_eq!(
+            eval(r"'\u{110000}'", &[]),
+            Node::String("u{110000}".to_owned())
+        );
+        // Escapes feed operators like any other literal.
+        assert_eq!(eval(r"'\x41' === 'A'", &[]), Node::Bool(true));
+        // A malformed escape collapses without swallowing the closing quote.
+        assert_eq!(eval(r"'\x4'", &[]), Node::String("x4".to_owned()));
+        // An escape running into the end of the source stays an error.
+        assert!(error(r"'\x41").contains("outside the supported expression subset"));
+    }
 
     #[test]
     fn numbers_evaluate_across_the_int_float_split() {
