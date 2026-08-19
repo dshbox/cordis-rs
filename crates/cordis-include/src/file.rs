@@ -255,10 +255,11 @@ impl LoaderFile {
 /// Serialize `document` and atomically replace the file behind `inner`.
 /// A no-op while the file is suspended.
 ///
-/// The whole sequence — serialize, write the sibling `.tmp`, fsync, rename —
-/// runs under `write_lock`: concurrent writers (a synchronous `write`, the
-/// deferred flusher, the loader's write-back) would otherwise interleave on
-/// the same `.tmp` path and the rename could publish torn content.
+/// The whole sequence — serialize, write the sibling `.tmp`, fsync, rename,
+/// fsync the parent directory (Unix) — runs under `write_lock`: concurrent
+/// writers (a synchronous `write`, the deferred flusher, the loader's
+/// write-back) would otherwise interleave on the same `.tmp` path and the
+/// rename could publish torn content.
 fn write_document(inner: &FileInner, document: &Document) -> Result<()> {
     let _write = crate::lock(&inner.write_lock);
     if *crate::lock(&inner.suspend) > 0 {
@@ -300,6 +301,18 @@ fn write_document(inner: &FileInner, document: &Document) -> Result<()> {
         file.sync_all()?;
     }
     fs::rename(&tmp, &inner.path)?;
+    // Persist the directory entry too: on some filesystems a crash shortly
+    // after the rename can otherwise lose the new name, defeating the
+    // atomic-write guarantee. POSIX fsyncs a directory through a read-only
+    // fd; failures are best-effort since the rename itself succeeded.
+    #[cfg(unix)]
+    {
+        if let Some(parent) = inner.path.parent() {
+            if let Ok(dir) = fs::File::open(parent) {
+                let _ = dir.sync_all();
+            }
+        }
+    }
     Ok(())
 }
 
