@@ -351,15 +351,15 @@ impl Context {
     where
         T: Send + Sync + 'static,
     {
-        self.reflect().get(name, true)
+        self.reflect().get(name)
     }
 
     /// Read a service even while its provider is loading or unloading.
-    pub fn get_unchecked<T>(&self, name: &str) -> Result<Option<Arc<T>>>
+    pub fn get_relaxed<T>(&self, name: &str) -> Result<Option<Arc<T>>>
     where
         T: Send + Sync + 'static,
     {
-        self.reflect().get(name, false)
+        self.reflect().get_relaxed(name)
     }
 
     /// Require a currently active service.
@@ -430,6 +430,24 @@ impl Context {
             .on_async(name, listener, EventOptions::default())
     }
 
+    /// Register an asynchronous listener with placement and filtering
+    /// options.
+    ///
+    /// See [`EventsService::on_async`](crate::EventsService::on_async) for the
+    /// blocking-executor caveats before awaiting thread-local work here.
+    pub fn on_async_with<F, Fut>(
+        &self,
+        name: impl Into<String>,
+        listener: F,
+        options: EventOptions,
+    ) -> Result<EffectHandle>
+    where
+        F: Fn(Event) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = EventResult> + Send + 'static,
+    {
+        self.events().on_async(name, listener, options)
+    }
+
     /// Register a one-shot event listener.
     pub fn once<F>(&self, name: impl Into<String>, listener: F) -> Result<EffectHandle>
     where
@@ -487,6 +505,20 @@ impl Context {
         self.events().waterfall(name, args, inner)
     }
 
+    /// Compose listeners around an innermost asynchronous callback.
+    pub async fn waterfall_async<F, Fut>(
+        &self,
+        name: impl Into<String>,
+        args: impl IntoIterator<Item = EventValue>,
+        inner: F,
+    ) -> EventResult
+    where
+        F: Fn() -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = EventResult> + Send + 'static,
+    {
+        self.events().waterfall_async(name, args, inner).await
+    }
+
     /// Start a plugin and return its lifecycle fiber.
     pub fn plugin<P, C>(&self, plugin: P, config: C) -> Fiber
     where
@@ -504,25 +536,6 @@ impl Context {
     {
         self.registry()
             .plugin_value(plugin.into_plugin(), Config::default())
-    }
-
-    /// Wrap and start a concrete [`Plugin`](crate::Plugin) implementation.
-    pub fn plugin_object<P, C>(&self, plugin: P, config: C) -> Fiber
-    where
-        P: crate::Plugin,
-        C: Send + Sync + 'static,
-    {
-        self.registry()
-            .plugin_value(crate::PluginHandle::new(plugin), Config::new(config))
-    }
-
-    /// Start a concrete plugin implementation with unit configuration.
-    pub fn plugin_object_default<P>(&self, plugin: P) -> Fiber
-    where
-        P: crate::Plugin,
-    {
-        self.registry()
-            .plugin_value(crate::PluginHandle::new(plugin), Config::default())
     }
 
     /// Start an inline callback after all listed services become available.

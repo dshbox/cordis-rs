@@ -430,7 +430,7 @@ fn panicking_plugin_state_is_recoverable() -> Result<()> {
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| root.plugin_default(plugin)));
     assert!(panicked.is_err());
 
-    let fiber = root.registry().values()[0].fibers[0].clone();
+    let fiber = root.registry().runtimes()[0].fibers[0].clone();
     assert_eq!(fiber.state(), FiberState::Loading);
 
     should_panic.store(false, Ordering::SeqCst);
@@ -493,10 +493,10 @@ fn partial_dependencies_keep_fiber_pending() -> Result<()> {
     let effect_a = root.provide_arc("a", Arc::new(1_u32))?;
     assert_eq!(fiber.state(), FiberState::Pending);
     let _effect_b = root.provide_arc("b", Arc::new(2_u32))?;
-    fiber.await_idle();
+    fiber.wait_idle();
     assert_eq!(fiber.state(), FiberState::Active);
     effect_a.dispose()?;
-    fiber.await_idle();
+    fiber.wait_idle();
     assert_eq!(fiber.state(), FiberState::Pending);
     Ok(())
 }

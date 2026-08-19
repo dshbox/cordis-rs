@@ -68,12 +68,12 @@ fn bail_serial_parallel_and_waterfall() -> Result<()> {
 
     root.on_async("sum", |event| async move {
         let value = *event.arg::<u32>(0)?.unwrap();
-        let next = event.next().await?.unwrap().downcast::<u32>()?;
+        let next = event.call_next().await?.unwrap().downcast::<u32>()?;
         Ok(Some(Value::new(value + *next)))
     })?;
     root.on_async("sum", |event| async move {
         let value = *event.arg::<u32>(0)?.unwrap();
-        let next = event.next().await?.unwrap().downcast::<u32>()?;
+        let next = event.call_next().await?.unwrap().downcast::<u32>()?;
         Ok(Some(Value::new(value + *next)))
     })?;
     let result = block_on(
@@ -274,7 +274,7 @@ fn sync_waterfall_composes_listeners_around_sync_inner() -> Result<()> {
             async move {
                 calls.fetch_add(1, Ordering::SeqCst);
                 let value = *event.arg::<u32>(0)?.unwrap();
-                let next = event.next().await?.unwrap().downcast::<u32>()?;
+                let next = event.call_next().await?.unwrap().downcast::<u32>()?;
                 Ok(Some(Value::new(value + *next)))
             }
         })?;
@@ -288,5 +288,50 @@ fn sync_waterfall_composes_listeners_around_sync_inner() -> Result<()> {
         .downcast::<u32>()?;
     assert_eq!(*result, 4);
     assert_eq!(calls.load(Ordering::SeqCst), 2);
+    Ok(())
+}
+
+#[test]
+fn on_async_with_prepends_and_context_waterfall_async() -> Result<()> {
+    let root = Context::new();
+    let order = Arc::new(Mutex::new(Vec::new()));
+
+    let regular = order.clone();
+    root.on_async("hook", move |_| {
+        let regular = regular.clone();
+        async move {
+            regular.lock().unwrap().push(1);
+            Ok(None)
+        }
+    })?;
+    let prepended = order.clone();
+    root.on_async_with(
+        "hook",
+        move |_| {
+            let prepended = prepended.clone();
+            async move {
+                prepended.lock().unwrap().push(0);
+                Ok(None)
+            }
+        },
+        EventOptions {
+            prepend: true,
+            global: false,
+        },
+    )?;
+    root.emit("hook", [])?;
+    assert_eq!(*order.lock().unwrap(), vec![0, 1]);
+
+    root.on_async("sum", |event| async move {
+        let value = *event.arg::<u32>(0)?.unwrap();
+        let next = event.call_next().await?.unwrap().downcast::<u32>()?;
+        Ok(Some(Value::new(value + *next)))
+    })?;
+    let result = block_on(root.waterfall_async("sum", [Value::new(1_u32)], || async {
+        Ok(Some(Value::new(2_u32)))
+    }))?
+    .unwrap()
+    .downcast::<u32>()?;
+    assert_eq!(*result, 3);
     Ok(())
 }

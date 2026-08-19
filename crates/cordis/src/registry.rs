@@ -251,6 +251,9 @@ impl Debug for PluginHandle {
 }
 
 /// Conversion accepted by [`Context::plugin`](crate::Context::plugin).
+///
+/// Implemented for every [`Plugin`] (wrapping it in a fresh
+/// [`PluginHandle`]) and for [`PluginHandle`] itself (identity).
 pub trait IntoPlugin {
     /// Produce a stable plugin handle.
     fn into_plugin(self) -> PluginHandle;
@@ -259,6 +262,12 @@ pub trait IntoPlugin {
 impl IntoPlugin for PluginHandle {
     fn into_plugin(self) -> PluginHandle {
         self
+    }
+}
+
+impl<T: Plugin> IntoPlugin for T {
+    fn into_plugin(self) -> PluginHandle {
+        PluginHandle::new(self)
     }
 }
 
@@ -508,7 +517,7 @@ impl RegistryService {
     /// Like [`contains`](Self::contains), dead weak references are pruned
     /// and a runtime whose fibers were all dropped without `dispose()` is
     /// removed, so it disappears from later [`len`](Self::len) counts too.
-    pub fn values(&self) -> Vec<RuntimeInfo> {
+    pub fn runtimes(&self) -> Vec<RuntimeInfo> {
         let mut state = lock(&self.ctx.root.registry.state);
         prune_runtimes(&mut state);
         state
@@ -625,7 +634,7 @@ mod tests {
             );
         }
         assert_eq!(root.registry().len(), 0, "len prunes empty runtimes");
-        assert!(root.registry().values().is_empty());
+        assert!(root.registry().runtimes().is_empty());
         assert!(!root.registry().contains(&handle));
     }
 }

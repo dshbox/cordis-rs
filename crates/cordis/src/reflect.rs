@@ -244,17 +244,42 @@ impl ReflectService {
     }
 
     /// Read and downcast a service.
-    pub fn get<T>(&self, name: &str, strict: bool) -> Result<Option<Arc<T>>>
+    ///
+    /// The strict path: the read fails while the service's provider is
+    /// loading or unloading. See [`get_relaxed`](Self::get_relaxed) for the
+    /// tolerant variant.
+    pub fn get<T>(&self, name: &str) -> Result<Option<Arc<T>>>
     where
         T: Send + Sync + 'static,
     {
-        self.get_value(name, strict)?
+        self.get_value(name)?
             .map(|value| value.downcast())
             .transpose()
     }
 
-    /// Read a type-erased service or accessor result.
-    pub fn get_value(&self, name: &str, strict: bool) -> Result<Option<Value>> {
+    /// Read and downcast a service even while its provider is loading or
+    /// unloading.
+    pub fn get_relaxed<T>(&self, name: &str) -> Result<Option<Arc<T>>>
+    where
+        T: Send + Sync + 'static,
+    {
+        self.get_value_relaxed(name)?
+            .map(|value| value.downcast())
+            .transpose()
+    }
+
+    /// Read a type-erased service or accessor result, strict variant.
+    pub fn get_value(&self, name: &str) -> Result<Option<Value>> {
+        self.read(name, true)
+    }
+
+    /// Read a type-erased service or accessor result even while its provider
+    /// is loading or unloading.
+    pub fn get_value_relaxed(&self, name: &str) -> Result<Option<Value>> {
+        self.read(name, false)
+    }
+
+    fn read(&self, name: &str, strict: bool) -> Result<Option<Value>> {
         self.ctx.root.reflect.value(&self.ctx, name, strict)
     }
 
@@ -263,7 +288,7 @@ impl ReflectService {
     where
         T: Send + Sync + 'static,
     {
-        let value = self.get_value(name, true)?.ok_or_else(|| {
+        let value = self.get_value(name)?.ok_or_else(|| {
             CordisError::with_message(
                 ErrorCode::MissingService,
                 format!("required service \"{name}\" is unavailable"),
@@ -280,7 +305,7 @@ impl ReflectService {
         check: Option<AvailabilityCheck>,
     ) -> Result<EffectHandle> {
         let fiber = self.ctx.fiber()?;
-        fiber.assert_active()?;
+        fiber.ensure_active()?;
         let uid = fiber
             .uid()
             .ok_or_else(|| CordisError::new(ErrorCode::InactiveEffect))?;
@@ -509,7 +534,7 @@ impl ReflectService {
         self.accessor(
             alias,
             Accessor::read_write(
-                move |ctx| ctx.reflect().get_value(&getter_target, true),
+                move |ctx| ctx.reflect().get_value(&getter_target),
                 move |ctx, value| ctx.reflect().set_value(&setter_target, value),
             ),
         )

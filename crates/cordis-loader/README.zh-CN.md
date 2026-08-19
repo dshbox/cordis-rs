@@ -120,7 +120,7 @@ let loader = Loader::open(
 assert!(!path.exists(), "boot touched the draft");
 
 // 重组合：完整 diff → stop → patch → start，不写回。
-let diff = loader.update(Document::with_entries(vec![
+let diff = loader.recompose(Document::with_entries(vec![
     EntryOptions::new("worker").with_id("w1").with_config(
         [("port".to_string(), Node::Int(8080))].into_iter().collect(),
     ),

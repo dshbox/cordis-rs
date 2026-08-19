@@ -17,7 +17,7 @@ pub struct RemovedEntry {
     pub path: String,
 }
 
-/// What changed in one [`EntryTree::update`] pass.
+/// What changed in one [`EntryTree::reconcile`] pass.
 ///
 /// The loader consumes this to start/stop/patch fibers without touching
 /// entries whose id, options, and position are unchanged.
@@ -136,7 +136,7 @@ impl EntryTree {
     ) -> Result<Entry> {
         let _guard = crate::lock(&self.mutation);
         let parent = parent.unwrap_or(&self.root);
-        self.assert_owned(parent)?;
+        self.ensure_owned(parent)?;
         if options.name.is_empty() {
             return Err(IncludeError::InvalidName);
         }
@@ -181,12 +181,12 @@ impl EntryTree {
         Ok(entry)
     }
 
-    /// Update one entry's options and optionally move it below
+    /// Reconcile one entry's options and optionally move it below
     /// `new_parent` (appended unless `position` is given). The entry id is
-    /// identity and survives the update; `options.id` is ignored.
+    /// identity and survives the reconcile; `options.id` is ignored.
     /// `options.group` re-syncs the entry's children, reusing existing
     /// subtree entries whose ids match.
-    pub fn update_entry(
+    pub fn reconcile_entry(
         &self,
         id: &str,
         options: EntryOptions,
@@ -202,7 +202,7 @@ impl EntryTree {
             .ok_or_else(|| IncludeError::EntryNotFound { id: id.to_owned() })?;
         let parent = match new_parent {
             Some(parent) => {
-                self.assert_owned(parent)?;
+                self.ensure_owned(parent)?;
                 if entry.contains(parent) {
                     return Err(IncludeError::Cycle);
                 }
@@ -254,14 +254,14 @@ impl EntryTree {
         Ok(entry)
     }
 
-    /// Reload the whole tree from new options, reusing existing entries
+    /// Reconcile the whole tree with new options, reusing existing entries
     /// wherever ids match — including entries that moved between groups —
     /// and returning what changed.
     ///
     /// Entries in the new data without an id cannot be matched and are
     /// always created fresh; persist generated ids by writing
     /// [`EntryTree::serialize`] back to the file.
-    pub fn update(&self, entries: Vec<EntryOptions>) -> Result<TreeDiff> {
+    pub fn reconcile(&self, entries: Vec<EntryOptions>) -> Result<TreeDiff> {
         let _guard = crate::lock(&self.mutation);
         // Existing ids are reusable here, so nothing is reserved; only
         // duplicates within the incoming data are rejected.
@@ -300,7 +300,7 @@ impl EntryTree {
     }
 
     /// Fail unless `candidate` is the root of, or lives inside, this tree.
-    fn assert_owned(&self, candidate: &Entry) -> Result<()> {
+    fn ensure_owned(&self, candidate: &Entry) -> Result<()> {
         let mut current = candidate.clone();
         loop {
             if Entry::ptr_eq(&current, &self.root) {

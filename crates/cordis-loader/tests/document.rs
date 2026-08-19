@@ -1,5 +1,5 @@
 //! Document-backed composition sources: `LoaderConfig::with_document` and
-//! `Loader::update` — boot from an in-memory document whose entry file is
+//! `Loader::recompose` — boot from an in-memory document whose entry file is
 //! only ever a write-back draft, and the in-memory recomposition primitive.
 
 use cordis::{Context, Fiber, Inject, PluginHandle, PluginOutput, plugin_sync};
@@ -202,7 +202,7 @@ fn update_reconciles_without_write_back() {
     // created, the g/w1 subtree removed. The id-less row makes the pass
     // dirty, but a recomposition is not a file edit — nothing is written.
     let diff = loader
-        .update(Document::with_entries(vec![
+        .recompose(Document::with_entries(vec![
             EntryOptions::new("worker")
                 .with_id("w2")
                 .with_config(Node::from_iter([("port".to_string(), Node::Int(2))])),
@@ -260,7 +260,7 @@ fn update_replaces_the_composition_source_for_later_reloads() {
     // update() makes the document the composition source: a later reload
     // recomposes from it instead of re-reading the file (which still says w1).
     loader
-        .update(Document::with_entries(vec![
+        .recompose(Document::with_entries(vec![
             EntryOptions::new("worker").with_id("w2"),
         ]))
         .unwrap();
@@ -292,7 +292,7 @@ fn update_mounts_import_rows() {
 
     // A composition can insert an import row; its file mounts as a subtree.
     loader
-        .update(Document::with_entries(vec![
+        .recompose(Document::with_entries(vec![
             EntryOptions::new("worker").with_id("m1"),
             EntryOptions::new("import")
                 .with_id("imp")
@@ -406,7 +406,7 @@ fn recomposition_drops_a_self_kill_disable_written_to_the_draft() {
     // A fresh recomposition deliberately drops the disable: the patch
     // composition tree is short-lived, and the draft is never an input.
     loader
-        .update(Document::with_entries(vec![
+        .recompose(Document::with_entries(vec![
             EntryOptions::new("victim").with_id("v1"),
         ]))
         .unwrap();

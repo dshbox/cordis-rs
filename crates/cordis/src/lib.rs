@@ -30,6 +30,29 @@
 //! assert_eq!(counter.load(Ordering::SeqCst), 1);
 //! fiber.dispose().unwrap();
 //! ```
+//!
+//! # Naming vocabulary
+//!
+//! The API keeps upstream Cordis verbs (`emit`, `bail`, `waterfall`,
+//! `serial`, `parallel`, `on`, `once`, `provide`, `get`, `set`, `inject`,
+//! `isolate`, `intercept`, `effect`, `plugin`, `accessor`, `require`,
+//! `notify`) and renames them only when a Rust convention conflicts
+//! strongly (e.g. `Event::call_next` instead of upstream's `next()`, which
+//! collides with [`Iterator::next`]). The
+//! suffix/prefix conventions:
+//!
+//! - `*_value` — type-erased (`Value`/`Config`) variant; `resolved_*` —
+//!   evaluated (as opposed to static) result; `with_*` — builder or
+//!   "with extra parameter" variant; `*Service` — context-bound service
+//!   facade.
+//! - `is_`/`has_` — predicates; `assert_` — panics (fallible checks are
+//!   `ensure_`, e.g. [`Fiber::ensure_active`]); `*_unchecked` is reserved
+//!   for genuinely `unsafe` APIs (this crate has none).
+//! - `as_` — cheap borrow; `to_` — expensive copy; `into_` — ownership
+//!   transfer.
+//! - `_async` suffixes mark genuinely suspending functions. The one
+//!   exception is [`Fiber::dispose_async`], kept for upstream parity with
+//!   `disposeAsync`: it is a synchronous pass-through that never yields.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
@@ -61,8 +84,8 @@ pub use events::{
 };
 pub use fiber::{Fiber, FiberState};
 pub use logger::{
-    C16, C256, Exporter, ExporterConfig, FormatterFn, LogArg, Logger, LoggerIntercept, LoggerLevel,
-    LoggerService, LoggerType, Message, color_code, default_format,
+    ANSI16_PALETTE, ANSI256_PALETTE, Exporter, ExporterConfig, FormatterFn, LogArg, LogKind,
+    Logger, LoggerIntercept, LoggerLevel, LoggerService, Message, color_code, default_format,
 };
 pub use reflect::{Accessor, Property, ReflectService, ServiceInfo};
 pub use registry::{

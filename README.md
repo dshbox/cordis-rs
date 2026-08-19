@@ -227,7 +227,7 @@ Dispatch modes:
 - `parallel`: poll every listener concurrently and aggregate errors.
 - `serial`: await in order and stop on the first bail value.
 - `bail`: synchronous ordered bail.
-- `waterfall` / `waterfall_async`: each listener receives `event.next()` and may wrap or veto the rest of the chain.
+- `waterfall` / `waterfall_async`: each listener receives `event.call_next()` and may wrap or veto the rest of the chain.
 
 ## Reflection
 
@@ -266,7 +266,7 @@ let root = Context::new();
 let mut config = ExporterConfig::default();
 config.levels.insert("default".into(), LoggerLevel::Debug);
 let render = config.clone();
-let _exporter = root.logger_service().exporter_fn(config, move |message| {
+let _exporter = root.logger_service().exporter_with(config, move |message| {
     println!("{}", default_format(&render, message));
 })?;
 
@@ -305,7 +305,7 @@ Override `validate_config()` to normalize config or return `CordisError::validat
 
 ## Runtime notes
 
-The original TypeScript implementation schedules lifecycle work through promises. This crate deliberately reconciles lifecycle transitions eagerly: `provide`, effect disposal, `restart`, and `update` return after affected fibers settle. This makes behavior deterministic without requiring Tokio or another executor. `Fiber::await_ready`, async event modes, async plugins, and async disposers remain available; `await_ready` and `dispose_async` are synchronous pass-throughs that never yield — awaiting them blocks the calling thread for the duration.
+The original TypeScript implementation schedules lifecycle work through promises. This crate deliberately reconciles lifecycle transitions eagerly: `provide`, effect disposal, `restart`, and `update` return after affected fibers settle. This makes behavior deterministic without requiring Tokio or another executor. async event modes, async plugins, and async disposers remain available; `dispose_async` is a synchronous pass-through that never yields — awaiting them blocks the calling thread for the duration.
 
 Executor-independent futures work everywhere. If a future creates runtime-specific resources (for example `tokio::time::sleep`), call Cordis while that runtime is entered.
 

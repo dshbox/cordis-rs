@@ -124,7 +124,7 @@ let loader = Loader::open(
 assert!(!path.exists(), "boot touched the draft");
 
 // Recomposition: full diff → stop → patch → start, no write-back.
-let diff = loader.update(Document::with_entries(vec![
+let diff = loader.recompose(Document::with_entries(vec![
     EntryOptions::new("worker").with_id("w1").with_config(
         [("port".to_string(), Node::Int(8080))].into_iter().collect(),
     ),

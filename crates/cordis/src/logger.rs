@@ -9,9 +9,12 @@ use std::fmt::{self, Debug, Formatter};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// Logger severity/method name.
+/// Logger severity/method name (`error`/`info`/`warn`/`debug`).
+///
+/// Upstream Cordis types this as `LoggerType` with a `type` message field;
+/// the Rust port names the field `kind`, and the type follows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum LoggerType {
+pub enum LogKind {
     /// Error message.
     Error,
     /// Informational message.
@@ -36,7 +39,7 @@ pub enum LoggerLevel {
     Debug = 3,
 }
 
-impl LoggerType {
+impl LogKind {
     fn level(self) -> LoggerLevel {
         match self {
             Self::Error => LoggerLevel::Error,
@@ -164,7 +167,7 @@ pub struct Message {
     /// Logger name.
     pub name: String,
     /// Severity category.
-    pub kind: LoggerType,
+    pub kind: LogKind,
     /// Numeric severity.
     pub level: LoggerLevel,
     /// Printf-style format plus values.
@@ -182,8 +185,9 @@ pub type FormatterFn =
 /// Exporter formatting and level configuration.
 #[derive(Clone)]
 pub struct ExporterConfig {
-    /// ANSI color capability (`0` disables, `2+` enables decorations).
-    pub colors: u8,
+    /// ANSI color depth: `0` disables color, `1` selects the 16-color
+    /// palette, `2+` the 256-color palette.
+    pub color_depth: u8,
     /// Maximum Unicode scalar count for each rendered line.
     pub max_length: usize,
     /// Logger-specific thresholds. The `default` key is the fallback.
@@ -195,7 +199,7 @@ pub struct ExporterConfig {
 impl Default for ExporterConfig {
     fn default() -> Self {
         Self {
-            colors: 0,
+            color_depth: 0,
             max_length: 10_240,
             levels: HashMap::new(),
             formatters: HashMap::new(),
@@ -206,7 +210,7 @@ impl Default for ExporterConfig {
 impl Debug for ExporterConfig {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.debug_struct("ExporterConfig")
-            .field("colors", &self.colors)
+            .field("color_depth", &self.color_depth)
             .field("max_length", &self.max_length)
             .field("levels", &self.levels)
             .field("formatters", &self.formatters.keys().collect::<Vec<_>>())
@@ -301,7 +305,7 @@ impl LoggerRoot {
     /// bail out before assembling arguments. Per-exporter thresholds may
     /// still drop the record later; this only rules out records nobody
     /// could ever see.
-    fn enabled(&self, default_level: Option<LoggerLevel>, kind: LoggerType) -> bool {
+    fn enabled(&self, default_level: Option<LoggerLevel>, kind: LogKind) -> bool {
         let state = lock(&self.state);
         let buffered =
             state.buffer_size > 0 && default_level.unwrap_or(LoggerLevel::Info) >= kind.level();
@@ -312,7 +316,7 @@ impl LoggerRoot {
         &self,
         name: String,
         default_level: Option<LoggerLevel>,
-        kind: LoggerType,
+        kind: LogKind,
         args: Vec<LogArg>,
         fiber_uid: Option<u64>,
         fiber_name: String,
@@ -370,9 +374,9 @@ impl LoggerRoot {
 }
 
 /// ANSI 16-color palette indexes used for logger name coloring.
-pub const C16: &[u8] = &[6, 2, 3, 4, 5, 1];
+pub const ANSI16_PALETTE: &[u8] = &[6, 2, 3, 4, 5, 1];
 /// ANSI 256-color palette indexes used for logger name coloring.
-pub const C256: &[u8] = &[
+pub const ANSI256_PALETTE: &[u8] = &[
     20, 21, 26, 27, 32, 33, 38, 39, 40, 41, 42, 43, 44, 45, 56, 57, 62, 63, 68, 69, 74, 75, 76, 77,
     78, 79, 80, 81, 92, 93, 98, 99, 112, 113, 129, 134, 135, 148, 149, 160, 161, 162, 163, 164,
     165, 166, 167, 168, 169, 170, 171, 172, 173, 178, 179, 184, 185, 196, 197, 198, 199, 200, 201,
@@ -380,7 +384,10 @@ pub const C256: &[u8] = &[
 ];
 
 /// Stable logger-name color hash.
-pub fn color_code(name: &str, colors: u8) -> u8 {
+///
+/// `color_depth` is the ANSI capability level: `0` disables color, `1`
+/// selects the 16-color palette, `2+` the 256-color palette.
+pub fn color_code(name: &str, color_depth: u8) -> u8 {
     let mut hash: i32 = 0;
     for byte in name.bytes() {
         hash = hash
@@ -389,18 +396,18 @@ pub fn color_code(name: &str, colors: u8) -> u8 {
             .wrapping_add(i32::from(byte))
             .wrapping_add(13);
     }
-    let palette = if colors == 0 {
+    let palette = if color_depth == 0 {
         return 0;
-    } else if colors >= 2 {
-        C256
+    } else if color_depth >= 2 {
+        ANSI256_PALETTE
     } else {
-        C16
+        ANSI16_PALETTE
     };
     palette[(hash.unsigned_abs() as usize) % palette.len()]
 }
 
 fn color(config: &ExporterConfig, code: u8, value: String) -> String {
-    if config.colors == 0 {
+    if config.color_depth == 0 {
         value
     } else if code < 8 {
         format!("\u{001b}[3{code}m{value}\u{001b}[0m")
@@ -459,7 +466,7 @@ pub fn default_format(config: &ExporterConfig, message: &Message) -> String {
             'c' => Some(String::new()),
             'C' => Some(color(
                 config,
-                color_code(&message.name, config.colors),
+                color_code(&message.name, config.color_depth),
                 value.string(),
             )),
             _ => None,
@@ -506,7 +513,7 @@ pub struct Logger {
 }
 
 impl Logger {
-    fn write(&self, kind: LoggerType, format: impl Into<String>, args: Vec<LogArg>) {
+    fn write(&self, kind: LogKind, format: impl Into<String>, args: Vec<LogArg>) {
         // Fast path: when neither the bounded buffer nor any exporter would
         // consume this record, skip the argument assembly and fiber-name
         // resolution entirely — the level check inside send() would only
@@ -532,22 +539,22 @@ impl Logger {
 
     /// Log an error.
     pub fn error(&self, format: impl Into<String>, args: impl IntoIterator<Item = LogArg>) {
-        self.write(LoggerType::Error, format, args.into_iter().collect());
+        self.write(LogKind::Error, format, args.into_iter().collect());
     }
 
     /// Log an informational message.
     pub fn info(&self, format: impl Into<String>, args: impl IntoIterator<Item = LogArg>) {
-        self.write(LoggerType::Info, format, args.into_iter().collect());
+        self.write(LogKind::Info, format, args.into_iter().collect());
     }
 
     /// Log a warning.
     pub fn warn(&self, format: impl Into<String>, args: impl IntoIterator<Item = LogArg>) {
-        self.write(LoggerType::Warn, format, args.into_iter().collect());
+        self.write(LogKind::Warn, format, args.into_iter().collect());
     }
 
     /// Log a debug message.
     pub fn debug(&self, format: impl Into<String>, args: impl IntoIterator<Item = LogArg>) {
-        self.write(LoggerType::Debug, format, args.into_iter().collect());
+        self.write(LogKind::Debug, format, args.into_iter().collect());
     }
 }
 
@@ -606,8 +613,8 @@ impl LoggerService {
         self.exporter_arc(Arc::new(exporter))
     }
 
-    /// Register an exporter callback with explicit config.
-    pub fn exporter_fn<F>(&self, config: ExporterConfig, callback: F) -> Result<EffectHandle>
+    /// Register an exporter callback with an explicit config.
+    pub fn exporter_with<F>(&self, config: ExporterConfig, callback: F) -> Result<EffectHandle>
     where
         F: Fn(&Message) + Send + Sync + 'static,
     {
@@ -737,7 +744,7 @@ mod tests {
         logger.error("kept %d", [LogArg::Integer(2)]);
         let buffer = service.buffer();
         assert_eq!(buffer.len(), 1);
-        assert_eq!(buffer[0].kind, LoggerType::Error);
+        assert_eq!(buffer[0].kind, LogKind::Error);
         assert!(matches!(
             &buffer[0].args[0],
             LogArg::String(text) if text == "kept %d"

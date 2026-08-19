@@ -29,7 +29,7 @@
 //!   unreadable main file fails the operation instead of silently booting
 //!   an empty tree (import files keep a tolerant record-and-skip path).
 //! - **Document sources** ([`LoaderConfig::with_document`],
-//!   [`Loader::update`]): compose from an in-memory document instead of the
+//!   [`Loader::recompose`]): compose from an in-memory document instead of the
 //!   entry file. Boot then never reads or writes the file — concurrent
 //!   boots on one shared draft cannot race, and the directory may stay
 //!   read-only — while reloads recompose from the stored document (import

@@ -272,8 +272,8 @@ impl Fiber {
         lock(&self.inner.data).error.clone()
     }
 
-    /// Throw when the fiber has already been disposed.
-    pub fn assert_active(&self) -> Result<()> {
+    /// Return an error when the fiber has already been disposed.
+    pub fn ensure_active(&self) -> Result<()> {
         if self.uid().is_none() || self.state() == FiberState::Disposed {
             Err(CordisError::new(ErrorCode::InactiveEffect))
         } else {
@@ -294,7 +294,7 @@ impl Fiber {
         label: impl Into<String>,
         disposer: AsyncDisposer,
     ) -> Result<EffectHandle> {
-        self.assert_active()?;
+        self.ensure_active()?;
         if self.state() == FiberState::Unloading {
             return Err(CordisError::new(ErrorCode::InactiveEffect));
         }
@@ -704,15 +704,15 @@ impl Fiber {
     /// The wait honors the same ceiling as `restart`/`dispose` (currently
     /// ten seconds): a transition held longer — a hung `apply` or disposer
     /// on another thread — surfaces as a logged error naming the fiber
-    /// instead of blocking the caller forever. `await_idle` has no result
+    /// instead of blocking the caller forever. `wait_idle` has no result
     /// channel, so the log is where the timeout lands.
     ///
     /// Never call this from a lifecycle callback (status listener, disposer,
     /// plugin apply) on the same fiber: the transition mutex is held while
     /// those run, so the call stalls the callback for the full bound before
-    /// logging the timeout. Probe [`idle`](Self::idle) from callbacks
+    /// logging the timeout. Probe [`is_idle`](Self::is_idle) from callbacks
     /// instead.
-    pub fn await_idle(&self) {
+    pub fn wait_idle(&self) {
         {
             let Some(_guard) = self.acquire_transition() else {
                 let error = self.transition_timeout_error();
@@ -733,26 +733,16 @@ impl Fiber {
 
     /// Whether no lifecycle transition is in progress on this fiber.
     ///
-    /// The non-blocking counterpart of [`await_idle`](Self::await_idle):
+    /// The non-blocking counterpart of [`wait_idle`](Self::wait_idle):
     /// lifecycle callbacks and plugin `apply` run on the fiber's own thread
-    /// with the transition mutex held, so they can probe `idle()` safely but
-    /// must never block on `await_idle`. This is a pure probe — it does not
-    /// drain the dirty flag or trigger a reconcile.
-    pub fn idle(&self) -> bool {
+    /// with the transition mutex held, so they can probe `is_idle()` safely
+    /// but must never block on `wait_idle`. This is a pure probe — it does
+    /// not drain the dirty flag or trigger a reconcile.
+    pub fn is_idle(&self) -> bool {
         matches!(
             self.inner.transition.try_lock(),
             Ok(_) | Err(std::sync::TryLockError::Poisoned(_))
         )
-    }
-
-    /// Async equivalent of [`try_wait`](Self::try_wait).
-    ///
-    /// **This never suspends.** It is a synchronous poll despite the
-    /// `async` signature — the eager lifecycle model means there is nothing
-    /// to wait for — so awaiting it runs to completion without ever
-    /// yielding to the executor.
-    pub async fn await_ready(&self) -> Result<Fiber> {
-        self.try_wait()
     }
 
     /// Dispose and immediately reload this plugin with its current config.
@@ -771,7 +761,7 @@ impl Fiber {
     /// other concurrently both time out rather than complete. Trigger
     /// cross-fiber lifecycle operations from a plain thread instead.
     pub fn restart(&self) -> Result<()> {
-        self.assert_active()?;
+        self.ensure_active()?;
         if self.inner.plugin.is_none() {
             return Err(CordisError::with_message(
                 ErrorCode::Other,
@@ -812,7 +802,7 @@ impl Fiber {
 
     /// Type-erased variant of [`update`](Self::update).
     pub fn update_value(&self, config: Config) -> Result<()> {
-        self.assert_active()?;
+        self.ensure_active()?;
         let Some(plugin) = self.inner.plugin.as_ref() else {
             return Err(CordisError::with_message(
                 ErrorCode::Other,
@@ -972,14 +962,14 @@ mod tests {
             let observed = observed.clone();
             move |ctx, _| {
                 // apply() runs inside the fiber's own transition: the probe
-                // must report busy where await_idle would deadlock.
-                lock(&observed).push(ctx.fiber()?.idle());
+                // must report busy where wait_idle would deadlock.
+                lock(&observed).push(ctx.fiber()?.is_idle());
                 Ok(PluginOutput::none())
             }
         }));
         fiber.try_wait().unwrap();
         assert_eq!(*lock(&observed), vec![false]);
-        assert!(fiber.idle());
+        assert!(fiber.is_idle());
     }
 
     /// Regression: a notification landing between refresh()'s final
@@ -1084,13 +1074,13 @@ mod tests {
         provider.join().unwrap().unwrap();
     }
 
-    /// Regression (review 2026-08-19, REV-03): `await_idle` used an
+    /// Regression (review 2026-08-19, REV-03): `wait_idle` used an
     /// unbounded blocking lock on the transition mutex; with a hung apply
     /// holding it, the caller parked forever. It must honor the same wait
     /// ceiling as `restart`/`dispose` and return (logging the timeout)
     /// instead.
     #[test]
-    fn await_idle_times_out_when_apply_hangs() {
+    fn wait_idle_times_out_when_apply_hangs() {
         let root = Context::new();
         let (tx, rx) = std::sync::mpsc::channel::<()>();
         // mpsc receivers are not Sync; the mutex makes the callback shareable
@@ -1120,13 +1110,13 @@ mod tests {
 
         TRANSITION_WAIT_MILLIS.store(150, Ordering::Relaxed);
         let started = Instant::now();
-        fiber.await_idle();
+        fiber.wait_idle();
         let elapsed = started.elapsed();
         TRANSITION_WAIT_MILLIS.store(0, Ordering::Relaxed);
 
         assert!(
             elapsed >= Duration::from_millis(150) && elapsed < Duration::from_secs(5),
-            "await_idle returned in {elapsed:?} instead of timing out at the bound"
+            "wait_idle returned in {elapsed:?} instead of timing out at the bound"
         );
 
         // Let the parked apply finish so the helper thread can join.

@@ -120,7 +120,7 @@ fn unknown_top_level_keys_are_preserved() {
 
     // A tree reload keeps the extras while entries churn.
     let tree = EntryTree::new();
-    tree.update(document.entries.clone()).unwrap();
+    tree.reconcile(document.entries.clone()).unwrap();
     document.entries = tree.serialize();
     file.write(&document).unwrap();
     let reread = file.read().unwrap();
@@ -214,7 +214,7 @@ fn interpolation_expands_on_read_but_preserves_the_file() {
 
     let file = LoaderFile::open(&path).unwrap();
     let tree = EntryTree::new();
-    tree.update(file.read().unwrap().entries).unwrap();
+    tree.reconcile(file.read().unwrap().entries).unwrap();
     let entry = tree.resolve("k").unwrap();
 
     // Raw config keeps the template; resolved config substitutes it.
