@@ -1,6 +1,6 @@
 [package]
 name = "cordis-group"
-version = "0.0.13"
+version = "0.0.14"
 description = "Nested plugin groups with cascading disable for the cordis-rs plugin framework"
 keywords = ["cordis", "plugin", "group", "lifecycle"]
 categories = ["rust-patterns"]

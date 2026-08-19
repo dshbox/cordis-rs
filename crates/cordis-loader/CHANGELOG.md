@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.20](https://github.com/dshbox/cordis-rs/compare/cordis-loader-v0.0.19...cordis-loader-v0.0.20) - 2026-08-19
+
+### Fixed
+
+- address all seven findings from the 2026-08-19 code review (REV-01 .. REV-07) ([#62](https://github.com/dshbox/cordis-rs/pull/62))
+
 ## [0.0.19](https://github.com/dshbox/cordis-rs/compare/cordis-loader-v0.0.18...cordis-loader-v0.0.19) - 2026-08-18
 
 ### Other
