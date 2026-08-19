@@ -1,12 +1,13 @@
-//! Regression tests for the review findings on loader races and
-//! self-kill persistence (issues #30, #33, #39).
+//! Regression tests for review findings: loader races and self-kill
+//! persistence (issues #30, #33, #39) and the 2026-08-19 review
+//! (REV-20260819-01/-02/-05).
 
 use cordis::utils::BoxFuture;
 use cordis::{
-    Config, Context, CordisError, ErrorCode, Inject, Plugin, PluginHandle, PluginOutput, Result,
-    plugin_sync,
+    Config, Context, CordisError, ErrorCode, FiberState, Inject, Plugin, PluginHandle,
+    PluginOutput, Result, plugin_sync,
 };
-use cordis_include::{Document, EntryOptions, Node};
+use cordis_include::{Document, Entry, EntryOptions, Node};
 use cordis_loader::{Loader, LoaderConfig, PluginRegistry};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -269,6 +270,172 @@ fn self_kill_persistence_leaves_the_transition_snappy() {
         );
         std::thread::sleep(Duration::from_millis(20));
     }
+    loader.dispose().unwrap();
+    cleanup(&path);
+}
+
+/// A registry with one no-op `worker` plugin, shared by the tests below.
+fn worker_registry() -> PluginRegistry {
+    let mut registry = PluginRegistry::new();
+    registry.register("worker", || {
+        plugin_sync::<Node, _>("worker", Inject::default(), |_, _| Ok(PluginOutput::none()))
+    });
+    registry
+}
+
+/// Regression (review 2026-08-19, REV-01): a reload moving a top-level
+/// entry into a group used to clear the entry's parent link, so its fiber
+/// restarted under the ROOT context — disposing the group no longer
+/// cascaded to the moved child, and group isolation/intercept were lost.
+#[test]
+fn reload_moving_entry_into_group_keeps_cascade_dispose() {
+    let path = temp_path("move-cascade");
+    let root = Context::new();
+    let loader = Loader::open(
+        &root,
+        LoaderConfig::new(&path)
+            .with_registry(worker_registry())
+            .with_initial(Document::with_entries(vec![
+                EntryOptions::new("worker").with_id("w1"),
+            ])),
+    )
+    .unwrap();
+    let worker = loader.tree().resolve("w1").unwrap();
+    worker.fiber().unwrap().try_wait().unwrap();
+
+    // External edit: the top-level worker moves into a new group.
+    std::fs::write(
+        &path,
+        "entries:\n  - id: g\n    name: group\n    group:\n      - id: w1\n        name: worker\n",
+    )
+    .unwrap();
+    let diff = loader.reload().unwrap();
+    assert!(diff.moved.iter().any(|entry| entry.id() == "w1"));
+
+    let group = loader.tree().resolve("g").unwrap();
+    let moved = loader.tree().resolve("g:w1").unwrap();
+    assert_eq!(moved.path(), "g:w1");
+    assert!(
+        moved
+            .parent()
+            .is_some_and(|parent| Entry::ptr_eq(&parent, &group)),
+        "the moved entry stays linked to its group"
+    );
+    moved.fiber().unwrap().try_wait().unwrap();
+
+    // The moved fiber runs under the group's context: disposing the group
+    // cascades. Before the fix it restarted under the root and stayed
+    // Active here.
+    let group_fiber = group.fiber().unwrap();
+    let moved_fiber = moved.fiber().unwrap();
+    group_fiber.dispose().unwrap();
+    assert_eq!(
+        moved_fiber.state(),
+        FiberState::Disposed,
+        "group disposal must cascade to the moved child"
+    );
+
+    loader.dispose().unwrap();
+    cleanup(&path);
+}
+
+/// Regression (review 2026-08-19, REV-02): the reload dirty check only
+/// looked at top-level rows, so ids generated for id-less entries nested
+/// inside groups were never written back — every reload destroyed and
+/// recreated those fibers under fresh random ids.
+#[test]
+fn reload_persists_generated_ids_of_nested_entries() {
+    let path = temp_path("nested-ids");
+    let root = Context::new();
+    let loader = Loader::open(
+        &root,
+        LoaderConfig::new(&path)
+            .with_registry(worker_registry())
+            .with_initial(Document::with_entries(vec![
+                EntryOptions::new("group")
+                    .with_id("g")
+                    .with_group(vec![EntryOptions::new("worker")]),
+            ])),
+    )
+    .unwrap();
+    let worker = loader.tree().top_level()[0].children()[0].clone();
+    worker.fiber().unwrap().try_wait().unwrap();
+
+    // The first reload materializes the generated id into the file (the
+    // open-time id churns once — a no-id row can never match a pooled
+    // entry — and the write-back persists the fresh one).
+    loader.reload().unwrap();
+    let worker = loader.tree().top_level()[0].children()[0].clone();
+    let persisted = loader.file().read().unwrap().entries[0].group[0].id.clone();
+    assert_eq!(
+        persisted.as_deref(),
+        Some(worker.id()),
+        "the nested entry's generated id must land in the file"
+    );
+    worker.fiber().unwrap().try_wait().unwrap();
+    let fiber_before = worker.fiber().unwrap();
+
+    // The second reload matches by that id: no churn, same fiber.
+    let diff = loader.reload().unwrap();
+    assert!(
+        diff.created.is_empty() && diff.removed.is_empty(),
+        "second reload must not churn the nested entry: {diff:?}"
+    );
+    assert!(
+        worker
+            .fiber()
+            .is_some_and(|fiber| cordis::Fiber::ptr_eq(&fiber, &fiber_before)),
+        "the nested entry keeps its fiber across reloads"
+    );
+
+    loader.dispose().unwrap();
+    cleanup(&path);
+}
+
+/// Regression (review 2026-08-19, REV-05): `Loader::open` kept only the
+/// last compose error; with several broken imports the rest vanished
+/// silently behind fix-and-retry loops. (A merely *missing* import file
+/// composes as empty by design — the rows here exist but do not parse.)
+#[test]
+fn open_records_every_broken_import() {
+    let path = temp_path("import-errors");
+    let dir = path.parent().unwrap().to_path_buf();
+    std::fs::write(
+        dir.join("broken-a.yml"),
+        "entries:\n  - id: w1\n    name: [\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("broken-b.yml"),
+        "entries:\n  - id: w2\n    name: [\n",
+    )
+    .unwrap();
+    let url = |stem: &str| {
+        Node::from_iter([(
+            "url".to_string(),
+            dir.join(stem).to_string_lossy().into_owned().into(),
+        )])
+    };
+    let root = Context::new();
+    let loader = Loader::open(
+        &root,
+        LoaderConfig::new(&path)
+            // The import builtin resolves the marker rows.
+            .with_registry(PluginRegistry::new())
+            .with_initial(Document::with_entries(vec![
+                EntryOptions::new("import")
+                    .with_id("ia")
+                    .with_config(url("broken-a.yml")),
+                EntryOptions::new("import")
+                    .with_id("ib")
+                    .with_config(url("broken-b.yml")),
+            ])),
+    )
+    .unwrap();
+    let error = loader.last_error().expect("import failures recorded");
+    assert!(error.contains("broken-a.yml"), "{error}");
+    assert!(error.contains("broken-b.yml"), "{error}");
+
     loader.dispose().unwrap();
     cleanup(&path);
 }

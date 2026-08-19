@@ -173,7 +173,7 @@ impl Loader {
         let mut imports = HashMap::new();
         let mut errors = Vec::new();
         let document = config.document;
-        let (composed, _dirty) = match document.clone() {
+        let composed = match document.clone() {
             Some(document) => compose_entries(
                 document.entries,
                 &file,
@@ -198,7 +198,9 @@ impl Loader {
             state: Mutex::new(LoaderState {
                 entries: HashMap::new(),
                 operating: 0,
-                last_error: errors.pop(),
+                // Every import failure is joined into one message: keeping
+                // only the last one hid the rest behind fix-and-retry loops.
+                last_error: (!errors.is_empty()).then(|| errors.join("; ")),
                 _keep_alive: Vec::new(),
             }),
             operation: OperationLock::default(),
@@ -333,7 +335,7 @@ impl Loader {
         let _operation = inner.operation.guard();
         let mut imports = HashMap::new();
         let mut errors = Vec::new();
-        let (composed, dirty) = match lock(&inner.document).clone() {
+        let composed = match lock(&inner.document).clone() {
             // A document-backed loader never re-reads its root file: the
             // file is a write-back draft, and rows a write-back baked into
             // it would re-enter the composition and duplicate every insert.
@@ -363,6 +365,11 @@ impl Loader {
                 }
             },
         };
+        // Id-less rows at any depth — including entries nested inside
+        // groups — get a generated id during the tree update below; the
+        // write-back must fire for them, or every reload would regenerate
+        // a different id and churn the entry's fiber.
+        let dirty = missing_id(&composed);
         for error in errors {
             self.record_error(LoaderError::Include(
                 cordis_include::IncludeError::Message { message: error },
@@ -400,7 +407,7 @@ impl Loader {
         let _operation = inner.operation.guard();
         let mut imports = HashMap::new();
         let mut errors = Vec::new();
-        let (composed, _dirty) = compose_entries(
+        let composed = compose_entries(
             document.entries.clone(),
             &inner.file,
             &mut imports,
@@ -898,11 +905,21 @@ fn import_canonical(inner: &LoaderInner, entry: &Entry) -> PathBuf {
     std::fs::canonicalize(&path).unwrap_or(path)
 }
 
+/// Whether any entry in the list — at any nesting depth — lacks an
+/// explicit id. `EntryTree::update` generates one for each, and the file
+/// must be written back afterwards or the next reload matches nothing and
+/// churns those entries' fibers.
+fn missing_id(entries: &[EntryOptions]) -> bool {
+    entries
+        .iter()
+        .any(|options| options.id.is_none() || missing_id(&options.group))
+}
+
 /// Read `file` and recursively mount import subtrees: every `import`
 /// entry's `group` becomes the entries of the file its `url` names, so one
 /// `EntryTree::update` diffs across all files uniformly. Returns the
-/// composed top-level entries and whether any file carried entries without
-/// ids (whose generated ids need persisting).
+/// composed top-level entries (import children included, so id-less
+/// detection sees the whole tree).
 ///
 /// Reading the file passed directly to this call is not recoverable here:
 /// callers loading the main file propagate the error, while callers
@@ -914,7 +931,7 @@ fn compose(
     active: &mut HashSet<PathBuf>,
     mounted: &mut HashSet<PathBuf>,
     errors: &mut Vec<String>,
-) -> cordis_include::Result<(Vec<EntryOptions>, bool)> {
+) -> cordis_include::Result<Vec<EntryOptions>> {
     let document = file.read()?;
     Ok(compose_entries(
         document.entries,
@@ -944,9 +961,8 @@ fn compose_entries(
     active: &mut HashSet<PathBuf>,
     mounted: &mut HashSet<PathBuf>,
     errors: &mut Vec<String>,
-) -> (Vec<EntryOptions>, bool) {
+) -> Vec<EntryOptions> {
     let mut composed = Vec::with_capacity(entries.len());
-    let mut dirty = entries.iter().any(|options| options.id.is_none());
     for mut options in entries {
         if let Some(url) = options.import_url().map(str::to_owned) {
             let path = import_path(base, &url);
@@ -969,8 +985,7 @@ fn compose_entries(
             match LoaderFile::open(&path) {
                 Ok(sub_file) => {
                     match compose(&sub_file, imports, active, mounted, errors) {
-                        Ok((sub_entries, sub_dirty)) => {
-                            dirty |= sub_dirty;
+                        Ok(sub_entries) => {
                             options.group = sub_entries;
                         }
                         Err(error) => {
@@ -997,7 +1012,7 @@ fn compose_entries(
         }
         composed.push(options);
     }
-    (composed, dirty)
+    composed
 }
 
 /// Route `internal/status` disposals: a fiber that reached `Disposed`
