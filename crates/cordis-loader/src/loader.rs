@@ -269,11 +269,21 @@ impl Loader {
 
     /// Register one plugin instance by its own name; picked up by the next
     /// reload (or immediately for not-yet-started entries).
+    ///
+    /// Every entry resolving to this name shares the one registered
+    /// instance (each resolve wraps it in a fresh handle); register a
+    /// per-lookup factory with [`register`](Self::register) when entries
+    /// need independent instances.
     pub fn register_plugin<P: cordis::Plugin>(&self, plugin: P) {
         lock(&self.inner.registry).register_plugin(plugin);
     }
 
     /// Register a handle factory under a name.
+    ///
+    /// The factory runs on every resolve, so it can hand each entry an
+    /// independent [`PluginHandle`];
+    /// [`register_plugin`](Self::register_plugin) instead shares one
+    /// plugin instance across all entries using its name.
     pub fn register<F>(&self, name: impl Into<String>, factory: F)
     where
         F: Fn() -> PluginHandle + Send + Sync + 'static,
@@ -428,7 +438,11 @@ impl Loader {
     }
 
     /// Change one entry's config at runtime: the fiber is updated (and
-    /// restarted when active) and the new config is persisted to the file.
+    /// restarted when active) via `Fiber::update_value`, the tree entry is
+    /// re-committed, and the new config is persisted to the file.
+    ///
+    /// This is the loader-level entry point of the config-update family;
+    /// the fiber-level primitives are `Fiber::update`/`Fiber::update_value`.
     pub fn update_config(&self, id: &str, config: Node) -> Result<()> {
         let inner = &self.inner;
         // Same exclusion as reload(): the fiber transitions, tree commit, and

@@ -286,6 +286,11 @@ impl Context {
     }
 
     /// Return a logger named from the current fiber and intercepts.
+    ///
+    /// This is the upstream-semantics facade: a [`Logger`] to call
+    /// `error`/`info`/`warn`/`debug` on. Managing the logging machinery —
+    /// registering exporters, reading or resizing the buffer — goes through
+    /// [`logger_service`](Self::logger_service) instead.
     pub fn logger(&self) -> Logger {
         LoggerService::new(self.clone()).logger(None)
     }
@@ -296,6 +301,12 @@ impl Context {
     }
 
     /// Return the logger service bound to this context.
+    ///
+    /// The service side of the logger split: exporter registration
+    /// ([`exporter`](crate::LoggerService::exporter) and variants) plus
+    /// buffer inspection and sizing. To emit messages, create a logger with
+    /// [`logger`](Self::logger) or [`named_logger`](Self::named_logger)
+    /// instead.
     pub fn logger_service(&self) -> LoggerService {
         LoggerService::new(self.clone())
     }
@@ -363,6 +374,11 @@ impl Context {
     }
 
     /// Require a currently active service.
+    ///
+    /// Runtime resolution. The identically named
+    /// [`Inject::require`](crate::Inject::require) is the declaration-time
+    /// builder that records a dependency for startup instead of resolving
+    /// one now.
     pub fn require<T>(&self, name: &str) -> Result<Arc<T>>
     where
         T: Send + Sync + 'static,
@@ -538,7 +554,11 @@ impl Context {
             .plugin_value(plugin.into_plugin(), Config::default())
     }
 
-    /// Start an inline callback after all listed services become available.
+    /// Startup shortcut: run `callback` once every service in `inject` is
+    /// available, wrapping it in an anonymous plugin fiber.
+    ///
+    /// Not to be confused with [`Fiber::inject`](crate::Fiber::inject),
+    /// which reads back the normalized declaration of an existing fiber.
     pub fn inject<F>(&self, inject: Inject, callback: F) -> Fiber
     where
         F: Fn(Context) -> Result<PluginOutput> + Send + Sync + 'static,

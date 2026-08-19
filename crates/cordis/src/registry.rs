@@ -55,6 +55,11 @@ impl Inject {
     }
 
     /// Add a required service without intercept config.
+    ///
+    /// Declaration-time: this records a dependency that must be active
+    /// before the plugin starts. The identically named
+    /// [`Context::require`](crate::Context::require) resolves a service at
+    /// runtime instead.
     pub fn require(mut self, name: impl Into<String>) -> Self {
         self.entries.push(Dependency {
             name: name.into(),
