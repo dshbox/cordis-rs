@@ -32,14 +32,15 @@ The crate currently ports the complete **core runtime**:
 | Logger buffer/exporters/levels/formatters | corresponding logger APIs | ✅ |
 | Standard Schema validation | `Plugin::validate_config` + validation issues | ✅³ |
 | `internal/plugin`, `internal/status`, `internal/service`, `internal/dispatch` | same meta-events | ✅⁴ |
-| Intercept meta-events (`internal/get`/`set`/`config`/`update`/`listener`) | not ported | Not included |
+| Intercept meta-events (`internal/get`/`set`/`config`/`update`/`listener`) | same five interception points | ✅⁵ |
 | Decorators and callable services | explicit Rust traits/builders | Rust-native |
 | Loader / include packages | [`cordis-include`](../crates/cordis-include), [`cordis-group`](../crates/cordis-group), [`cordis-loader`](../crates/cordis-loader), [`cordis-cli`](../crates/cordis-cli) | ✅ separate crates |
 
 1. Rust cannot dynamically project arbitrary struct fields like a JavaScript Proxy, so `alias()` is the explicit counterpart to common `mixin()` usage.
 2. Rust plugin code registers multiple effects explicitly; `EffectHandle::adopt()` provides the original nested diagnostic/disposal tree.
 3. Validation is trait-based because Standard Schema is a JavaScript protocol.
-4. `internal/dispatch` carries `(mode, name, args)`; the upstream fourth `thisArg` argument is omitted. The waterfall/bail interception points used by upstream HMR and config injection (`internal/get`, `internal/set`, `internal/config`, `internal/update`, `internal/listener`) are not part of this port, so downstream code relying on them needs a different extension point.
+4. `internal/dispatch` carries `(mode, name, args)`; the upstream fourth `thisArg` argument is omitted.
+5. The five interception points used by upstream HMR and config injection are ported with Rust-native semantics: `internal/get` (waterfall around strict service reads), `internal/set` (waterfall around service writes), `internal/config` (waterfall around config resolution; the effective config is the waterfall's result), `internal/update` (waterfall around the restart an update schedules), and `internal/listener` (bail whose value cancels a registration, returning an inert handle). Arguments are immutable `Value`s — listeners wrap through `Event::call_next()` or veto by skipping it.
 
 ## Design goals
 

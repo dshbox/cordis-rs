@@ -2,3 +2,4 @@
 **/*.rs.bk
 *.profraw
 .DS_Store
+/.cargo-home/

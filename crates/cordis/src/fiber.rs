@@ -438,7 +438,9 @@ impl Fiber {
         };
         let result = match validated {
             Some(config) => Ok(config),
-            None => plugin.plugin().validate_config(raw_config),
+            None => self
+                .resolve_config(raw_config)
+                .and_then(|config| plugin.plugin().validate_config(config)),
         }
         .and_then(|config| {
             let output = block_on(plugin.plugin().apply(ctx, config.clone()))?;
@@ -788,9 +790,12 @@ impl Fiber {
     /// Validate and apply new config, then restart when dependencies are
     /// active.
     ///
-    /// An `Active` fiber is validated first — a validation failure keeps the
-    /// running plugin untouched — then restarted, so the returned result
-    /// reflects the new startup.
+    /// An `Active` fiber is resolved through the `internal/config` waterfall
+    /// and validated first — a validation failure keeps the running plugin
+    /// untouched — then restarted, so the returned result reflects the new
+    /// startup. The restart itself runs through the `internal/update`
+    /// waterfall: listeners may wrap it or veto it by skipping `next` (the
+    /// config is stored either way).
     ///
     /// A `Pending` or `Failed` fiber instead stores the new config, clears
     /// any previous startup error, and reconciles: it activates with the new
@@ -818,31 +823,82 @@ impl Fiber {
                 "cannot update config on the root fiber",
             ));
         };
-        // Match Cordis: validation happens before an active plugin is torn
-        // down. The validated result is stashed so activate() does not run
-        // the validator twice for the same raw config.
-        let validated = if self.state() == FiberState::Active {
-            Some(plugin.plugin().validate_config(config.clone())?)
-        } else {
-            None
-        };
+        if self.state() == FiberState::Active {
+            // Match Cordis: resolution (the `internal/config` waterfall) and
+            // validation happen before an active plugin is torn down. The
+            // validated result is stashed so activate() does not run the
+            // waterfall or the validator twice for the same raw config.
+            let config = self.resolve_config(config)?;
+            let validated = plugin.plugin().validate_config(config.clone())?;
+            {
+                let mut data = lock(&self.inner.data);
+                data.validated = Some((config.clone(), validated.clone()));
+                data.raw_config = config;
+                data.failed_epoch = None;
+                data.error = None;
+            }
+            return self.waterfall_update(validated);
+        }
+        // Match Cordis: a config update on an inactive fiber is stored and
+        // reconciled, not resolved or awaited. The refresh below may already
+        // have re-run a failed startup; the outcome is observable through
+        // state()/error() rather than this return value.
         {
             let mut data = lock(&self.inner.data);
-            data.validated = validated.map(|valid| (config.clone(), valid));
+            data.validated = None;
             data.raw_config = config;
             data.failed_epoch = None;
             data.error = None;
         }
-        if self.state() == FiberState::Active {
-            self.restart()
-        } else {
-            // Match Cordis: a config update on an inactive fiber is stored
-            // and reconciled, not awaited. The refresh above may already
-            // have re-run a failed startup; the outcome is observable
-            // through state()/error() rather than this return value.
-            self.refresh();
-            Ok(())
+        self.refresh();
+        Ok(())
+    }
+
+    /// Run the `internal/config` waterfall over a raw config and return the
+    /// effective config: the waterfall's result when a listener rewrites it,
+    /// the original otherwise.
+    ///
+    /// When no `internal/config` listener is registered (the common case)
+    /// the config passes through untouched. A listener error fails the
+    /// caller, which on the activation path leaves the fiber `Failed`.
+    fn resolve_config(&self, config: Config) -> Result<Config> {
+        let Some(ctx) = self.context() else {
+            return Ok(config);
+        };
+        if ctx.events().listener_count("internal/config") == 0 {
+            return Ok(config);
         }
+        let value = config.clone();
+        let result = ctx.events().waterfall_from(
+            ctx.clone(),
+            "internal/config",
+            [config.clone()],
+            move || Ok(Some(value.clone())),
+        )?;
+        Ok(result.unwrap_or(config))
+    }
+
+    /// Run the `internal/update` waterfall around the restart scheduled by a
+    /// config update on an active fiber.
+    ///
+    /// Listeners may wrap the restart by calling `event.call_next()` or veto
+    /// it by skipping `next` (the config is stored either way, so a later
+    /// restart applies it). The innermost behavior restarts the fiber, so a
+    /// vetoed update reports `Ok(())` without restarting — matching upstream
+    /// HMR's interception point.
+    fn waterfall_update(&self, config: Config) -> Result<()> {
+        let Some(ctx) = self.context() else {
+            return self.restart();
+        };
+        if ctx.events().listener_count("internal/update") == 0 {
+            return self.restart();
+        }
+        let fiber = self.clone();
+        ctx.events()
+            .waterfall_from(ctx.clone(), "internal/update", [config], move || {
+                fiber.restart().map(|_| None)
+            })?;
+        Ok(())
     }
 
     /// Permanently dispose this plugin fiber. Repeated calls are no-ops.
