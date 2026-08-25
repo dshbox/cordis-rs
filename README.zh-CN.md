@@ -32,14 +32,15 @@ Cordis 是一个基于上下文的插件框架，适用于需要显式依赖注�
 | Logger 缓冲区/exporter/级别/格式化器 | 对应的 logger API | ✅ |
 | Standard Schema 校验 | `Plugin::validate_config` + 校验问题列表 | ✅³ |
 | `internal/plugin`、`internal/status`、`internal/service`、`internal/dispatch` | 同名元事件 | ✅⁴ |
-| 拦截元事件（`internal/get`/`set`/`config`/`update`/`listener`） | 未移植 | 未包含 |
+| 拦截元事件（`internal/get`/`set`/`config`/`update`/`listener`） | 相同的五个拦截点 | ✅⁵ |
 | 装饰器和可调用服务 | 显式 Rust trait/builder | Rust 原生实现 |
 | Loader / include 包 | [`cordis-include`](../crates/cordis-include)、[`cordis-group`](../crates/cordis-group)、[`cordis-loader`](../crates/cordis-loader)、[`cordis-cli`](../crates/cordis-cli) | ✅ 独立 crate |
 
 1. Rust 无法像 JavaScript Proxy 一样动态投影任意 struct 字段，因此 `alias()` 是常见 `mixin()` 用法的显式对应方案。
 2. Rust 插件代码会显式注册多个 effect；`EffectHandle::adopt()` 提供与原版对应的嵌套诊断和回收树。
 3. Standard Schema 是 JavaScript 协议，因此 Rust 版本采用 trait 方式进行校验。
-4. `internal/dispatch` 携带 `(mode, name, args)` 三个参数，省略了上游的第四个 `thisArg` 参数。上游 HMR 和配置注入依赖的 waterfall/bail 拦截点（`internal/get`、`internal/set`、`internal/config`、`internal/update`、`internal/listener`）不在本移植范围内，依赖这些事件的下游代码需要另找扩展点。
+4. `internal/dispatch` 携带 `(mode, name, args)` 三个参数，省略了上游的第四个 `thisArg` 参数。
+5. 上游 HMR 和配置注入依赖的五个拦截点已按 Rust 原生语义移植：`internal/get`（围绕严格服务读取的 waterfall）、`internal/set`（围绕服务写入的 waterfall）、`internal/config`（围绕配置解析的 waterfall，生效配置即 waterfall 的结果）、`internal/update`（围绕 update 触发的重启的 waterfall）、`internal/listener`（bail，其值会取消注册并返回一个惰性 handle）。参数是不可变的 `Value`——监听器通过 `Event::call_next()` 包裹原操作，或跳过它来否决。
 
 ## 设计目标
 

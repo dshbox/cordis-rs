@@ -223,6 +223,22 @@ impl EventsService {
     ) -> Result<EffectHandle> {
         let fiber = self.ctx.fiber()?;
         fiber.ensure_active()?;
+
+        // Upstream parity: a bail `internal/listener` fires before any
+        // listener is registered. A bailing listener cancels the standard
+        // registration and takes ownership of the listener, so the caller
+        // receives an inert handle instead of a live one.
+        if self.listener_count("internal/listener") > 0 {
+            let intercepted = self.bail_from(
+                self.ctx.clone(),
+                "internal/listener",
+                [Value::new(name.clone()), Value::new(options)],
+            )?;
+            if intercepted.is_some() {
+                return Ok(EffectHandle::inert());
+            }
+        }
+
         let id = self.ctx.root.events.next_id();
 
         // Register the owning effect first: failure leaves no hook behind,
@@ -536,7 +552,24 @@ impl EventsService {
         name: impl Into<String>,
         args: impl IntoIterator<Item = EventValue>,
     ) -> EventResult {
-        let event = Event::new(name, args);
+        self.bail_event(Event::new(name, args))
+    }
+
+    /// Synchronous ordered bail dispatch with an explicit target context for
+    /// listener filtering.
+    ///
+    /// The targeted counterpart of [`bail`](Self::bail), mirroring
+    /// [`emit_from`](Self::emit_from).
+    pub fn bail_from(
+        &self,
+        target: Context,
+        name: impl Into<String>,
+        args: impl IntoIterator<Item = EventValue>,
+    ) -> EventResult {
+        self.bail_event(Event::new(name, args).with_target(target))
+    }
+
+    fn bail_event(&self, event: Event) -> EventResult {
         for callback in self.dispatch(DispatchMode::Bail, &event) {
             let result = block_on(callback(event.clone()))?;
             if is_bailed(&result) {
@@ -560,7 +593,35 @@ impl EventsService {
         F: Fn() -> Fut + Send + Sync + 'static,
         Fut: Future<Output = EventResult> + Send + 'static,
     {
-        let event = Event::new(name, args);
+        self.waterfall_async_event(Event::new(name, args), inner)
+            .await
+    }
+
+    /// Compose listeners around an innermost asynchronous callback, with an
+    /// explicit target context for listener filtering.
+    ///
+    /// The targeted counterpart of [`waterfall_async`](Self::waterfall_async),
+    /// mirroring [`emit_from`](Self::emit_from).
+    pub async fn waterfall_async_from<F, Fut>(
+        &self,
+        target: Context,
+        name: impl Into<String>,
+        args: impl IntoIterator<Item = EventValue>,
+        inner: F,
+    ) -> EventResult
+    where
+        F: Fn() -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = EventResult> + Send + 'static,
+    {
+        self.waterfall_async_event(Event::new(name, args).with_target(target), inner)
+            .await
+    }
+
+    async fn waterfall_async_event<F, Fut>(&self, event: Event, inner: F) -> EventResult
+    where
+        F: Fn() -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = EventResult> + Send + 'static,
+    {
         let callbacks = self.dispatch(DispatchMode::Waterfall, &event);
         let inner = Arc::new(inner);
         let mut next: Next = Arc::new(move || Box::pin(inner()));
@@ -587,6 +648,27 @@ impl EventsService {
         F: Fn() -> EventResult + Send + Sync + 'static,
     {
         block_on(self.waterfall_async(name, args, move || {
+            let result = inner();
+            async move { result }
+        }))
+    }
+
+    /// Synchronous waterfall convenience wrapper with an explicit target
+    /// context for listener filtering.
+    ///
+    /// The targeted counterpart of [`waterfall`](Self::waterfall), mirroring
+    /// [`emit_from`](Self::emit_from).
+    pub fn waterfall_from<F>(
+        &self,
+        target: Context,
+        name: impl Into<String>,
+        args: impl IntoIterator<Item = EventValue>,
+        inner: F,
+    ) -> EventResult
+    where
+        F: Fn() -> EventResult + Send + Sync + 'static,
+    {
+        block_on(self.waterfall_async_from(target, name, args, move || {
             let result = inner();
             async move { result }
         }))

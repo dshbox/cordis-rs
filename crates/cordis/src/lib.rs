@@ -57,6 +57,36 @@
 //! - `_async` suffixes mark genuinely suspending functions. The one
 //!   exception is [`Fiber::dispose_async`], kept for upstream parity with
 //!   `disposeAsync`: it is a synchronous pass-through that never yields.
+//!
+//! # Intercept meta-events
+//!
+//! The five upstream interception points are ported as ordinary events on
+//! the root bus, named `internal/get`, `internal/set`, `internal/config`,
+//! `internal/update`, and `internal/listener`. Each fires with the operating
+//! context as its dispatch target, so context filters apply, and arguments
+//! are immutable [`Value`]s — interception means wrapping or vetoing, never
+//! in-place mutation:
+//!
+//! - `internal/get` — waterfall around every strict service read
+//!   ([`ReflectService::get_value`] / [`Context::require`]); accessor reads
+//!   and relaxed reads bypass it. The innermost behavior resolves the
+//!   service; listeners may wrap or replace the result.
+//! - `internal/set` — waterfall around service writes
+//!   ([`ReflectService::set_value`]); listeners may veto a write by not
+//!   calling [`Event::call_next`].
+//! - `internal/config` — waterfall around config resolution ([`Fiber::update`]
+//!   and activation); the effective config is the waterfall's result, the
+//!   original when untouched.
+//! - `internal/update` — waterfall around the restart an update schedules;
+//!   skipping [`Event::call_next`] vetoes the restart (the config is stored
+//!   either way).
+//! - `internal/listener` — bail fired before a listener is registered; a
+//!   bail value cancels the registration and the caller receives an inert
+//!   [`EffectHandle`].
+//!
+//! Like upstream, the interception events themselves fire no
+//! `internal/dispatch` meta-event, so meta-listeners cannot recurse through
+//! them.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]

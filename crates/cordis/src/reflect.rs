@@ -113,6 +113,11 @@ impl ReflectRoot {
             .or_else(|| lock(&self.state).default_scopes.get(name).copied())
     }
 
+    /// The reflected property kind for `name`, without resolving the value.
+    fn property_kind(&self, name: &str) -> Option<Property> {
+        lock(&self.state).properties.get(name).cloned()
+    }
+
     fn ensure_scope(&self, ctx: &Context, name: &str) -> Isolation {
         if let Some(scope) = ctx.scope_override(name) {
             return scope;
@@ -280,7 +285,24 @@ impl ReflectService {
     }
 
     fn read(&self, name: &str, strict: bool) -> Result<Option<Value>> {
-        self.ctx.root.reflect.value(&self.ctx, name, strict)
+        // Upstream parity: the `internal/get` waterfall fires only on strict
+        // reads of service properties. Accessor reads bypass it (the proxy
+        // calls accessor getters directly), as do relaxed reads.
+        if !strict
+            || self.ctx.root.reflect.property_kind(name) == Some(Property::Accessor)
+            || self.ctx.events().listener_count("internal/get") == 0
+        {
+            return self.ctx.root.reflect.value(&self.ctx, name, strict);
+        }
+        let ctx = self.ctx.clone();
+        let name = name.to_owned();
+        let result = ctx.events().waterfall_from(
+            ctx.clone(),
+            "internal/get",
+            [Value::new(name.clone())],
+            move || ctx.root.reflect.value(&ctx, &name, true),
+        )?;
+        Ok(result)
     }
 
     /// Require and downcast an active service.
@@ -426,24 +448,56 @@ impl ReflectService {
     /// Availability predicates registered with
     /// [`provide_checked`](Self::provide_checked) see the new value on their
     /// next evaluation.
+    ///
+    /// Service writes run the `internal/set` waterfall when listeners are
+    /// registered: listeners may observe the write or veto it by not calling
+    /// `call_next()`. Accessor writes and writes to undeclared names bypass
+    /// the waterfall, matching upstream.
     pub fn set_value(&self, name: &str, value: Value) -> Result<()> {
+        match self.ctx.root.reflect.property_kind(name) {
+            Some(Property::Accessor) => {
+                let setter = lock(&self.ctx.root.reflect.state)
+                    .accessors
+                    .get(name)
+                    .and_then(|record| record.accessor.set.clone());
+                let setter = setter.ok_or_else(|| {
+                    CordisError::with_message(
+                        ErrorCode::AccessDenied,
+                        format!("property \"{name}\" is read-only"),
+                    )
+                })?;
+                setter(&self.ctx, value)
+            }
+            None => Err(CordisError::with_message(
+                ErrorCode::MissingService,
+                format!("cannot set property \"{name}\" without provide"),
+            )),
+            Some(Property::Service) => {
+                if self.ctx.events().listener_count("internal/set") == 0 {
+                    return self.set_service_value(name, value);
+                }
+                let ctx = self.ctx.clone();
+                let name = name.to_owned();
+                ctx.events().waterfall_from(
+                    ctx.clone(),
+                    "internal/set",
+                    [Value::new(name.clone()), value.clone()],
+                    move || {
+                        ctx.reflect()
+                            .set_service_value(&name, value.clone())
+                            .map(|_| None)
+                    },
+                )?;
+                Ok(())
+            }
+        }
+    }
+
+    /// The service-write half of [`set_value`](Self::set_value), wrapped by
+    /// the `internal/set` waterfall when listeners are registered.
+    fn set_service_value(&self, name: &str, value: Value) -> Result<()> {
         let scope_override = self.ctx.scope_override(name);
         let mut state = lock(&self.ctx.root.reflect.state);
-        if state.properties.get(name) == Some(&Property::Accessor) {
-            let setter = state
-                .accessors
-                .get(name)
-                .and_then(|record| record.accessor.set.clone());
-            drop(state);
-            let setter = setter.ok_or_else(|| {
-                CordisError::with_message(
-                    ErrorCode::AccessDenied,
-                    format!("property \"{name}\" is read-only"),
-                )
-            })?;
-            return setter(&self.ctx, value);
-        }
-
         let scope = scope_override
             .or_else(|| state.default_scopes.get(name).copied())
             .ok_or_else(|| {

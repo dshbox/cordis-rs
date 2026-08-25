@@ -213,6 +213,20 @@ impl EffectHandle {
         Self { cell }
     }
 
+    /// A handle that owns nothing: returned when an `internal/listener`
+    /// interceptor cancels a registration and takes ownership of the
+    /// listener. Disposing it is a no-op.
+    pub(crate) fn inert() -> Self {
+        Self {
+            cell: EffectCell::new(
+                0,
+                Weak::new(),
+                "intercepted listener",
+                AsyncDisposer::from_sync(|| Ok(())),
+            ),
+        }
+    }
+
     /// Dispose this effect synchronously, waiting for asynchronous cleanup.
     pub fn dispose(&self) -> Result<()> {
         block_on(self.dispose_async())
