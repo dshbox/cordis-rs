@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.1.3](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.1.2...cordis-core-v0.1.3) - 2026-09-14
+
+### Fixed
+
+- *(events)* index listener claims ([#88](https://github.com/dshbox/cordis-rs/pull/88))
+
 ## [0.1.2](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.1.1...cordis-core-v0.1.2) - 2026-09-14
 
 ### Fixed
