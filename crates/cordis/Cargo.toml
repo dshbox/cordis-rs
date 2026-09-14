@@ -23,7 +23,7 @@ cordis-core.workspace = true
 [dev-dependencies]
 # Deliberately activates cordis-core/internal-api through feature unification so
 # facade compile-fail tests prove the workspace-only seam still cannot escape.
-cordis-timer.workspace = true
+cordis-core = { workspace = true, features = ["internal-api"] }
 trybuild.workspace = true
 
 [lints]
