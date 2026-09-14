@@ -53,6 +53,8 @@ name = "cordis-rs"
 version = "0.7.3"
 dependencies = [
  "cordis-core",
+ "cordis-timer",
+ "trybuild",
 ]
 
 [[package]]

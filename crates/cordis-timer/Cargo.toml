@@ -17,7 +17,7 @@ thiserror = { workspace = true }
 # the timeout shape's fiber-effect binding (the ticket-20 comment's
 # promised re-add): the shape registers its cancellation watch as an
 # effect of the calling context's fiber
-cordis-core = { workspace = true }
+cordis-core = { workspace = true, features = ["internal-api"] }
 # the Interval operation implements Stream
 futures = { workspace = true }
 

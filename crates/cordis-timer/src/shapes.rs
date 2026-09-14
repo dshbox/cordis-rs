@@ -92,8 +92,9 @@ fn prepare_one_shot(
     ctx: &Context,
     delay: Duration,
 ) -> Result<OneShotParts, TimerRegistrationError> {
-    ctx.__generation_cleanup_admission()
-        .map_err(|_| TimerRegistrationError::InactiveContext)?;
+    if !cordis_core::__internal::generation_cleanup_admitted(ctx) {
+        return Err(TimerRegistrationError::InactiveContext);
+    }
     let deadline = prepare_deadline(delay)?;
     let (cancellation, cleanup) = commit_cancellation(ctx)?;
     Ok((deadline, cancellation, cleanup))
@@ -111,8 +112,9 @@ impl TimerExt for Context {
         delay: Duration,
         work: F,
     ) -> Result<Timeout<F>, TimerRegistrationError> {
-        self.__generation_cleanup_admission()
-            .map_err(|_| TimerRegistrationError::InactiveContext)?;
+        if !cordis_core::__internal::generation_cleanup_admitted(self) {
+            return Err(TimerRegistrationError::InactiveContext);
+        }
         let deadline = prepare_deadline(delay)?;
         let (cancellation, cleanup) = commit_cancellation(self)?;
         Ok(Timeout {
@@ -138,8 +140,9 @@ impl TimerExt for Context {
         if period.is_zero() {
             return Err(TimerRegistrationError::ZeroPeriod);
         }
-        self.__generation_cleanup_admission()
-            .map_err(|_| TimerRegistrationError::InactiveContext)?;
+        if !cordis_core::__internal::generation_cleanup_admitted(self) {
+            return Err(TimerRegistrationError::InactiveContext);
+        }
         let scheduler = prepare_interval(period)?;
         let (cancellation, cleanup) = commit_cancellation(self)?;
         Ok(Interval {

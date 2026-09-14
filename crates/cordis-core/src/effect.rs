@@ -373,19 +373,6 @@ impl EffectRegistration {
 }
 
 impl Context {
-    /// Internal cross-crate probe for leaf capabilities that must validate
-    /// generation admission before preparing their own resource. This exposes
-    /// no Fiber or cleanup-journal representation; the later effect commit
-    /// remains authoritative and may still refuse if the generation closes.
-    #[doc(hidden)]
-    pub fn __generation_cleanup_admission(
-        &self,
-    ) -> std::result::Result<(), EffectRegistrationError> {
-        self.fiber()
-            .assert_can_register()
-            .map_err(|_| EffectRegistrationError::InactiveContext)
-    }
-
     /// Register an async cleanup as one obligation of this context's
     /// current fiber generation — the path for cleanups with something to
     /// await. The closure runs at most once: claimed by the generation

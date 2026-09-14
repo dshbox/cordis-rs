@@ -1,0 +1,11 @@
+error[E0433]: cannot find `__internal` in `cordis`
+ --> tests/ui-facade/fail/internal_seam.rs:6:21
+  |
+6 |     let _ = cordis::__internal::generation_cleanup_admitted(&ctx);
+  |                     ^^^^^^^^^^ could not find `__internal` in `cordis`
+
+error[E0599]: no method named `__generation_cleanup_admission` found for struct `cordis::Context` in the current scope
+ --> tests/ui-facade/fail/internal_seam.rs:5:17
+  |
+5 |     let _ = ctx.__generation_cleanup_admission();
+  |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ method not found in `cordis::Context`
