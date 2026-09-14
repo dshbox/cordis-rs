@@ -11,7 +11,7 @@ use cordis_core::{
 use std::convert::Infallible;
 use std::future::Future;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, Ordering};
 
 #[derive(Debug)]
 struct Counter(u32);
@@ -288,7 +288,7 @@ async fn realm_mapping_derivation_does_not_create_dependency_drift() {
 }
 
 struct LoadingProvider {
-    installed: Arc<AtomicBool>,
+    installed: Arc<tokio::sync::Notify>,
     release: Arc<tokio::sync::Notify>,
 }
 
@@ -311,7 +311,7 @@ impl Plugin for LoadingProvider {
         let release = self.release.clone();
         async move {
             let _publication = ctx.provide(Arc::new(Counter(7))).unwrap();
-            installed.store(true, Ordering::SeqCst);
+            installed.notify_one();
             release.notified().await;
             Ok(())
         }
@@ -321,7 +321,7 @@ impl Plugin for LoadingProvider {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn loading_occupation_is_invisible_until_active_then_visibility_drifts() {
     let root = Context::new();
-    let installed = Arc::new(AtomicBool::new(false));
+    let installed = Arc::new(tokio::sync::Notify::new());
     let release = Arc::new(tokio::sync::Notify::new());
     let provider_root = root.clone();
     let provider_installed = installed.clone();
@@ -336,9 +336,7 @@ async fn loading_occupation_is_invisible_until_active_then_visibility_drifts() {
             .unwrap()
     });
 
-    while !installed.load(Ordering::SeqCst) {
-        tokio::task::yield_now().await;
-    }
+    installed.notified().await;
     assert_eq!(
         root.try_service::<Counter>().unwrap_err(),
         ServiceLookupError::Unavailable {
@@ -376,7 +374,7 @@ async fn loading_occupation_is_invisible_until_active_then_visibility_drifts() {
 }
 
 struct ParkingProvider {
-    cleanup_started: Arc<AtomicBool>,
+    cleanup_started: Arc<tokio::sync::Notify>,
     release_cleanup: Arc<tokio::sync::Notify>,
 }
 
@@ -401,7 +399,7 @@ impl Plugin for ParkingProvider {
             let _publication = ctx.provide(Arc::new(Counter(10))).unwrap();
             let _parking = ctx
                 .effect(move || async move {
-                    cleanup_started.store(true, Ordering::SeqCst);
+                    cleanup_started.notify_one();
                     release_cleanup.notified().await;
                 })
                 .unwrap();
@@ -422,7 +420,7 @@ async fn close_withdraws_before_cleanup_and_stale_cleanup_cannot_remove_replacem
         .unwrap();
     assert_eq!(dependent.state(), FiberState::Pending);
 
-    let cleanup_started = Arc::new(AtomicBool::new(false));
+    let cleanup_started = Arc::new(tokio::sync::Notify::new());
     let release_cleanup = Arc::new(tokio::sync::Notify::new());
     let provider = root
         .spawn(prepared(ParkingProvider {
@@ -439,9 +437,7 @@ async fn close_withdraws_before_cleanup_and_stale_cleanup_cannot_remove_replacem
     let disposing = tokio::spawn(async move {
         provider.dispose().await.unwrap();
     });
-    while !cleanup_started.load(Ordering::SeqCst) {
-        tokio::task::yield_now().await;
-    }
+    cleanup_started.notified().await;
 
     assert_eq!(dependent.ready().await.unwrap(), FiberState::Pending);
     assert_eq!(
@@ -475,7 +471,7 @@ async fn close_withdraws_before_cleanup_and_stale_cleanup_cannot_remove_replacem
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cancelled_creator_after_publication_commit_cleans_the_occurrence() {
     let root = Context::new();
-    let installed = Arc::new(AtomicBool::new(false));
+    let installed = Arc::new(tokio::sync::Notify::new());
     let release = Arc::new(tokio::sync::Notify::new());
     let spawn_root = root.clone();
     let spawn_installed = installed.clone();
@@ -489,9 +485,7 @@ async fn cancelled_creator_after_publication_commit_cleans_the_occurrence() {
             .await
     });
 
-    while !installed.load(Ordering::SeqCst) {
-        tokio::task::yield_now().await;
-    }
+    installed.notified().await;
     assert_eq!(
         root.try_service::<Counter>().unwrap_err(),
         ServiceLookupError::Unavailable {
@@ -632,7 +626,7 @@ async fn exact_publication_set_preserves_target_remove_commits_drift_and_drop_is
 struct CapturingProvider {
     publication: Arc<parking_lot::Mutex<Option<ServicePublication<Counter>>>>,
     block_cleanup: bool,
-    cleanup_started: Arc<AtomicBool>,
+    cleanup_started: Arc<tokio::sync::Notify>,
     release_cleanup: Arc<tokio::sync::Notify>,
 }
 
@@ -661,7 +655,7 @@ impl Plugin for CapturingProvider {
             if block_cleanup {
                 let _parking = ctx
                     .effect(move || async move {
-                        cleanup_started.store(true, Ordering::SeqCst);
+                        cleanup_started.notify_one();
                         release_cleanup.notified().await;
                     })
                     .unwrap();
@@ -679,7 +673,7 @@ async fn manual_remove_wins_exact_cleanup_claim_and_old_generation_cannot_touch_
         .spawn(prepared(CapturingProvider {
             publication: publication.clone(),
             block_cleanup: false,
-            cleanup_started: Arc::new(AtomicBool::new(false)),
+            cleanup_started: Arc::new(tokio::sync::Notify::new()),
             release_cleanup: Arc::new(tokio::sync::Notify::new()),
         }))
         .await
@@ -705,7 +699,7 @@ async fn manual_remove_wins_exact_cleanup_claim_and_old_generation_cannot_touch_
 async fn generation_close_wins_consuming_remove_before_publication_cleanup_runs() {
     let root = Context::new();
     let publication = Arc::new(parking_lot::Mutex::new(None));
-    let cleanup_started = Arc::new(AtomicBool::new(false));
+    let cleanup_started = Arc::new(tokio::sync::Notify::new());
     let release_cleanup = Arc::new(tokio::sync::Notify::new());
     let provider = root
         .spawn(prepared(CapturingProvider {
@@ -720,9 +714,7 @@ async fn generation_close_wins_consuming_remove_before_publication_cleanup_runs(
     let disposing = tokio::spawn(async move {
         provider.dispose().await.unwrap();
     });
-    while !cleanup_started.load(Ordering::SeqCst) {
-        tokio::task::yield_now().await;
-    }
+    cleanup_started.notified().await;
 
     let current = publication.lock().take().unwrap();
     assert_eq!(
@@ -811,7 +803,7 @@ async fn same_fiber_new_generation_replacement_makes_old_publication_handle_stal
 async fn closed_current_reports_mutation_closed_but_replacement_makes_old_handle_stale_first() {
     let root = Context::new();
     let publication = Arc::new(parking_lot::Mutex::new(None));
-    let cleanup_started = Arc::new(AtomicBool::new(false));
+    let cleanup_started = Arc::new(tokio::sync::Notify::new());
     let release_cleanup = Arc::new(tokio::sync::Notify::new());
     let provider = root
         .spawn(prepared(CapturingProvider {
@@ -826,9 +818,7 @@ async fn closed_current_reports_mutation_closed_but_replacement_makes_old_handle
     let disposing = tokio::spawn(async move {
         provider.dispose().await.unwrap();
     });
-    while !cleanup_started.load(Ordering::SeqCst) {
-        tokio::task::yield_now().await;
-    }
+    cleanup_started.notified().await;
 
     assert_eq!(
         publication
@@ -919,7 +909,7 @@ fn successful_set_and_remove_destroy_outgoing_values_outside_service_synchroniza
 
 struct ReentrantCapturingProvider {
     publication: Arc<parking_lot::Mutex<Option<ServicePublication<ReentrantValue>>>>,
-    cleanup_started: Arc<AtomicBool>,
+    cleanup_started: Arc<tokio::sync::Notify>,
     release_cleanup: Arc<tokio::sync::Notify>,
     drops: Arc<AtomicU32>,
 }
@@ -953,7 +943,7 @@ impl Plugin for ReentrantCapturingProvider {
             *publication.lock() = Some(current);
             let _parking = ctx
                 .effect(move || async move {
-                    cleanup_started.store(true, Ordering::SeqCst);
+                    cleanup_started.notify_one();
                     release_cleanup.notified().await;
                 })
                 .unwrap();
@@ -966,7 +956,7 @@ impl Plugin for ReentrantCapturingProvider {
 async fn closed_and_stale_set_refusals_drop_rejected_values_outside_synchronization() {
     let root = Context::new();
     let publication = Arc::new(parking_lot::Mutex::new(None));
-    let cleanup_started = Arc::new(AtomicBool::new(false));
+    let cleanup_started = Arc::new(tokio::sync::Notify::new());
     let release_cleanup = Arc::new(tokio::sync::Notify::new());
     let drops = Arc::new(AtomicU32::new(0));
     let provider = root
@@ -982,9 +972,7 @@ async fn closed_and_stale_set_refusals_drop_rejected_values_outside_synchronizat
     let disposing = tokio::spawn(async move {
         provider.dispose().await.unwrap();
     });
-    while !cleanup_started.load(Ordering::SeqCst) {
-        tokio::task::yield_now().await;
-    }
+    cleanup_started.notified().await;
 
     let closed_handle = publication.clone();
     let root_for_closed = root.clone();

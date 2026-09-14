@@ -197,22 +197,9 @@ async fn main() -> Result<(), BoxError> {
     let first = roster.push(ctx.spawn(prepared_canary()).await?);
     let second = roster.push(ctx.spawn(prepared_canary()).await?);
     roster.report().await;
-    let mut observed_rx = observed_rx;
-    let mut observed = false;
-    for _ in 0..100_000 {
-        match observed_rx.try_recv() {
-            Ok(()) => {
-                observed = true;
-                break;
-            }
-            Err(tokio::sync::oneshot::error::TryRecvError::Empty) => tokio::task::yield_now().await,
-            Err(tokio::sync::oneshot::error::TryRecvError::Closed) => break,
-        }
-    }
-    assert!(
-        observed,
-        "successful observer receives detached residency observation"
-    );
+    observed_rx
+        .await
+        .expect("successful observer receives detached residency observation");
     assert!(observation_hits.load(Ordering::SeqCst) > 0);
     let observed_id = observed_fiber
         .lock()
