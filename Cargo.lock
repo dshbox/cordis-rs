@@ -16,7 +16,7 @@ checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
 
 [[package]]
 name = "chat_capstone"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "cordis-core",
  "examples-common",
@@ -25,7 +25,7 @@ dependencies = [
 
 [[package]]
 name = "cordis-core"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "futures",
  "parking_lot",
@@ -37,7 +37,7 @@ dependencies = [
 
 [[package]]
 name = "cordis-loader"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "cordis-core",
  "futures",
@@ -50,7 +50,7 @@ dependencies = [
 
 [[package]]
 name = "cordis-rs"
-version = "0.7.3"
+version = "0.7.4"
 dependencies = [
  "cordis-core",
  "cordis-timer",
@@ -59,7 +59,7 @@ dependencies = [
 
 [[package]]
 name = "cordis-timer"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "cordis-core",
  "futures",
@@ -77,7 +77,7 @@ checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
 
 [[package]]
 name = "examples-common"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "cordis-core",
  "parking_lot",
@@ -174,7 +174,7 @@ dependencies = [
 
 [[package]]
 name = "gateway"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "cordis-core",
  "cordis-loader",
@@ -199,7 +199,7 @@ checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 
 [[package]]
 name = "hello_plugin"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "cordis-core",
  "examples-common",
@@ -239,7 +239,7 @@ dependencies = [
 
 [[package]]
 name = "logging_exporters"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "cordis-core",
  "examples-common",
@@ -317,7 +317,7 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
 name = "scopes_tenants"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "cordis-core",
  "examples-common",
@@ -548,7 +548,7 @@ checksum = "23b97319f7b8343df12cc98938e5c3eb436064524c8d2b4e30a1d3a36eecdf81"
 
 [[package]]
 name = "worker_daemon"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "cordis-core",
  "cordis-timer",

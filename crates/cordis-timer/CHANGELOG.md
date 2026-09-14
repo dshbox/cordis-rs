@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.1.2](https://github.com/dshbox/cordis-rs/compare/cordis-timer-v0.1.1...cordis-timer-v0.1.2) - 2026-09-14
+
+### Fixed
+
+- *(timer)* move admission probe behind internal seam ([#79](https://github.com/dshbox/cordis-rs/pull/79))
+
 ## [0.1.1](https://github.com/dshbox/cordis-rs/compare/cordis-timer-v0.1.0...cordis-timer-v0.1.1) - 2026-09-14
 
 ### Fixed
