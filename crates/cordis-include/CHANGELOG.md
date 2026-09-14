@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.24](https://github.com/dshbox/cordis-rs/compare/cordis-include-v0.0.23...cordis-include-v0.0.24) - 2026-09-14
+
+### Other
+
+- updated the following local packages: cordis-rs
+
 ## [0.0.23](https://github.com/dshbox/cordis-rs/compare/cordis-include-v0.0.22...cordis-include-v0.0.23) - 2026-08-25
 
 ### Other
