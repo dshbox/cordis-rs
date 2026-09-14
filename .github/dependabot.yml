@@ -1,0 +1,16 @@
+version: 2
+updates:
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    ignore:
+      # The MSRV job intentionally uses a fixed Rust release, while the stable
+      # jobs intentionally resolve `stable` at runtime. Update this action pin
+      # deliberately so Dependabot cannot change toolchain semantics.
+      - dependency-name: "dtolnay/rust-toolchain"
