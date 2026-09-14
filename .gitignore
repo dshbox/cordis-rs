@@ -3,3 +3,4 @@
 *.profraw
 .DS_Store
 /.cargo-home/
+/.scratch/
