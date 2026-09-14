@@ -7,9 +7,11 @@
 //! mid-fan-out. The discipline is the same every time — catch the unwind,
 //! render the payload, report, continue with the remaining work (upstream's
 //! `_unload` disposes through `Promise.all` and logs each failure,
-//! fiber.ts:437-447). This module is the **only** sanctioned way user code
-//! runs inside a wrapper: a new containment site is a call here, never a
-//! hand-written `catch_unwind`. Two policies, both living here:
+//! fiber.ts:437-447). This module owns the reusable containment/reporting
+//! helpers for framework-owned work with no caller. Operation-specific adapters
+//! such as Event dispatch and update control also contain user callbacks locally
+//! when they must cover both synchronous callback construction and asynchronous
+//! polling in one semantic boundary. Two reusable policies live here:
 //!
 //! - [`contain_join`] recovers a panicked task through its join handle and
 //!   reports it while allowing the drain to continue;
@@ -41,8 +43,9 @@ use std::future::Future;
 /// Catch-and-convert containment: the caught
 /// payload is handed to the caller instead of being reported here — the
 /// wrapper turns it into its own failure channel (e.g. the Failed fiber
-/// state). Still the one boundary: no containment-site `catch_unwind`
-/// outside this module.
+/// state). Operation-specific callback adapters may own an equivalent local
+/// boundary when their semantic failure type must cover synchronous construction
+/// and asynchronous polling together.
 pub(crate) async fn catch_contained<F>(
     future: F,
 ) -> Result<F::Output, Box<dyn std::any::Any + Send>>

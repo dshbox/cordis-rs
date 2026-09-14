@@ -19,7 +19,7 @@ historical material.
 | [CONTEXT.md](../CONTEXT.md) | Canonical domain and protocol vocabulary | Normative glossary |
 | This document | Present-tense target composition, invariants, internal interactions, concurrency, and seams | Normative architecture |
 | [docs/v3-public-interface.md](v3-public-interface.md) | The exhaustive approved public surface and every caller-visible contract | Normative interface inventory |
-| ADRs 0028–0037 (see the [decision index](#decision-index)) | The ten independent hard-to-reverse rules and their complete rationale | Normative decisions |
+| ADRs 0028–0038 (see the [decision index](#decision-index)) | The eleven independent hard-to-reverse rules and their complete rationale | Normative decisions |
 | [docs/v3-upstream-parity-ledger.md](v3-upstream-parity-ledger.md) | The relationship of every pinned-upstream fact to its v3 disposition, with direct evidence | Normative parity record |
 
 [docs/v3-migration.md](v3-migration.md) is **optional and
@@ -181,7 +181,7 @@ attempted Fiber.
 
 Restart and same-Fiber update preserve Fiber identity — the FiberId and
 the resolved era-local dependency edges — and a committed update is
-forward-only: it retains its new authoritative prepared value even when
+forward-only: it retains its new authoritative input value even when
 the postcommit apply fails and the target parks `Failed`. Era
 replacement is the identity-breaking counterpart: it fully ends the old
 Fiber before attempting at most one fresh successor with a fresh
@@ -611,7 +611,7 @@ the pinned upstream contains it.
 
 ## Decision index
 
-The ten independent hard-to-reverse decisions of the v3 architecture,
+The eleven independent hard-to-reverse decisions of the v3 architecture,
 each in one accepted ADR, linked by title:
 
 1. [Fiber generations own cleanup; Runtime owns residency](adr/0028-fiber-generations-own-cleanup-runtime-owns-residency.md)
@@ -624,10 +624,11 @@ each in one accepted ADR, linked by title:
 8. [Runtime observation follows protocol truth and never drives it](adr/0035-runtime-observation-follows-protocol-truth.md)
 9. [Module and crate seams are semantic](adr/0036-module-and-crate-seams-are-semantic.md)
 10. [Public interfaces expose semantics, not representation](adr/0037-public-interfaces-expose-semantics-not-representation.md)
+11. [Plugin input names role; Prepared wrappers name stage](adr/0038-plugin-input-names-role-prepared-wrappers-name-stage.md)
 
 Each ADR states its rule and rationale self-contained. Its
 non-normative lineage block is historical evidence only: deleting every
 lineage block, together with the optional migration document, leaves
 the required-reading closure above — glossary, this document, the
-interface inventory, these ten decisions, and the parity ledger —
+interface inventory, these eleven decisions, and the parity ledger —
 complete, with no historical or current-implementation dependency.

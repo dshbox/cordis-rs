@@ -356,3 +356,7 @@ As a pre-1.0 project, the public API may still evolve.
 
 Cordis is a Rust port and redesign in the lineage of
 [`cordiverse/cordis`](https://github.com/cordiverse/cordis).
+
+## License
+
+MIT. See [`LICENSE`](https://github.com/dshbox/cordis-rs/blob/main/LICENSE).

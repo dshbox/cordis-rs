@@ -86,7 +86,11 @@ pub struct PluginEntry {
 /// Mutable serialized source for one structural sequencing group.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EntryGroup {
-    /// Human-readable group name.
+    /// Human-readable source-only group name.
+    ///
+    /// Groups are structural sequencing syntax. The name is accepted for
+    /// configuration readability but is not retained in the frozen plan or
+    /// surfaced in execution outcomes.
     pub name: String,
 }
 

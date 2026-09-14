@@ -28,7 +28,7 @@ history, or ticket.
   omitted it.
 - **Comparison target** is the final v3 architecture as published in
   [docs/v3-architecture.md](v3-architecture.md) and its normative set —
-  [CONTEXT.md](../CONTEXT.md), [ADRs 0028–0037](v3-architecture.md#decision-index), and the
+  [CONTEXT.md](../CONTEXT.md), [ADRs 0028–0038](v3-architecture.md#decision-index), and the
   [public-interface inventory](v3-public-interface.md) — not any current or
   historical implementation state, which this ledger never cites.
 

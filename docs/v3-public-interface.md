@@ -164,7 +164,7 @@ The base Plugin contract is:
 ```rust
 pub trait Plugin: Send + 'static {
     type Config;
-    type Prepared: Send + 'static;
+    type Input: Send + 'static;
     type PrepareError: std::error::Error;
     type ApplyError: std::error::Error;
 
@@ -173,11 +173,11 @@ pub trait Plugin: Send + 'static {
     fn prepare(
         &self,
         config: Self::Config,
-    ) -> Result<Self::Prepared, Self::PrepareError>;
+    ) -> Result<Self::Input, Self::PrepareError>;
     fn apply(
         &self,
         ctx: Context,
-        prepared: &Self::Prepared,
+        input: &Self::Input,
     ) -> impl std::future::Future<
         Output = Result<(), Self::ApplyError>,
     > + Send;
@@ -185,7 +185,7 @@ pub trait Plugin: Send + 'static {
 ```
 
 `Config` has no universal `Default`, `Clone`, `Send`, `Sync`, or
-`'static` bound. `Prepared` is `Send + 'static` but need not be `Clone`
+`'static` bound. `Input` is `Send + 'static` but need not be `Clone`
 or `Sync`. `PrepareError` and `ApplyError` require only
 `std::error::Error`; they normalize only at a later boundary that
 actually retains or erases them. `Plugin` has no `Sync` supertrait.
@@ -197,13 +197,13 @@ There is no declaration-only `Plugin::provide`.
 Creation crosses three explicit boundaries:
 
 ```rust
-let prepared = plugin.prepare(config)?;
-let target = PreparedPlugin::from_prepared(plugin, prepared);
+let input = plugin.prepare(config)?;
+let target = PreparedPlugin::from_input(plugin, input);
 let fork = ctx.spawn(target).await?;
 ```
 
 `PreparedPlugin` is opaque, move-only, and `must_use`, with one public
-constructor: `from_prepared<P: Plugin>(P, P::Prepared)`. It performs
+constructor: `from_input<P: Plugin>(P, P::Input)`. It performs
 only typed association sealing. A consuming
 `with_inject_overlay(InjectSpec)` completes a Loader dependency overlay
 before spawn without changing Plugin contract identity. `name()` and
@@ -321,7 +321,7 @@ disposal preserve it; era replacement allocates a new identity;
 cross-Runtime identities never compare equal. It grants no lookup or
 control.
 
-`PreparedChange::from_prepared::<P>(P::Prepared)` seals a move-only,
+`PreparedChange::from_input::<P>(P::Input)` seals a move-only,
 `must_use`, one-attempt candidate associated with Plugin contract `P`.
 It carries no Plugin behavior or lifecycle authority. Both lifecycle
 operations consume it:
@@ -730,8 +730,10 @@ pub enum RealmPolicy {
 }
 ```
 
-These types are `Debug + Clone + Serialize + Deserialize`; enum wire
-syntax is explicit and independent of Rust variant layout. Plugin config
+These source-schema types are `Debug + Clone + Serialize + Deserialize`; enum wire
+syntax is explicit and independent of Rust variant layout. `EntryGroup::name`
+is human-readable source syntax only: structural group names are not retained by
+the frozen plan or copied into execution outcomes. Plugin config
 is required; unit is JSON null. `key.or(name)` chooses the resolve key;
 neither field becomes Plugin, Fiber, or Registry identity. Duplicate
 Service names within inject or within isolate are plan errors; one name
@@ -775,12 +777,17 @@ The JSON helpers `prepare_plugin_json` and `prepare_service_json` are
 typed Plugin and Service preparation helpers: they deserialize and
 adapt, then call the corresponding typed preparation contract, returning
 prepared semantic values — never `DynPlugin` or `Any` — and failing
-with `JsonPrepareError`. Raw intercept injection does not exist.
+with `JsonPrepareError`. `JsonPrepareError<E>::prepare_error() -> Option<&E>`
+returns the concrete typed preparation failure without adding a `'static`
+bound to `E`. For the same reason, the standard `Error::source()` chain can
+expose a serde deserialization error but is intentionally `None` for an
+arbitrary typed preparation error. Raw intercept injection does not exist.
 
 `LoadPlan::load(&self, &Context, &R) -> LoadOutcome` produces exactly
 one ordered outcome for every plan entry:
 
 ```rust
+#[derive(Debug)]
 pub enum EntryOutcome {
     Group { id: EntryId },
     Disabled { id: EntryId },
@@ -790,7 +797,10 @@ pub enum EntryOutcome {
 }
 ```
 
-`Pruned` wins for every descendant of a disabled Plugin, including
+`EntryOutcome` is `Debug` and exposes `id() -> &EntryId` for exact
+correlation without variant matching. `LoadOutcome` is `Debug + must_use`:
+ignoring a delivered outcome would discard the caller's Fork controls while
+Fiber residency remains explicit. `Pruned` wins for every descendant of a disabled Plugin, including
 groups and separately disabled Plugins. Reachable groups yield `Group`;
 reachable disabled Plugins yield `Disabled`. Ordinary resolver,
 preparation, placement, or spawn failure yields `Failed` and does not
@@ -849,6 +859,7 @@ impl Future for Sleep {
     type Output = Result<(), TimerCancelled>;
 }
 
+#[derive(Debug)]
 pub enum TimeoutOutcome<T> {
     Completed(T),
     Elapsed,
@@ -1097,7 +1108,7 @@ kind, diagnostic text, and any justified correlation. The original
 object, `Any`, downcast, and type identity are absent. Panic handling
 follows the same boundary ownership. Direct calls to `Plugin::prepare`,
 `Plugin::name`, `Plugin::inject`, `ConfigurableService::prepare_config`,
-`ConfigurableService::compose_config`, and `PreparedPlugin::from_prepared`
+`ConfigurableService::compose_config`, and `PreparedPlugin::from_input`
 retain ordinary Rust panic behavior; no universal Panic variants exist.
 
 ## Completeness
