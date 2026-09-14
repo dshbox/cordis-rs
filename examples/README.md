@@ -6,8 +6,8 @@ example.
 
 Promise, binding on every seat: each example runs standalone via
 `cargo run -p <name>`, needs no TTY, and exits 0. The chat capstone is
-interactive only when stdin is a terminal; under CI it runs the
-scripted EOF path.
+fully scripted as well: its two frontend Plugins drive the scenario without
+reading stdin.
 
 ## Seats
 

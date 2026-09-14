@@ -64,8 +64,8 @@ gate_doc()    { RUSTDOCFLAGS='-D warnings' cargo doc --workspace --no-deps; }
 
 gate_examples() {
   # Build first so the per-example timeout measures run time, not cold
-  # compile (same rationale as the CI job). Stdin closed: examples run
-  # headless in CI, and the REPL example's quit path is EOF.
+  # compile (same rationale as the CI job). Examples are headless and
+  # self-terminating; stdin stays closed so the gate never depends on a TTY.
   cargo build --workspace || return
   # The example list stays hardcoded and hand-updated in ci.yml; deriving it
   # here keeps one source of truth. Deriving zero

@@ -1,6 +1,6 @@
 [package]
 name = "chat_capstone"
-description = "cordis example — the chat capstone (dual-frontend REPL)"
+description = "cordis example — the scripted dual-frontend chat capstone"
 version.workspace = true
 edition.workspace = true
 publish = false
