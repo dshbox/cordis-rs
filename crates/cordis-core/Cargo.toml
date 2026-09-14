@@ -10,6 +10,11 @@ license.workspace = true
 repository.workspace = true
 readme = "README.md"
 
+[features]
+default = []
+# Workspace leaf crates use this non-default, unsupported implementation seam.
+internal-api = []
+
 [dependencies]
 # Core stays dependency-clean at the semantic crate seam (ADR 0036): no serde,
 # no serde_json, and no Tokio `time` feature.

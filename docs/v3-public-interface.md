@@ -55,7 +55,14 @@ semantic facade; the public modules are exactly the ones named here.
 
 ### cordis-core
 
-`cordis-core` exposes exactly these public semantic modules:
+The supported downstream contract is the default-feature surface described
+below. The workspace-only, non-default `internal-api` Cargo feature exists only
+so semantic leaf crates can call doc-hidden implementation seams without adding
+them to `Context`; enabling it directly opts into unsupported implementation
+details with no compatibility promise. `cordis-rs` never re-exports those
+details, including when Cargo feature unification enables them in `cordis-core`.
+
+`cordis-core` exposes exactly these supported public semantic modules:
 
 ```text
 plugin  lifecycle  service  event  effect  logger  observation
@@ -93,8 +100,9 @@ The facade has no further public paths:
   `Context` and the modules above, and Registry topology never escapes.
 - There is no public `error` module: every error type lives in the
   module of the operation that can produce it.
-- There is no public `internal` module: observation and control
-  transport is private.
+- There is no supported public `internal` module: observation and control
+  transport is private. The feature-gated `__internal` workspace seam described
+  above is explicitly outside the downstream contract.
 - There is no `list` module: the capability is absent from the baseline.
 
 ### cordis-loader

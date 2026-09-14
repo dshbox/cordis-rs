@@ -40,6 +40,25 @@ mod deps;
 mod gated;
 mod update;
 
+/// Workspace-only implementation seams for semantic leaf crates.
+///
+/// This module exists only when the non-default `internal-api` Cargo feature is
+/// enabled. It is not a supported downstream interface and is deliberately not
+/// re-exported by the application facade.
+#[cfg(feature = "internal-api")]
+#[doc(hidden)]
+pub mod __internal {
+    use crate::Context;
+
+    /// Probe whether the selected Context generation currently admits cleanup.
+    ///
+    /// A later cleanup registration remains authoritative and may still lose a
+    /// race with generation closure.
+    pub fn generation_cleanup_admitted(ctx: &Context) -> bool {
+        ctx.fiber().assert_can_register().is_ok()
+    }
+}
+
 /// Fiber identity, lifecycle control, and creation outcomes.
 pub mod lifecycle {
     pub use crate::fiber::{

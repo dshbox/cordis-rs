@@ -1,6 +1,9 @@
 //! Application-facade compile smoke test.
 
-use cordis::{Context, Event, Plugin, PreparedPlugin, Routing};
+use cordis::{
+    Context, Event, Plugin, PreparedPlugin, Routing, effect, event, lifecycle, logger, observation,
+    plugin, service,
+};
 
 struct Ping;
 impl Event for Ping {
@@ -31,6 +34,15 @@ fn application_facade_exports_the_documented_root_surface() {
     let _same_runtime_root = root.root();
     let _routing = Routing::Unscoped;
     let _event_name = Ping::NAME;
+    let _module_paths = (
+        std::any::type_name::<effect::EffectRegistrationError>(),
+        std::any::type_name::<event::DispatchError>(),
+        std::any::type_name::<lifecycle::SpawnError>(),
+        std::any::type_name::<logger::LogRecord>(),
+        std::any::type_name::<observation::RuntimeSnapshot>(),
+        std::any::type_name::<plugin::InjectSpec>(),
+        std::any::type_name::<service::ServiceLookupError>(),
+    );
 
     fn accepts_prepared(_: Option<PreparedPlugin>) {}
     accepts_prepared(None);

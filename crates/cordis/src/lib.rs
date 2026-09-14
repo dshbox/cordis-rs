@@ -5,4 +5,8 @@
 //! authors may depend on `cordis-core` directly; applications can depend on
 //! this facade to keep `use cordis::...` imports.
 
-pub use cordis_core::*;
+pub use cordis_core::{
+    BoxError, ConfigurableService, Context, Event, FiberId, FiberState, Fork, InjectSpec, Level,
+    Logger, Plugin, PreparedChange, PreparedPlugin, QueryOutcome, Routing, Scope, Service,
+    ServiceRealm, UpdateOutcome, effect, event, lifecycle, logger, observation, plugin, service,
+};
