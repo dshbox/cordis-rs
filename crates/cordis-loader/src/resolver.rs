@@ -178,6 +178,21 @@ impl<E: Error> JsonPrepareError<E> {
             inner: JsonPrepareErrorInner::Prepare(error),
         }
     }
+
+    /// Return the concrete typed preparation error, when preparation (rather
+    /// than JSON deserialization) failed.
+    ///
+    /// `Plugin::PrepareError` and `ConfigurableService::PrepareError`
+    /// intentionally have no universal `'static` bound. Consequently the
+    /// standard [`Error::source`] trait object cannot expose every possible
+    /// `E`; this typed accessor preserves that weaker public bound without
+    /// discarding access to the original error.
+    pub fn prepare_error(&self) -> Option<&E> {
+        match &self.inner {
+            JsonPrepareErrorInner::Deserialize(_) => None,
+            JsonPrepareErrorInner::Prepare(error) => Some(error),
+        }
+    }
 }
 
 impl<E: Error> fmt::Display for JsonPrepareError<E> {

@@ -133,9 +133,16 @@ fn json_helpers_distinguish_deserialization_from_typed_preparation_without_panic
         Ok(_) => panic!("malformed Plugin JSON unexpectedly prepared"),
     };
     assert!(malformed.to_string().contains("JSON"));
+    assert!(malformed.source().is_some());
+    assert!(malformed.prepare_error().is_none());
 
     let service = prepare_service_json::<JsonService>(&json!({"value": 0})).unwrap_err();
     assert!(service.to_string().contains("service rejected zero"));
+    assert_eq!(
+        service.prepare_error().map(ToString::to_string).as_deref(),
+        Some("service rejected zero")
+    );
+    assert!(service.source().is_none());
 
     fn assert_error<E: Error>(_: &JsonPrepareError<E>) {}
     assert_error(&service);

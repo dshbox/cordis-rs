@@ -19,7 +19,9 @@ fn failure(f: &ResolverFailure) {
     let _: ResolverFailureKind = f.kind();
     let _: &str = f.diagnostic();
 }
-fn json_error<E: Error>(_: &JsonPrepareError<E>) {}
+fn json_error<E: Error>(error: &JsonPrepareError<E>) {
+    let _: Option<&E> = error.prepare_error();
+}
 
 fn main() {
     let state = Rc::new(());

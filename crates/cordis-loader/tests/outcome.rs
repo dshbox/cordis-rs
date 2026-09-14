@@ -94,16 +94,6 @@ fn resolver_with_log(
     }
 }
 
-fn outcome_id(outcome: &EntryOutcome) -> &cordis_loader::EntryId {
-    match outcome {
-        EntryOutcome::Group { id }
-        | EntryOutcome::Disabled { id }
-        | EntryOutcome::Pruned { id, .. }
-        | EntryOutcome::Spawned { id, .. }
-        | EntryOutcome::Failed { id, .. } => id,
-    }
-}
-
 async fn dispose_spawned(outcome: &cordis_loader::LoadOutcome) {
     for fork in outcome.forks() {
         fork.dispose().await.unwrap();
@@ -182,8 +172,9 @@ async fn outcomes_are_complete_depth_first_and_pruning_names_the_disabling_plugi
         &after,
     ];
     for (row, id) in outcome.entries().iter().zip(expected) {
-        assert_eq!(outcome_id(row), id);
+        assert_eq!(row.id(), id);
     }
+    assert!(format!("{outcome:?}").starts_with("LoadOutcome"));
 
     assert!(matches!(
         outcome.entry(&root),
@@ -429,8 +420,8 @@ async fn duplicate_resolve_keys_remain_distinct_occurrences_by_entry_order_and_f
         second_fork.id(),
         "duplicate resolve keys never collapse Fiber occurrences"
     );
-    assert_eq!(outcome_id(&outcome.entries()[0]), &first);
-    assert_eq!(outcome_id(&outcome.entries()[1]), &second);
+    assert_eq!(outcome.entries()[0].id(), &first);
+    assert_eq!(outcome.entries()[1].id(), &second);
     let fork_ids: Vec<_> = outcome.forks().map(|fork| fork.id()).collect();
     assert_eq!(fork_ids, vec![first_fork.id(), second_fork.id()]);
     assert!(outcome.is_ok());

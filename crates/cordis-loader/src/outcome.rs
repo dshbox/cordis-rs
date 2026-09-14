@@ -24,6 +24,7 @@ use crate::resolver::ResolverFailure;
 /// separately disabled Plugins; otherwise a reachable group is [`Group`](Self::Group),
 /// a reachable disabled Plugin is [`Disabled`](Self::Disabled), and a reachable
 /// enabled Plugin is either [`Spawned`](Self::Spawned) or [`Failed`](Self::Failed).
+#[derive(Debug)]
 pub enum EntryOutcome {
     /// One reachable structural sequencing group; no Fiber is spawned for it.
     Group {
@@ -64,7 +65,7 @@ pub enum EntryOutcome {
 
 impl EntryOutcome {
     /// Exact plan-entry correlation identity carried by this outcome.
-    fn id(&self) -> &EntryId {
+    pub fn id(&self) -> &EntryId {
         match self {
             Self::Group { id }
             | Self::Disabled { id }
@@ -107,6 +108,8 @@ pub enum LoaderFailure {
 /// no last-wins resolve-key projection. Construction is the Loader-to-caller
 /// ownership handoff for successful Forks; after delivery, dropping this value or
 /// any contained Fork is inert and lifecycle composition is caller policy.
+#[derive(Debug)]
+#[must_use = "LoadOutcome carries the caller's Fork controls; inspect or retain it explicitly"]
 pub struct LoadOutcome {
     entries: Vec<EntryOutcome>,
 }
