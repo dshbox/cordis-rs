@@ -1,4 +1,10 @@
+# Canonical development and UI-diagnostic toolchain.
+#
+# trybuild snapshots are compiler UI contracts, so this version is intentionally
+# pinned to an exact Rust patch release. Bump it deliberately together with any
+# required `.stderr` refreshes. CI has a separate floating-stable compatibility
+# lane that never compares trybuild golden diagnostics.
 [toolchain]
-channel = "stable"
+channel = "1.98.1"
 profile = "minimal"
-components = ["clippy", "rustfmt"]
+components = ["clippy", "rustfmt", "rust-src"]

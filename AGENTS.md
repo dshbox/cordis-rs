@@ -25,6 +25,17 @@ invocations share one log directory (`target/gates/<run-id>/`) and never
 collide with a parallel session's. Grep a gate's log instead of
 re-running it.
 
+### UI diagnostics
+
+`trybuild` `.stderr` files are golden compiler-UI contracts. The exact Rust
+patch release and `rust-src` component in `rust-toolchain.toml` are the
+canonical snapshot authority; do not bless snapshots under an arbitrary
+`stable` toolchain. `ci/toolchain-contract.sh` keeps local/CI toolchain
+selection aligned. CI also compiles all targets on floating latest stable,
+but that compatibility lane intentionally does not compare golden stderr.
+When upgrading the canonical Rust version, review any snapshot refreshes as
+part of that same deliberate toolchain-upgrade change.
+
 ## Conversation
 
 Conversation with the author may be Chinese, but keep

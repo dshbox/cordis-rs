@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# gates: all six CI gates in one local command — the same checks
-# .github/workflows/ci.yml runs, in the same order, each exactly once.
+# gates: the deterministic local checks plus the floating-stable compatibility
+# check, in the same contract used by .github/workflows/ci.yml.
 # Run it before committing; ask follow-up questions of a gate's log
 # instead of re-running the gate.
 #
@@ -17,10 +17,17 @@
 # hang fails as exit 124 instead of blocking the run. GATES_TEST_TIMEOUT
 # (seconds, default 300) overrides the test budget.
 #
-# Usage: ci/gates.sh [run-id] [gate ...]   # gates default: all six
+# Usage: ci/gates.sh [run-id] [gate ...]   # gates default: all eight
 set -u
 
 cd "$(dirname "$0")/.."
+
+# Local gates are reproducible even when the caller has an ambient rustup
+# override. The `latest` gate opts back into the floating stable alias for its
+# compatibility-only compile check.
+canonical_rust="$(sed -n 's/^channel = "\([^"]*\)"$/\1/p' rust-toolchain.toml)"
+[ -n "$canonical_rust" ] || { echo 'gates: missing rust-toolchain.toml channel' >&2; exit 1; }
+export RUSTUP_TOOLCHAIN="$canonical_rust"
 
 logdir=target/gates
 mkdir -p "$logdir"
@@ -30,11 +37,11 @@ run_id=
 # First arg names the run unless it is itself a gate.
 if [ $# -gt 0 ]; then
   case $1 in
-    fmt|clippy|vocab|test|doc|examples) ;;
+    toolchain|fmt|clippy|vocab|test|doc|examples|latest) ;;
     *) run_id=$1; shift; gates=("$@") ;;
   esac
 fi
-[ $# -eq 0 ] && gates=(fmt clippy vocab test doc examples)
+[ $# -eq 0 ] && gates=(toolchain fmt clippy vocab test doc examples latest)
 [ -n "$run_id" ] || run_id="$(date +%Y%m%d-%H%M%S).$$"
 # The run-id is a path component under target/gates/ — keep it one.
 case $run_id in
@@ -52,33 +59,37 @@ ln -sfn "$run_id" "$logdir/latest"
 ls -1dt "$logdir"/*/ 2>/dev/null | grep -v '/latest/$' | tail -n +11 | xargs -r rm -rf
 printf 'run %s — logs in %s\n' "$run_id" "$run_dir"
 
+gate_toolchain() { ci/toolchain-contract.sh; }
+
 gate_fmt()    { cargo fmt --all --check; }
 
-gate_clippy() { cargo clippy --workspace --all-targets -- -D warnings; }
+gate_clippy() { cargo clippy --locked --workspace --all-targets -- -D warnings; }
 
 gate_vocab()  { ci/harness-vocab-scan.sh; }
 
-gate_test()   { timeout --kill-after=5s "${GATES_TEST_TIMEOUT:-300}" cargo test --workspace; }
+gate_test()   { timeout --kill-after=5s "${GATES_TEST_TIMEOUT:-300}" cargo test --locked --workspace; }
 
-gate_doc()    { RUSTDOCFLAGS='-D warnings' cargo doc --workspace --no-deps; }
+gate_doc()    { RUSTDOCFLAGS='-D warnings' cargo doc --locked --workspace --no-deps; }
+
+gate_latest() { RUSTUP_TOOLCHAIN=stable cargo check --locked --workspace --all-targets; }
 
 gate_examples() {
   # Build first so the per-example timeout measures run time, not cold
   # compile (same rationale as the CI job). Examples are headless and
   # self-terminating; stdin stays closed so the gate never depends on a TTY.
-  cargo build --workspace || return
+  cargo build --locked --workspace || return
   # The example list stays hardcoded and hand-updated in ci.yml; deriving it
   # here keeps one source of truth. Deriving zero
   # names is an error — an empty list would pass the gate vacuously.
   local examples
-  examples="$(sed -n 's/.*cargo run -p \([a-z_]*\) *$/\1/p' .github/workflows/ci.yml)"
+  examples="$(sed -n 's/.*cargo run \(--locked \)\?-p \([a-z_]*\) *$/\2/p' .github/workflows/ci.yml)"
   if [ -z "$examples" ]; then
     echo 'gates: no examples found in .github/workflows/ci.yml' >&2
     return 1
   fi
   local ex
   for ex in $examples; do
-    timeout --kill-after=5s 120 cargo run -p "$ex" < /dev/null || return
+    timeout --kill-after=5s 120 cargo run --locked -p "$ex" < /dev/null || return
   done
 }
 
@@ -100,19 +111,21 @@ run() {
 }
 
 gates=("$@")
-[ $# -eq 0 ] && gates=(fmt clippy vocab test doc examples)
+[ $# -eq 0 ] && gates=(toolchain fmt clippy vocab test doc examples latest)
 
 for g in "${gates[@]}"; do
   case $g in
+    toolchain) run toolchain gate_toolchain ;;
     fmt)      run fmt      gate_fmt ;;
     clippy)   run clippy   gate_clippy ;;
     vocab)    run vocab    gate_vocab ;;
     test)     run test     gate_test ;;
     doc)      run doc      gate_doc ;;
     examples) run examples gate_examples ;;
+    latest)   run latest   gate_latest ;;
     *)
       printf 'gates: unknown gate: %s\n' "$g" >&2
-      printf 'usage: ci/gates.sh [run-id] [gate ...]  # gates: fmt clippy vocab test doc examples\n' >&2
+      printf 'usage: ci/gates.sh [run-id] [gate ...]  # gates: toolchain fmt clippy vocab test doc examples latest\n' >&2
       exit 2
       ;;
   esac

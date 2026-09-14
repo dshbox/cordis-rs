@@ -1,0 +1,28 @@
+name: Setup Rust
+description: Install and select the Cordis Rust toolchain for a CI lane
+
+inputs:
+  toolchain:
+    description: Rustup toolchain name. The default must match rust-toolchain.toml.
+    required: false
+    default: "1.98.1"
+  components:
+    description: Comma-separated rustup components
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Install Rust ${{ inputs.toolchain }}
+      uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable action code
+      with:
+        toolchain: ${{ inputs.toolchain }}
+        components: ${{ inputs.components }}
+
+    # rust-toolchain.toml is a directory override and otherwise wins over the
+    # default selected by rustup. Export the lane explicitly so MSRV/latest
+    # jobs cannot silently run the canonical compiler instead.
+    - name: Select Rust ${{ inputs.toolchain }}
+      shell: bash
+      run: echo "RUSTUP_TOOLCHAIN=${{ inputs.toolchain }}" >> "$GITHUB_ENV"

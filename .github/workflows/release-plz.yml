@@ -29,8 +29,8 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install latest stable Rust
-        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - name: Install canonical Rust
+        uses: ./.github/actions/setup-rust
 
       - name: Create or update the release PR
         uses: release-plz/action@8e61445f0b34e7c6d985255f2f1f05a36eb350dc # v0.5
@@ -50,8 +50,8 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install latest stable Rust
-        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - name: Install canonical Rust
+        uses: ./.github/actions/setup-rust
 
       - name: Publish, tag, and create the GitHub release
         uses: release-plz/action@8e61445f0b34e7c6d985255f2f1f05a36eb350dc # v0.5

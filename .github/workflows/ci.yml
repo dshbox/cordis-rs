@@ -26,7 +26,9 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@688313b0823df1393bcebb1b4add0438a6d36884 # 1.88.0
+      - uses: ./.github/actions/setup-rust
+        with:
+          toolchain: 1.88.0
       - run: cargo check --locked --workspace --all-targets
 
   audit:
@@ -35,6 +37,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup-rust
       - uses: taiki-e/install-action@3f74d7c16a4242f1c95561e98edc25d36adb4375 # v2
         with:
           tool: cargo-audit
@@ -47,7 +50,7 @@ jobs:
       - run: cargo deny check bans licenses sources
 
   test:
-    name: Test stable (${{ matrix.os }})
+    name: Test canonical Rust (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     strategy:
@@ -56,14 +59,28 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - uses: ./.github/actions/setup-rust
         with:
           # trybuild golden diagnostics include spans from the Rust standard
-          # library source. Keep runner diagnostics identical to the environment
-          # in which the .stderr contracts are generated.
+          # library source. Both rustc and rust-src are part of the snapshot
+          # authority; upgrades are deliberate, never floating.
           components: rust-src
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - run: cargo test --locked --workspace
+
+  latest:
+    name: Latest stable compatibility
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup-rust
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      # This lane detects language/compiler compatibility without comparing
+      # compiler-rendered trybuild stderr against canonical golden snapshots.
+      - run: cargo check --locked --workspace --all-targets
 
   quality:
     name: Formatting, Clippy, docs, vocabulary
@@ -71,10 +88,11 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - uses: ./.github/actions/setup-rust
         with:
-          components: clippy, rustfmt
+          components: clippy,rustfmt
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - run: ci/toolchain-contract.sh
       - run: cargo fmt --all --check
       - run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - run: ci/harness-vocab-scan.sh
@@ -88,15 +106,15 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - uses: ./.github/actions/setup-rust
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - run: cargo build --locked --workspace
-      - run: timeout --kill-after=5s 120 cargo run -p hello_plugin
-      - run: timeout --kill-after=5s 120 cargo run -p gateway
-      - run: timeout --kill-after=5s 120 cargo run -p worker_daemon
-      - run: timeout --kill-after=5s 120 cargo run -p scopes_tenants
-      - run: timeout --kill-after=5s 120 cargo run -p logging_exporters
-      - run: timeout --kill-after=5s 120 cargo run -p chat_capstone
+      - run: timeout --kill-after=5s 120 cargo run --locked -p hello_plugin
+      - run: timeout --kill-after=5s 120 cargo run --locked -p gateway
+      - run: timeout --kill-after=5s 120 cargo run --locked -p worker_daemon
+      - run: timeout --kill-after=5s 120 cargo run --locked -p scopes_tenants
+      - run: timeout --kill-after=5s 120 cargo run --locked -p logging_exporters
+      - run: timeout --kill-after=5s 120 cargo run --locked -p chat_capstone
 
   package:
     name: Package release crates
@@ -104,6 +122,6 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - uses: ./.github/actions/setup-rust
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - run: ci/package-release-crates.sh

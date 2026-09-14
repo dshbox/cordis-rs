@@ -10,7 +10,7 @@ updates:
     schedule:
       interval: "weekly"
     ignore:
-      # The MSRV job intentionally uses a fixed Rust release, while the stable
-      # jobs intentionally resolve `stable` at runtime. Update this action pin
-      # deliberately so Dependabot cannot change toolchain semantics.
+      # Toolchain semantics are owned by rust-toolchain.toml plus the local
+      # setup-rust action. Keep the underlying installer action SHA deliberate;
+      # ci/toolchain-contract.sh guards the canonical/MSRV/latest lane split.
       - dependency-name: "dtolnay/rust-toolchain"
