@@ -21,8 +21,8 @@ scripted EOF path.
 | `chat_capstone` | dual-frontend chat; the suite's capstone | landed (core-v2 ticket 27) |
 
 `examples/common` is the shared helper crate (`publish = false`):
-boot/teardown mechanics (`boot_report` / `teardown`) and the ops-console
-trio (`section`, `flip!` — the suite's one tiny macro — `boot_report`).
+boot/teardown mechanics (`boot_report` / `teardown`) and the shared
+ops-console section rendering (`section`).
 Policy — supervision, error aggregation, narration ordering — stays
 app-side.
 

@@ -4,14 +4,11 @@
 //! the same boot/teardown choreography by hand (probe wall W1, three
 //! instances); this crate is the one helper the suite owns instead:
 //!
-//! - the ops-console trio — [`section`], [`flip!`] (the suite's one tiny
-//!   macro), and [`boot_report`];
+//! - the ops-console helpers — [`section`] and [`boot_report`];
 //! - the boot/teardown mechanics — [`Roster`] (the spawn-ordered
 //!   accumulation), per-fork ready rows with ✓ / ⏳ +
 //!   [`Fork::pending_missing`] / ✗ + error, and reverse-order
 //!   [`teardown`];
-//! - the settle seat — [`await_state`], the one wait-with-evidence
-//!   spelling for a tour's "proven, not asserted" state waits.
 //!
 //! It deliberately does **not** own policy: supervision (the two-channel
 //! apply-time vs run-time split stays app vocabulary), `internal/*`
@@ -22,38 +19,12 @@
 //!
 //! [`Fork::pending_missing`]: cordis_core::Fork::pending_missing
 
-use std::time::Duration;
-
 use cordis_core::{FiberState, Fork};
 
 /// Print one ops-console section header — the suite's universal
 /// narrative beat (`══ title ══`).
 pub fn section(title: &str) {
     println!("\n══ {title} ══");
-}
-
-/// Report a config flip the way an operator reads it: match on the
-/// [`Fork::update`](cordis_core::Fork::update) outcome — ✓ when the
-/// swap applied, ⊘ when a layer vetoed (it returned without calling
-/// `next`, so nothing swapped), ⚠ with the error when rejected.
-///
-/// The suite's one macro (the macro verdict: nothing else earned it):
-/// plain functions everywhere else. The veto is real but silent in the
-/// waterfall itself — this is where the suite names it (ADR 0018).
-#[macro_export]
-macro_rules! flip {
-    ($result:expr, $what:expr) => {
-        match $result {
-            Ok(cordis_core::UpdateOutcome::Applied) => {
-                println!("  ✓ flip accepted: {}", $what)
-            }
-            Ok(cordis_core::UpdateOutcome::Vetoed) => println!(
-                "  ⊘ flip vetoed: {} — a layer returned without calling next",
-                $what
-            ),
-            Err(e) => println!("  ⚠ flip rejected: {} — {e}", $what),
-        }
-    };
 }
 
 /// Shorten a plugin's type name for console rows: the last `::` segment
@@ -113,18 +84,6 @@ impl FromIterator<Fork> for Roster {
             forks: forks.into_iter().collect(),
         }
     }
-}
-
-/// The suite's probe-evidence budget for state waits (v1's hand-rolled
-/// 5 ms poll loops died at `wait_state`, ADR 0004): a timeout here is
-/// CI failure evidence, not a crash policy.
-const EVIDENCE_BUDGET: Duration = Duration::from_secs(5);
-
-/// Wait for `fork` to reach `state` under the suite's evidence budget,
-/// narrating what the wait proves on failure — the one spelling every
-/// tour's "proven, not asserted" state wait collapses into.
-pub async fn await_state(fork: &Fork, state: FiberState, proof: &str) {
-    fork.wait_state(state, EVIDENCE_BUDGET).await.expect(proof)
 }
 
 /// Settled outcome of one [`boot_report`] pass: the row counts the app's
