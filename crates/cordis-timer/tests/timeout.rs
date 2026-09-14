@@ -75,6 +75,15 @@ async fn construction_owns_work_without_polling_it() {
     assert_eq!(polls.get(), 0, "abandonment must not poll work");
 }
 
+#[test]
+fn timeout_outcome_is_debug_when_output_is_debug() {
+    assert_eq!(
+        format!("{:?}", TimeoutOutcome::Completed("value")),
+        "Completed(\"value\")"
+    );
+    assert_eq!(format!("{:?}", TimeoutOutcome::<()>::Elapsed), "Elapsed");
+}
+
 #[tokio::test(start_paused = true)]
 async fn work_ready_before_deadline_returns_completed_output() {
     let ctx = Context::new();

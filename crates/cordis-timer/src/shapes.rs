@@ -229,6 +229,7 @@ impl Stream for Interval {
 }
 
 /// The normal terminal outcome of a [`Timeout`].
+#[derive(Debug)]
 pub enum TimeoutOutcome<T> {
     /// The owned work became ready before the pinned deadline elapsed.
     Completed(T),
