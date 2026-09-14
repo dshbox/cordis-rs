@@ -6,7 +6,7 @@
 //! this facade to keep `use cordis::...` imports.
 
 pub use cordis_core::{
-    BoxError, ConfigurableService, Context, Event, FiberId, FiberState, Fork, InjectSpec, Level,
-    Logger, Plugin, PreparedChange, PreparedPlugin, QueryOutcome, Routing, Scope, Service,
+    BoxError, ConfigurableService, Context, Event, FiberHandle, FiberId, FiberState, InjectSpec,
+    Level, Logger, Plugin, PreparedChange, PreparedPlugin, QueryOutcome, Routing, Scope, Service,
     ServiceRealm, UpdateOutcome, effect, event, lifecycle, logger, observation, plugin, service,
 };

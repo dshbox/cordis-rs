@@ -57,7 +57,7 @@ Five types carry most of the public model:
 
 - **`Context`** — a cheap immutable view into one Cordis Runtime.
 - **`Plugin`** — reusable behavior with typed source configuration and runtime input.
-- **`Fork`** — the lifecycle handle for one admitted non-root Fiber.
+- **`FiberHandle`** — the lifecycle handle for one admitted non-root Fiber.
 - **`Service`** — a typed, named capability published into an exact service realm.
 - **`Event`** — a typed runtime communication contract with explicit routing.
 
@@ -76,7 +76,7 @@ PreparedPlugin
   │
   │ Context::spawn(...)
   ▼
-Fork / Fiber
+FiberHandle / Fiber
 ```
 
 `prepare()` runs before lifecycle admission. `spawn()` is the first operation
@@ -85,7 +85,7 @@ allowed to create Runtime lifecycle state.
 ## Quick start
 
 The smallest complete flow is: define an Event, define a Plugin, prepare and
-spawn it, dispatch the Event, then explicitly dispose the returned Fork.
+spawn it, dispatch the Event, then explicitly dispose the returned FiberHandle.
 
 ```rust
 use std::convert::Infallible;
@@ -134,11 +134,11 @@ async fn main() -> Result<(), BoxError> {
     let plugin = Echo;
     let input = plugin.prepare(())?;
     let prepared = PreparedPlugin::from_input(plugin, input);
-    let fork = ctx.spawn(prepared).await?;
+    let fiber_handle = ctx.spawn(prepared).await?;
 
     ctx.emit::<Ping>(Routing::Unscoped, "world".into()).await?;
 
-    fork.dispose().await?;
+    fiber_handle.dispose().await?;
     Ok(())
 }
 ```
@@ -151,7 +151,7 @@ cargo run -p hello_plugin
 
 ## Lifecycle and convergence
 
-A successful `Context::spawn()` returns a `Fork` only after the new Fiber has
+A successful `Context::spawn()` returns a `FiberHandle` only after the new Fiber has
 settled for the current service snapshot. The stable result is normally:
 
 - **Active** — all required Services are available and `apply()` succeeded.
@@ -161,7 +161,7 @@ Requirements are declared with `InjectSpec`. They are lifecycle prerequisites,
 not constructor injection. When an exact required Service publication appears or
 disappears, Cordis converges affected Fibers toward their new stable state.
 
-A `Fork` exposes the main lifecycle operations:
+A `FiberHandle` exposes the main lifecycle operations:
 
 - `ready()` waits for the current stable state.
 - `restart()` reapplies the current committed input on the same Fiber.
@@ -169,7 +169,7 @@ A `Fork` exposes the main lifecycle operations:
 - `era_swap(PreparedChange)` performs identity-breaking replacement; a successful successor has a fresh Fiber identity.
 - `dispose()` ends the Fiber and runs its cleanup.
 
-Dropping a `Fork` does **not** dispose the Fiber. Lifecycle ownership is explicit.
+Dropping a `FiberHandle` does **not** dispose the Fiber. Lifecycle ownership is explicit.
 
 Resources registered through a Plugin's apply `Context` are owned by that apply
 generation. Listener registrations, Service publications, tasks, effects, and
@@ -298,7 +298,7 @@ sharing one Event seat.
 | Crate | Role |
 |---|---|
 | `cordis-rs` | application facade preserving the historical `cordis` import |
-| `cordis-core` | canonical Context, Plugin/Fork lifecycle, Services, Events, effects, logging, runtime observation |
+| `cordis-core` | canonical Context, Plugin/FiberHandle lifecycle, Services, Events, effects, logging, runtime observation |
 | `cordis-timer` | generation-owned sleep, interval, and timeout operations |
 | `cordis-loader` | immutable declarative load plans and synchronous typed target resolution |
 

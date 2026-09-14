@@ -202,7 +202,7 @@ async fn logger_names_default_to_the_hyphenated_fiber_name() {
     assert_eq!(ctx.logger().name(), "root", "the root fiber's name");
 
     let captured: Captured = Default::default();
-    let fork = ctx
+    let fiber_handle = ctx
         .spawn(PreparedPlugin::from_input(
             ContextGrabber {
                 captured: captured.clone(),
@@ -211,7 +211,7 @@ async fn logger_names_default_to_the_hyphenated_fiber_name() {
         ))
         .await
         .unwrap();
-    fork.ready().await.unwrap();
+    fiber_handle.ready().await.unwrap();
 
     let plugin_ctx = captured.lock().clone().expect("apply ran");
     assert_eq!(
@@ -265,7 +265,7 @@ async fn exporter_is_removed_when_its_fiber_disposes() {
 
     let ctx = Context::new();
     let counting = Counting::new();
-    let fork = ctx
+    let fiber_handle = ctx
         .spawn(PreparedPlugin::from_input(
             ExporterPlugin {
                 counting: counting.clone(),
@@ -274,7 +274,7 @@ async fn exporter_is_removed_when_its_fiber_disposes() {
         ))
         .await
         .unwrap();
-    fork.ready().await.unwrap();
+    fiber_handle.ready().await.unwrap();
 
     // attached while the plugin is active
     ctx.logger().info("during");
@@ -282,7 +282,7 @@ async fn exporter_is_removed_when_its_fiber_disposes() {
 
     // upstream registers exporters via ctx.effect (logger.ts
     // `ctx.logger.exporter()`), so dispose detaches them
-    fork.dispose().await.unwrap();
+    fiber_handle.dispose().await.unwrap();
     ctx.logger().info("after");
     assert_eq!(
         counting.len(),
@@ -334,7 +334,7 @@ fn buffer_exporter_clear_empties_the_ring() {
 async fn add_exporter_on_disposed_fiber_errors_and_rolls_back() {
     let root = Context::new();
     let captured: Captured = Default::default();
-    let fork = root
+    let fiber_handle = root
         .spawn(PreparedPlugin::from_input(
             ContextGrabber {
                 captured: captured.clone(),
@@ -344,7 +344,7 @@ async fn add_exporter_on_disposed_fiber_errors_and_rolls_back() {
         .await
         .unwrap();
     let dead = captured.lock().clone().expect("apply ran");
-    fork.dispose().await.unwrap();
+    fiber_handle.dispose().await.unwrap();
 
     let err = dead
         .add_exporter(Arc::new(BufferExporter::new(4, Level::Info).unwrap()))
@@ -389,7 +389,7 @@ impl Drop for DroppingExporter {
 async fn exporter_removal_drops_the_exporter_outside_the_list_lock() {
     let root = Context::new();
     let captured: Captured = Default::default();
-    let fork = root
+    let fiber_handle = root
         .spawn(PreparedPlugin::from_input(
             ContextGrabber {
                 captured: captured.clone(),
@@ -413,7 +413,7 @@ async fn exporter_removal_drops_the_exporter_outside_the_list_lock() {
                 .enable_all()
                 .build()
                 .expect("probe runtime");
-            rt.block_on(fork.dispose())
+            rt.block_on(fiber_handle.dispose())
                 .expect("dispose itself succeeds");
         },
     );
@@ -460,7 +460,7 @@ fn exporter_registration_removes_one_exact_duplicate_occurrence() {
 async fn refused_exporter_registration_leaves_no_trace() {
     let root = Context::new();
     let captured: Captured = Default::default();
-    let fork = root
+    let fiber_handle = root
         .spawn(PreparedPlugin::from_input(
             ContextGrabber {
                 captured: captured.clone(),
@@ -470,7 +470,7 @@ async fn refused_exporter_registration_leaves_no_trace() {
         .await
         .unwrap();
     let dead = captured.lock().clone().expect("apply ran");
-    fork.dispose().await.unwrap();
+    fiber_handle.dispose().await.unwrap();
 
     let leaked = Arc::new(BufferExporter::new(4, Level::Info).unwrap());
     dead.add_exporter(leaked.clone())
@@ -739,7 +739,7 @@ async fn logger_remains_foundation_available_across_generation_phases() {
     let buffer = Arc::new(BufferExporter::new(16, Level::Debug).unwrap());
     let _buffer_registration = root.add_exporter(buffer.clone()).unwrap();
     let captured: Captured = Default::default();
-    let fork = root
+    let fiber_handle = root
         .spawn(PreparedPlugin::from_input(
             PhasePlugin {
                 attempts: Arc::new(AtomicUsize::new(0)),
@@ -749,12 +749,13 @@ async fn logger_remains_foundation_available_across_generation_phases() {
         ))
         .await
         .unwrap();
-    fork.ready().await.unwrap();
+    fiber_handle.ready().await.unwrap();
 
-    fork.restart()
+    fiber_handle
+        .restart()
         .await
         .expect_err("second apply intentionally fails");
-    assert_eq!(fork.state(), cordis_core::FiberState::Failed);
+    assert_eq!(fiber_handle.state(), cordis_core::FiberState::Failed);
     captured
         .lock()
         .clone()
@@ -854,7 +855,7 @@ async fn exact_remove_can_win_while_generation_drain_is_in_progress() {
     let registration = Arc::new(Mutex::new(None));
     let cleanup_started = Arc::new(Notify::new());
     let cleanup_release = Arc::new(Notify::new());
-    let fork = root
+    let fiber_handle = root
         .spawn(PreparedPlugin::from_input(
             DrainRacePlugin {
                 counter: counter.clone(),
@@ -866,7 +867,7 @@ async fn exact_remove_can_win_while_generation_drain_is_in_progress() {
         ))
         .await
         .unwrap();
-    fork.ready().await.unwrap();
+    fiber_handle.ready().await.unwrap();
     let exact = registration
         .lock()
         .take()
@@ -874,7 +875,7 @@ async fn exact_remove_can_win_while_generation_drain_is_in_progress() {
     root.logger().info("before drain");
     assert_eq!(counter.load(Ordering::SeqCst), 1);
 
-    let dispose = tokio::spawn(async move { fork.dispose().await });
+    let dispose = tokio::spawn(async move { fiber_handle.dispose().await });
     cleanup_started.notified().await;
     assert!(exact.remove());
     root.logger().info("removed during drain");

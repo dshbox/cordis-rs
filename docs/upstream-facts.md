@@ -14,6 +14,8 @@
 > `docs/harness/upstream-facts.md` (pinned-rev + `path:line`), content
 > re-derived from source.
 
+> **Current Cordis terminology:** this historical fact base predates ADR 0039. Where it says `Fork`, read that as the former Cordis spelling for the current `FiberHandle`; upstream itself still has no `Fork` symbol. Historical API names such as `Fork::update` are left unchanged as evidence.
+
 How to use this file:
 
 - Every entry carries a `Parity:` mark. Ticket 07 (upstream

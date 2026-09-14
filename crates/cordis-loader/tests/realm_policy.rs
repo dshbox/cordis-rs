@@ -122,12 +122,12 @@ fn resolver(request: PluginRequest<'_>) -> Result<Option<PreparedPlugin>, Infall
     Ok(Some(prepared))
 }
 
-fn fork_for<'a>(
+fn fiber_handle_for<'a>(
     outcome: &'a cordis_loader::LoadOutcome,
     id: &cordis_loader::EntryId,
-) -> &'a cordis_core::Fork {
+) -> &'a cordis_core::FiberHandle {
     match outcome.entry(id) {
-        Some(EntryOutcome::Spawned { fork, .. }) => fork,
+        Some(EntryOutcome::Spawned { fiber_handle, .. }) => fiber_handle,
         _ => panic!("expected spawned row"),
     }
 }
@@ -158,8 +158,8 @@ fn named_service_for_provider(
 }
 
 async fn dispose_all(outcome: &cordis_loader::LoadOutcome) {
-    for fork in outcome.forks() {
-        fork.dispose().await.unwrap();
+    for fiber_handle in outcome.fiber_handles() {
+        fiber_handle.dispose().await.unwrap();
     }
 }
 
@@ -249,7 +249,7 @@ async fn realm_policy_is_execution_local_service_exact_and_independent_of_struct
     assert!(outcome.is_ok());
 
     let realm = |id: &cordis_loader::EntryId| {
-        let provider = fork_for(&outcome, id).id();
+        let provider = fiber_handle_for(&outcome, id).id();
         service_for_provider(&ctx, &provider).realm().clone()
     };
 
@@ -279,7 +279,7 @@ async fn realm_policy_is_execution_local_service_exact_and_independent_of_struct
         "Plugin parentage does not imply realm inheritance"
     );
 
-    let pair_provider = fork_for(&outcome, &pair).id();
+    let pair_provider = fiber_handle_for(&outcome, &pair).id();
     let mapped = named_service_for_provider(&ctx, &pair_provider, MappedExact::NAME);
     let unmapped = named_service_for_provider(&ctx, &pair_provider, UnmappedCompanion::NAME);
     assert_eq!(
@@ -353,7 +353,7 @@ async fn shared_placement_collision_fails_only_that_row_and_later_rows_continue(
         outcome.entry(&later),
         Some(EntryOutcome::Spawned { .. })
     ));
-    assert_eq!(outcome.forks().count(), 2);
+    assert_eq!(outcome.fiber_handles().count(), 2);
     assert!(!outcome.is_ok());
 
     dispose_all(&outcome).await;
@@ -407,15 +407,15 @@ async fn cloned_plan_reuse_preserves_entry_correlation_but_refreshes_runtime_ide
         assert!(outcome.entry(&private_entry).is_some());
     }
 
-    let first_fork = fork_for(&first, &entry);
-    let second_fork = fork_for(&second, &entry);
+    let first_fiber_handle = fiber_handle_for(&first, &entry);
+    let second_fiber_handle = fiber_handle_for(&second, &entry);
     assert_ne!(
-        first_fork.id(),
-        second_fork.id(),
+        first_fiber_handle.id(),
+        second_fiber_handle.id(),
         "FiberId is execution-specific"
     );
-    let first_service = service_for_provider(&same_runtime, &first_fork.id());
-    let second_service = service_for_provider(&same_runtime, &second_fork.id());
+    let first_service = service_for_provider(&same_runtime, &first_fiber_handle.id());
+    let second_service = service_for_provider(&same_runtime, &second_fiber_handle.id());
     assert_ne!(
         first_service.realm(),
         second_service.realm(),
@@ -426,30 +426,30 @@ async fn cloned_plan_reuse_preserves_entry_correlation_but_refreshes_runtime_ide
         second_service.id(),
         "publication occurrences are fresh per execution"
     );
-    let first_private_fork = fork_for(&first, &private_entry);
-    let second_private_fork = fork_for(&second, &private_entry);
-    let first_private = service_for_provider(&same_runtime, &first_private_fork.id());
-    let second_private = service_for_provider(&same_runtime, &second_private_fork.id());
+    let first_private_fiber_handle = fiber_handle_for(&first, &private_entry);
+    let second_private_fiber_handle = fiber_handle_for(&second, &private_entry);
+    let first_private = service_for_provider(&same_runtime, &first_private_fiber_handle.id());
+    let second_private = service_for_provider(&same_runtime, &second_private_fiber_handle.id());
     assert_ne!(
         first_private.realm(),
         second_private.realm(),
         "Private policy allocates a fresh realm again for each execution"
     );
 
-    first_fork.dispose().await.unwrap();
-    first_private_fork.dispose().await.unwrap();
+    first_fiber_handle.dispose().await.unwrap();
+    first_private_fiber_handle.dispose().await.unwrap();
     let remaining = same_runtime.runtime_snapshot();
     assert!(
         remaining
             .services()
             .iter()
-            .any(|service| service.provider() == &second_fork.id())
+            .any(|service| service.provider() == &second_fiber_handle.id())
     );
     assert!(
         remaining
             .services()
             .iter()
-            .all(|service| service.provider() != &first_fork.id())
+            .all(|service| service.provider() != &first_fiber_handle.id())
     );
 
     let other_runtime = Context::new();
@@ -459,14 +459,20 @@ async fn cloned_plan_reuse_preserves_entry_correlation_but_refreshes_runtime_ide
     assert!(
         matches!(third.entries()[2], EntryOutcome::Spawned { ref id, .. } if id == &private_entry)
     );
-    let third_fork = fork_for(&third, &entry);
-    let third_service = service_for_provider(&other_runtime, &third_fork.id());
-    assert_ne!(second_fork.id(), third_fork.id());
+    let third_fiber_handle = fiber_handle_for(&third, &entry);
+    let third_service = service_for_provider(&other_runtime, &third_fiber_handle.id());
+    assert_ne!(second_fiber_handle.id(), third_fiber_handle.id());
     assert_ne!(second_service.realm(), third_service.realm());
     assert_ne!(second_service.id(), third_service.id());
 
-    second_fork.dispose().await.unwrap();
-    fork_for(&second, &private_entry).dispose().await.unwrap();
-    third_fork.dispose().await.unwrap();
-    fork_for(&third, &private_entry).dispose().await.unwrap();
+    second_fiber_handle.dispose().await.unwrap();
+    fiber_handle_for(&second, &private_entry)
+        .dispose()
+        .await
+        .unwrap();
+    third_fiber_handle.dispose().await.unwrap();
+    fiber_handle_for(&third, &private_entry)
+        .dispose()
+        .await
+        .unwrap();
 }

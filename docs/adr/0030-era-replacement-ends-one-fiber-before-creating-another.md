@@ -35,15 +35,15 @@ transaction:
    stable Pending, affected dependents are re-queried fresh — including
    dependents discovered mid-swap — and converged to their final current
    targets, not merely observed off the old era.
-6. **Handoff.** Only then does the caller receive the fresh Fork.
+6. **Handoff.** Only then does the caller receive the fresh FiberHandle.
 
-A swap called through a closing or Disposed Fork refuses with `Closed`
-before successor allocation or any dependent effect. Dead-Fork respawn
+A swap called through a closing or Disposed FiberHandle refuses with `Closed`
+before successor allocation or any dependent effect. Dead-FiberHandle respawn
 does not exist: replacement requires a live source.
 
 An incomplete result is equally closed. If successor creation is refused
 before allocation, if a fresh successor is concurrently invalidated
-before Fork handoff, or if an allocated successor's apply fails or
+before FiberHandle handoff, or if an allocated successor's apply fails or
 panics, the outcome is the same closed middle state: the old Fiber is
 gone, no attempted successor remains resident, every attempted-successor
 cleanup has completed, and affected dependents have converged to their

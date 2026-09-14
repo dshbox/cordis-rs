@@ -103,9 +103,9 @@ async fn main() -> Result<(), BoxError> {
     let outcome = plan.load(&ctx, &resolver).await;
     assert!(outcome.is_ok());
 
-    // Delivered Forks are consumer-owned. Drop is inert; dispose explicitly.
-    for fork in outcome.forks() {
-        fork.dispose().await?;
+    // Delivered FiberHandles are consumer-owned. Drop is inert; dispose explicitly.
+    for fiber_handle in outcome.fiber_handles() {
+        fiber_handle.dispose().await?;
     }
 
     Ok(())
@@ -160,7 +160,7 @@ produces exactly one ordered `EntryOutcome`: structural group, disabled, pruned,
 spawned, or failed. Independent failures do not prevent later reachable entries
 from being attempted.
 
-`LoadOutcome::forks()` exposes successfully delivered Forks in outcome order.
+`LoadOutcome::fiber_handles()` exposes successfully delivered FiberHandles in outcome order.
 After delivery they are caller-owned and must be disposed explicitly.
 
 ## What changed from legacy `0.0.x`

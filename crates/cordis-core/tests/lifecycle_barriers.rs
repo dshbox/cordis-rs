@@ -44,27 +44,31 @@ impl Plugin for RetrySameTarget {
 async fn restart_preserves_identity_and_retries_a_same_target_failure() {
     let root = Context::new();
     let applies = Arc::new(AtomicU32::new(0));
-    let fork = root
+    let fiber_handle = root
         .spawn(prepared(RetrySameTarget {
             applies: applies.clone(),
         }))
         .await
         .unwrap();
-    let id = fork.id();
+    let id = fiber_handle.id();
 
-    let error = fork.restart().await.expect_err("second apply fails");
+    let error = fiber_handle
+        .restart()
+        .await
+        .expect_err("second apply fails");
     let RestartError::Apply(failure) = error else {
         panic!("expected typed apply failure: {error:?}")
     };
     assert_eq!(failure.kind(), PluginFailureKind::ReturnedError);
-    assert_eq!(fork.state(), FiberState::Failed);
-    assert_eq!(fork.id(), id);
+    assert_eq!(fiber_handle.state(), FiberState::Failed);
+    assert_eq!(fiber_handle.id(), id);
 
-    fork.restart()
+    fiber_handle
+        .restart()
         .await
         .expect("explicit restart retries the same parked target");
-    assert_eq!(fork.state(), FiberState::Active);
-    assert_eq!(fork.id(), id);
+    assert_eq!(fiber_handle.state(), FiberState::Active);
+    assert_eq!(fiber_handle.id(), id);
     assert_eq!(applies.load(Ordering::SeqCst), 3);
 }
 
@@ -98,28 +102,28 @@ impl Plugin for NeedsMissing {
 async fn restart_keeps_missing_requirements_pending_without_apply_and_closed_refuses() {
     let root = Context::new();
     let applies = Arc::new(AtomicU32::new(0));
-    let fork = root
+    let fiber_handle = root
         .spawn(prepared(NeedsMissing {
             applies: applies.clone(),
         }))
         .await
         .unwrap();
-    assert_eq!(fork.state(), FiberState::Pending);
-    fork.restart().await.unwrap();
-    assert_eq!(fork.state(), FiberState::Pending);
+    assert_eq!(fiber_handle.state(), FiberState::Pending);
+    fiber_handle.restart().await.unwrap();
+    assert_eq!(fiber_handle.state(), FiberState::Pending);
     assert_eq!(applies.load(Ordering::SeqCst), 0);
 
-    fork.dispose().await.unwrap();
-    let error = fork
+    fiber_handle.dispose().await.unwrap();
+    let error = fiber_handle
         .restart()
         .await
         .expect_err("closed Fiber refuses before change");
     assert!(matches!(error, RestartError::Closed));
-    assert_eq!(fork.state(), FiberState::Disposed);
+    assert_eq!(fiber_handle.state(), FiberState::Disposed);
 }
 
 struct RecursingCleanup {
-    fork: Arc<Mutex<Option<cordis_core::Fork>>>,
+    fiber_handle: Arc<Mutex<Option<cordis_core::FiberHandle>>>,
     restart_recursion: Arc<Mutex<Option<(LifecycleOperation, cordis_core::FiberId)>>>,
     dispose_recursion: Arc<Mutex<Option<(LifecycleOperation, cordis_core::FiberId)>>>,
 }
@@ -135,20 +139,26 @@ impl Plugin for RecursingCleanup {
     }
 
     async fn apply(&self, ctx: Context, _prepared: &()) -> Result<(), ApplyBoom> {
-        let fork_for_dispose = self.fork.clone();
+        let fiber_handle_for_dispose = self.fiber_handle.clone();
         let dispose_recursion = self.dispose_recursion.clone();
         ctx.effect(move || async move {
-            let fork = fork_for_dispose.lock().clone().unwrap();
-            let recursion = fork.dispose().await.expect_err("self-dispose must refuse");
+            let fiber_handle = fiber_handle_for_dispose.lock().clone().unwrap();
+            let recursion = fiber_handle
+                .dispose()
+                .await
+                .expect_err("self-dispose must refuse");
             *dispose_recursion.lock() = Some((recursion.operation(), recursion.fiber_id().clone()));
         })
         .map_err(|_| ApplyBoom)?;
 
-        let fork_for_restart = self.fork.clone();
+        let fiber_handle_for_restart = self.fiber_handle.clone();
         let restart_recursion = self.restart_recursion.clone();
         ctx.effect(move || async move {
-            let fork = fork_for_restart.lock().clone().unwrap();
-            let error = fork.restart().await.expect_err("self-restart must refuse");
+            let fiber_handle = fiber_handle_for_restart.lock().clone().unwrap();
+            let error = fiber_handle
+                .restart()
+                .await
+                .expect_err("self-restart must refuse");
             let RestartError::Recursion(recursion) = error else {
                 panic!("expected typed restart recursion, got {error:?}");
             };
@@ -162,21 +172,21 @@ impl Plugin for RecursingCleanup {
 #[tokio::test]
 async fn restart_and_dispose_refuse_self_waits_with_typed_operation_and_fiber_identity() {
     let root = Context::new();
-    let fork_cell = Arc::new(Mutex::new(None));
+    let fiber_handle_cell = Arc::new(Mutex::new(None));
     let restart_recursion = Arc::new(Mutex::new(None));
     let dispose_recursion = Arc::new(Mutex::new(None));
-    let fork = root
+    let fiber_handle = root
         .spawn(prepared(RecursingCleanup {
-            fork: fork_cell.clone(),
+            fiber_handle: fiber_handle_cell.clone(),
             restart_recursion: restart_recursion.clone(),
             dispose_recursion: dispose_recursion.clone(),
         }))
         .await
         .unwrap();
-    *fork_cell.lock() = Some(fork.clone());
-    let id = fork.id();
+    *fiber_handle_cell.lock() = Some(fiber_handle.clone());
+    let id = fiber_handle.id();
 
-    fork.restart().await.unwrap();
+    fiber_handle.restart().await.unwrap();
 
     assert_eq!(
         restart_recursion.lock().as_ref(),
@@ -222,7 +232,7 @@ async fn cancelled_postcommit_restart_waiter_does_not_stop_the_restart() {
     let applies = Arc::new(AtomicU32::new(0));
     let cleanup_started = Arc::new(tokio::sync::Notify::new());
     let cleanup_release = Arc::new(tokio::sync::Notify::new());
-    let fork = root
+    let fiber_handle = root
         .spawn(prepared(RestartCancellation {
             applies: applies.clone(),
             cleanup_started: cleanup_started.clone(),
@@ -230,19 +240,19 @@ async fn cancelled_postcommit_restart_waiter_does_not_stop_the_restart() {
         }))
         .await
         .unwrap();
-    let id = fork.id();
+    let id = fiber_handle.id();
 
     let waiter = tokio::spawn({
-        let fork = fork.clone();
-        async move { fork.restart().await }
+        let fiber_handle = fiber_handle.clone();
+        async move { fiber_handle.restart().await }
     });
     cleanup_started.notified().await;
-    assert_eq!(fork.state(), FiberState::Unloading);
+    assert_eq!(fiber_handle.state(), FiberState::Unloading);
     waiter.abort();
     cleanup_release.notify_one();
 
-    assert_eq!(fork.ready().await.unwrap(), FiberState::Active);
-    assert_eq!(fork.id(), id);
+    assert_eq!(fiber_handle.ready().await.unwrap(), FiberState::Active);
+    assert_eq!(fiber_handle.id(), id);
     assert_eq!(applies.load(Ordering::SeqCst), 2);
 }
 
@@ -292,7 +302,7 @@ async fn restart_keeps_ownership_through_release_time_drift_until_latest_target_
     let seen = Arc::new(Mutex::new(Vec::new()));
     let second_apply_started = Arc::new(tokio::sync::Notify::new());
     let second_apply_release = Arc::new(tokio::sync::Notify::new());
-    let fork = root
+    let fiber_handle = root
         .spawn(prepared(DriftDuringRestart {
             applies: applies.clone(),
             seen: seen.clone(),
@@ -303,8 +313,8 @@ async fn restart_keeps_ownership_through_release_time_drift_until_latest_target_
         .unwrap();
 
     let restart = tokio::spawn({
-        let fork = fork.clone();
-        async move { fork.restart().await }
+        let fiber_handle = fiber_handle.clone();
+        async move { fiber_handle.restart().await }
     });
     second_apply_started.notified().await;
     first.remove().unwrap();
@@ -312,7 +322,7 @@ async fn restart_keeps_ownership_through_release_time_drift_until_latest_target_
     second_apply_release.notify_one();
 
     restart.await.unwrap().unwrap();
-    assert_eq!(fork.state(), FiberState::Active);
+    assert_eq!(fiber_handle.state(), FiberState::Active);
     assert_eq!(applies.load(Ordering::SeqCst), 3);
     assert_eq!(&*seen.lock(), &[1, 1, 2]);
 }
@@ -351,7 +361,7 @@ async fn concurrent_disposals_coalesce_through_cleanup_disposed_and_unlink_after
     let cleanup_started = Arc::new(tokio::sync::Notify::new());
     let cleanup_release = Arc::new(tokio::sync::Notify::new());
     let cleanups = Arc::new(AtomicU32::new(0));
-    let fork = root
+    let fiber_handle = root
         .spawn(prepared(DisposeBarrier {
             cleanup_started: cleanup_started.clone(),
             cleanup_release: cleanup_release.clone(),
@@ -360,13 +370,13 @@ async fn concurrent_disposals_coalesce_through_cleanup_disposed_and_unlink_after
         .await
         .unwrap();
     let winner_waiter = tokio::spawn({
-        let fork = fork.clone();
-        async move { fork.dispose().await }
+        let fiber_handle = fiber_handle.clone();
+        async move { fiber_handle.dispose().await }
     });
     cleanup_started.notified().await;
     let coalesced = tokio::spawn({
-        let fork = fork.clone();
-        async move { fork.dispose().await }
+        let fiber_handle = fiber_handle.clone();
+        async move { fiber_handle.dispose().await }
     });
     tokio::task::yield_now().await;
     assert!(
@@ -378,13 +388,14 @@ async fn concurrent_disposals_coalesce_through_cleanup_disposed_and_unlink_after
 
     coalesced.await.unwrap().unwrap();
     assert_eq!(cleanups.load(Ordering::SeqCst), 1);
-    assert_eq!(fork.state(), FiberState::Disposed);
-    fork.dispose()
+    assert_eq!(fiber_handle.state(), FiberState::Disposed);
+    fiber_handle
+        .dispose()
         .await
         .expect("completed repeats coalesce successfully");
     tokio::task::yield_now().await;
     assert_eq!(cleanups.load(Ordering::SeqCst), 1);
-    assert_eq!(fork.state(), FiberState::Disposed);
+    assert_eq!(fiber_handle.state(), FiberState::Disposed);
 }
 
 struct DropOnlyCleanup {
@@ -412,19 +423,19 @@ async fn dropping_context_handles_never_runs_root_cleanup_and_surviving_runtime_
     let resident_ran = Arc::new(AtomicBool::new(false));
     {
         let root = Context::new();
-        let fork = root
+        let fiber_handle = root
             .spawn(prepared(DropOnlyCleanup {
                 ran: resident_ran.clone(),
             }))
             .await
             .unwrap();
-        drop(fork);
+        drop(fiber_handle);
         drop(root);
     }
     tokio::task::yield_now().await;
     assert!(
         !resident_ran.load(Ordering::SeqCst),
-        "dropping the last Context/Fork handles is storage drop, not implicit resident teardown"
+        "dropping the last Context or FiberHandle clones is storage drop, not implicit resident teardown"
     );
 
     let ran = Arc::new(AtomicBool::new(false));

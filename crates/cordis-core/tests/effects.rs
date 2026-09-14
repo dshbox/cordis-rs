@@ -23,8 +23,8 @@ use cordis_core::event::observer_sync;
 use cordis_core::lifecycle::SpawnError;
 use cordis_core::logger::BufferExporter;
 use cordis_core::{
-    BoxError, Context, Event, FiberState, Fork, InjectSpec, Level, Plugin, PreparedPlugin, Routing,
-    Service,
+    BoxError, Context, Event, FiberHandle, FiberState, InjectSpec, Level, Plugin, PreparedPlugin,
+    Routing, Service,
 };
 use parking_lot::Mutex;
 use std::convert::Infallible;
@@ -70,16 +70,16 @@ where
 }
 
 /// Spawn a plugin and wait out its initial settle.
-async fn spawn_settled<P>(ctx: &Context, plugin: P) -> Fork
+async fn spawn_settled<P>(ctx: &Context, plugin: P) -> FiberHandle
 where
     P: Plugin<Config = (), Input = (), ApplyError = ApplyFailure>,
 {
-    let fork = ctx
+    let fiber_handle = ctx
         .spawn(PreparedPlugin::from_input(plugin, ()))
         .await
         .expect("spawn admitted");
-    let _ = fork.ready().await;
-    fork
+    let _ = fiber_handle.ready().await;
+    fiber_handle
 }
 
 /// Stash-slot for a registration escaping its apply.
@@ -157,7 +157,7 @@ async fn dispose_reports_returned_error_and_consumes_the_occurrence() {
     let ran = Arc::new(AtomicU32::new(0));
     let slot: RegistrationSlot = Arc::new(Mutex::new(None));
     let (s, r) = (slot.clone(), ran.clone());
-    let fork = spawn_settled(
+    let fiber_handle = spawn_settled(
         &Context::new(),
         Effectful(move |ctx: Context| {
             *s.lock() = Some(
@@ -183,7 +183,7 @@ async fn dispose_reports_returned_error_and_consumes_the_occurrence() {
     assert_eq!(failure.diagnostic(), "offline boom");
     assert_eq!(ran.load(Ordering::SeqCst), 1, "cleanup ran once");
 
-    fork.dispose().await.unwrap();
+    fiber_handle.dispose().await.unwrap();
     assert_eq!(
         ran.load(Ordering::SeqCst),
         1,
@@ -196,7 +196,7 @@ async fn dispose_reports_panic_and_consumes_the_occurrence() {
     let ran = Arc::new(AtomicU32::new(0));
     let slot: RegistrationSlot = Arc::new(Mutex::new(None));
     let (s, r) = (slot.clone(), ran.clone());
-    let fork = spawn_settled(
+    let fiber_handle = spawn_settled(
         &Context::new(),
         Effectful(move |ctx: Context| {
             *s.lock() = Some(
@@ -222,7 +222,7 @@ async fn dispose_reports_panic_and_consumes_the_occurrence() {
     assert_eq!(failure.kind(), EffectFailureKind::Panic);
     assert_eq!(failure.diagnostic(), "dispose panic payload");
 
-    fork.dispose().await.unwrap();
+    fiber_handle.dispose().await.unwrap();
     assert_eq!(
         ran.load(Ordering::SeqCst),
         1,
@@ -239,7 +239,7 @@ async fn disarm_releases_without_running() {
     let ran = Arc::new(AtomicU32::new(0));
     let slot: RegistrationSlot = Arc::new(Mutex::new(None));
     let (s, r) = (slot.clone(), ran.clone());
-    let fork = spawn_settled(
+    let fiber_handle = spawn_settled(
         &Context::new(),
         Effectful(move |ctx: Context| {
             *s.lock() = Some(
@@ -260,7 +260,7 @@ async fn disarm_releases_without_running() {
         slot.lock().take().unwrap().disarm(),
         "first claim wins the occurrence"
     );
-    fork.dispose().await.unwrap();
+    fiber_handle.dispose().await.unwrap();
     assert_eq!(
         ran.load(Ordering::SeqCst),
         0,
@@ -274,7 +274,7 @@ async fn stale_control_reports_false_after_the_drain_won() {
     let disarm_slot: RegistrationSlot = Arc::new(Mutex::new(None));
     let dispose_slot: RegistrationSlot = Arc::new(Mutex::new(None));
     let (ds, ps, r) = (disarm_slot.clone(), dispose_slot.clone(), ran.clone());
-    let fork = spawn_settled(
+    let fiber_handle = spawn_settled(
         &Context::new(),
         Effectful(move |ctx: Context| {
             *ds.lock() = Some(
@@ -300,7 +300,7 @@ async fn stale_control_reports_false_after_the_drain_won() {
     )
     .await;
 
-    fork.dispose().await.unwrap();
+    fiber_handle.dispose().await.unwrap();
     assert_eq!(ran.load(Ordering::SeqCst), 2, "the drain claimed both");
     assert!(
         !disarm_slot.lock().take().unwrap().disarm(),
@@ -337,7 +337,7 @@ async fn commit_transfers_the_obligation_to_the_generation() {
     let weak = Arc::downgrade(&resource);
 
     let (c, slot) = (cleaned.clone(), cell.clone());
-    let fork = spawn_settled(
+    let fiber_handle = spawn_settled(
         &Context::new(),
         Effectful(move |ctx: Context| {
             let resource = slot.lock().take().expect("applied once");
@@ -363,7 +363,7 @@ async fn commit_transfers_the_obligation_to_the_generation() {
         "the committed cleanup obligation keeps the prepared resource alive"
     );
 
-    fork.dispose().await.unwrap();
+    fiber_handle.dispose().await.unwrap();
     assert_eq!(
         cleaned.load(Ordering::SeqCst),
         1,
@@ -379,7 +379,7 @@ async fn commit_transfers_the_obligation_to_the_generation() {
 async fn refusal_leaves_the_prepared_resource_with_the_caller() {
     let slot: Arc<Mutex<Option<Context>>> = Arc::new(Mutex::new(None));
     let s = slot.clone();
-    let fork = spawn_settled(
+    let fiber_handle = spawn_settled(
         &Context::new(),
         Effectful(move |ctx: Context| {
             *s.lock() = Some(ctx);
@@ -387,7 +387,7 @@ async fn refusal_leaves_the_prepared_resource_with_the_caller() {
         }),
     )
     .await;
-    fork.dispose().await.unwrap();
+    fiber_handle.dispose().await.unwrap();
     let dead_ctx = slot.lock().take().unwrap();
 
     let cleaned = Arc::new(AtomicU32::new(0));
@@ -433,7 +433,7 @@ impl Service for Counter {
     const NAME: &'static str = "counter";
 }
 
-/// Provider of [`Counter`]; disposing its fork withdraws the service.
+/// Provider of [`Counter`]; disposing its FiberHandle withdraws the service.
 struct ProvidesCounter;
 
 impl Plugin for ProvidesCounter {
@@ -492,7 +492,7 @@ async fn loading_and_active_generations_admit_cleanup() {
     let order: Arc<Mutex<Vec<&'static str>>> = Arc::new(Mutex::new(Vec::new()));
     let slot: Arc<Mutex<Option<Context>>> = Arc::new(Mutex::new(None));
     let (o, s) = (order.clone(), slot.clone());
-    let fork = spawn_settled(
+    let fiber_handle = spawn_settled(
         &Context::new(),
         Effectful(move |ctx: Context| {
             // Loading admission: registration while apply runs
@@ -514,7 +514,7 @@ async fn loading_and_active_generations_admit_cleanup() {
     })
     .expect("an Active generation admits cleanup");
 
-    fork.dispose().await.unwrap();
+    fiber_handle.dispose().await.unwrap();
     assert_eq!(
         *order.lock(),
         vec!["active", "loading"],
@@ -562,7 +562,7 @@ async fn failed_fiber_refuses_new_cleanup() {
     let slot: Arc<Mutex<Option<Context>>> = Arc::new(Mutex::new(None));
     let applies = Arc::new(AtomicU32::new(0));
     let (s, a) = (slot.clone(), applies.clone());
-    let fork = spawn_settled(
+    let fiber_handle = spawn_settled(
         &Context::new(),
         Effectful(move |ctx: Context| {
             *s.lock() = Some(ctx);
@@ -574,9 +574,12 @@ async fn failed_fiber_refuses_new_cleanup() {
         }),
     )
     .await;
-    fork.restart().await.expect_err("the re-apply failed");
+    fiber_handle
+        .restart()
+        .await
+        .expect_err("the re-apply failed");
     assert_eq!(
-        fork.state(),
+        fiber_handle.state(),
         FiberState::Failed,
         "the failed restart parks Failed"
     );
@@ -597,7 +600,7 @@ async fn effect_cleanup_runs_on_unload_and_on_dispose() {
     // drains that — each generation's obligation runs exactly once
     let ran = Arc::new(AtomicU32::new(0));
     let r = ran.clone();
-    let fork = spawn_settled(
+    let fiber_handle = spawn_settled(
         &Context::new(),
         Effectful(move |ctx: Context| {
             ctx.effect_sync({
@@ -611,14 +614,14 @@ async fn effect_cleanup_runs_on_unload_and_on_dispose() {
     )
     .await;
 
-    fork.restart().await.unwrap();
+    fiber_handle.restart().await.unwrap();
     assert_eq!(
         ran.load(Ordering::SeqCst),
         1,
         "restart drained the old generation"
     );
 
-    fork.dispose().await.unwrap();
+    fiber_handle.dispose().await.unwrap();
     assert_eq!(
         ran.load(Ordering::SeqCst),
         2,
@@ -633,7 +636,7 @@ async fn effect_sync_holds_lifo_position_against_async_effects() {
     let order: Arc<Mutex<Vec<&'static str>>> = Arc::new(Mutex::new(Vec::new()));
 
     let o = order.clone();
-    let fork = spawn_settled(
+    let fiber_handle = spawn_settled(
         &Context::new(),
         Effectful(move |ctx: Context| {
             ctx.effect_sync({
@@ -651,7 +654,7 @@ async fn effect_sync_holds_lifo_position_against_async_effects() {
     )
     .await;
 
-    fork.dispose().await.unwrap();
+    fiber_handle.dispose().await.unwrap();
     assert_eq!(*order.lock(), vec!["async-second", "sync-first"]);
 }
 
@@ -674,7 +677,7 @@ async fn cross_resource_cleanup_holds_reverse_commit_positions() {
     let fired = Arc::new(AtomicUsize::new(0));
 
     let (b, f) = (buffer.clone(), fired.clone());
-    let fork = spawn_settled(
+    let fiber_handle = spawn_settled(
         &Context::new(),
         Effectful(move |ctx: Context| {
             // commit order: tail, exporter, probe-a, listener, probe-b, top
@@ -717,7 +720,7 @@ async fn cross_resource_cleanup_holds_reverse_commit_positions() {
     )
     .await;
 
-    fork.dispose().await.unwrap();
+    fiber_handle.dispose().await.unwrap();
 
     let texts: Vec<String> = buffer
         .snapshot()
@@ -755,7 +758,7 @@ async fn failing_and_panicking_cleanups_do_not_block_the_drain() {
     let o = order.clone();
     let ctx = Context::new();
     ctx.add_exporter(buffer.clone()).unwrap();
-    let fork = spawn_settled(
+    let fiber_handle = spawn_settled(
         &ctx,
         Effectful(move |ctx: Context| {
             ctx.effect_sync({
@@ -773,7 +776,8 @@ async fn failing_and_panicking_cleanups_do_not_block_the_drain() {
     )
     .await;
 
-    fork.dispose()
+    fiber_handle
+        .dispose()
         .await
         .expect("cleanup failures never fail the disposal itself");
     assert_eq!(
@@ -781,7 +785,7 @@ async fn failing_and_panicking_cleanups_do_not_block_the_drain() {
         vec!["good-2", "good-1"],
         "attempt-all: every remaining cleanup ran despite two failures"
     );
-    assert_eq!(fork.state(), FiberState::Disposed);
+    assert_eq!(fiber_handle.state(), FiberState::Disposed);
 
     let texts: Vec<String> = buffer
         .snapshot()
@@ -924,7 +928,7 @@ async fn dispose_cancelled_before_the_claim_changes_nothing() {
     let ran = Arc::new(AtomicU32::new(0));
     let slot: RegistrationSlot = Arc::new(Mutex::new(None));
     let (s, r) = (slot.clone(), ran.clone());
-    let fork = spawn_settled(
+    let fiber_handle = spawn_settled(
         &Context::new(),
         Effectful(move |ctx: Context| {
             *s.lock() = Some(
@@ -945,7 +949,7 @@ async fn dispose_cancelled_before_the_claim_changes_nothing() {
     // stays generation-owned
     drop(slot.lock().take().unwrap().dispose());
 
-    fork.dispose().await.unwrap();
+    fiber_handle.dispose().await.unwrap();
     assert_eq!(
         ran.load(Ordering::SeqCst),
         1,
@@ -965,7 +969,7 @@ async fn winning_dispose_beats_an_in_flight_drain() {
     *release.lock() = Some(release_rx);
 
     let (s, r) = (slot.clone(), ran.clone());
-    let fork = spawn_settled(
+    let fiber_handle = spawn_settled(
         &Context::new(),
         Effectful(move |ctx: Context| {
             // commit order: target, then blocker — the LIFO drain blocks
@@ -993,8 +997,8 @@ async fn winning_dispose_beats_an_in_flight_drain() {
     .await;
 
     let drainer = tokio::spawn({
-        let fork = fork.clone();
-        async move { fork.dispose().await }
+        let fiber_handle = fiber_handle.clone();
+        async move { fiber_handle.dispose().await }
     });
     bounded(5000, started_rx)
         .await
@@ -1038,7 +1042,7 @@ async fn winning_disarm_beats_an_in_flight_drain() {
     *release.lock() = Some(release_rx);
 
     let (s, r) = (slot.clone(), ran.clone());
-    let fork = spawn_settled(
+    let fiber_handle = spawn_settled(
         &Context::new(),
         Effectful(move |ctx: Context| {
             // commit order: target, then blocker — the LIFO drain blocks
@@ -1066,8 +1070,8 @@ async fn winning_disarm_beats_an_in_flight_drain() {
     .await;
 
     let drainer = tokio::spawn({
-        let fork = fork.clone();
-        async move { fork.dispose().await }
+        let fiber_handle = fiber_handle.clone();
+        async move { fiber_handle.dispose().await }
     });
     bounded(5000, started_rx)
         .await
@@ -1108,7 +1112,7 @@ async fn registration_racing_dispose_never_strands_a_cleanup() {
         let ctx_slot: Arc<Mutex<Option<Context>>> = Arc::new(Mutex::new(None));
         let accepted = Arc::new(AtomicU32::new(0));
         let ran = Arc::new(AtomicU32::new(0));
-        let fork = spawn_settled(&root, {
+        let fiber_handle = spawn_settled(&root, {
             let ctx_slot = ctx_slot.clone();
             Effectful(move |ctx: Context| {
                 *ctx_slot.lock() = Some(ctx);
@@ -1144,7 +1148,7 @@ async fn registration_racing_dispose_never_strands_a_cleanup() {
         // dispose concurrently with the registrations; the yield pattern
         // above lands it before, inside, and after the burst across rounds
         tokio::task::yield_now().await;
-        fork.dispose().await.unwrap();
+        fiber_handle.dispose().await.unwrap();
         registrations.await.unwrap();
 
         assert_eq!(
@@ -1253,7 +1257,7 @@ async fn abandoned_dispose_failure_is_reported() {
     *release.lock() = Some(release_rx);
 
     let (s, b) = (slot.clone(), buffer.clone());
-    let fork = spawn_settled(
+    let fiber_handle = spawn_settled(
         &Context::new(),
         Effectful(move |ctx: Context| {
             ctx.add_exporter(b.clone())?;
@@ -1306,7 +1310,7 @@ async fn abandoned_dispose_failure_is_reported() {
     .await
     .expect("the abandoned failure was reported");
 
-    fork.dispose().await.unwrap();
+    fiber_handle.dispose().await.unwrap();
     let reports: Vec<String> = buffer
         .snapshot()
         .into_iter()
@@ -1386,7 +1390,7 @@ async fn registration_during_failed_rollback_is_refused() {
         .await
         .expect("spawn completes after rollback")
         .unwrap()
-        .expect_err("the failed initial apply refuses the Fork");
+        .expect_err("the failed initial apply refuses the FiberHandle");
     assert!(
         matches!(err, SpawnError::InitialApply(_)),
         "the apply failure is the creation's answer: {err:?}"
@@ -1434,7 +1438,7 @@ impl Drop for ReentrantOnDrop {
 async fn refused_cleanup_drops_outside_synchronization() {
     let slot: Arc<Mutex<Option<Context>>> = Arc::new(Mutex::new(None));
     let s = slot.clone();
-    let fork = spawn_settled(
+    let fiber_handle = spawn_settled(
         &Context::new(),
         Effectful(move |ctx: Context| {
             *s.lock() = Some(ctx);
@@ -1447,7 +1451,7 @@ async fn refused_cleanup_drops_outside_synchronization() {
     // re-entry itself refuses pre-lock on this dead fiber (see the
     // sentinel's discrimination note), so this pins refusal behavior while
     // the live-fiber probes carry the lock-position law
-    fork.dispose().await.unwrap();
+    fiber_handle.dispose().await.unwrap();
     let dead_ctx = slot.lock().take().unwrap();
 
     common::deadlock_watchdog(
@@ -1479,7 +1483,7 @@ async fn disarmed_cleanup_drops_outside_synchronization() {
 
 #[tokio::test]
 async fn drained_cleanup_drops_outside_synchronization() {
-    let fork = spawn_settled(
+    let fiber_handle = spawn_settled(
         &Context::new(),
         Effectful(move |ctx: Context| {
             let probe = ReentrantOnDrop { ctx: ctx.clone() };
@@ -1492,7 +1496,7 @@ async fn drained_cleanup_drops_outside_synchronization() {
     // re-entrant registration refuses before touching the journal lock —
     // this is the no-hang smoke for the drain path; the discriminating
     // drop-outside-the-lock evidence is the live-fiber disarm probe above
-    bounded(5000, fork.dispose())
+    bounded(5000, fiber_handle.dispose())
         .await
         .expect("the drain was not blocked by a cleanup Drop")
         .unwrap();
@@ -1562,7 +1566,7 @@ struct RunProbes {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn run_drain_joins_after_the_tasks_own_effects_lifo() {
     let probes = RunProbes::default();
-    let fork = spawn_settled(
+    let fiber_handle = spawn_settled(
         &Context::new(),
         Effectful({
             let probes = probes.clone();
@@ -1604,7 +1608,7 @@ async fn run_drain_joins_after_the_tasks_own_effects_lifo() {
     // teardown, the fiber-level one) first, the join last. If the join
     // ran first this dispose would deadlock against a task whose stream
     // never ends — surfacing as the bounded guard's None, not a hang.
-    bounded(2000, fork.dispose())
+    bounded(2000, fiber_handle.dispose())
         .await
         .expect("drain must join the task after tearing down its cleanups")
         .unwrap();
@@ -1636,7 +1640,7 @@ async fn run_drain_join_contains_a_panicking_task() {
     ctx.add_exporter(reports.clone()).unwrap();
     let after = Arc::new(AtomicU32::new(0));
 
-    let fork = spawn_settled(
+    let fiber_handle = spawn_settled(
         &ctx,
         Effectful({
             let after = after.clone();
@@ -1660,7 +1664,7 @@ async fn run_drain_join_contains_a_panicking_task() {
     // payload from the JoinHandle inside the containment boundary — the
     // dispose completes, unwinds no further, the panic is reported to
     // the fiber's exporters, and the remaining LIFO cleanups still run
-    let outcome = bounded(2000, fork.dispose()).await;
+    let outcome = bounded(2000, fiber_handle.dispose()).await;
     std::panic::set_hook(default_hook);
     outcome
         .expect("drain-join contains the panicking task")
@@ -1685,7 +1689,7 @@ async fn run_drain_join_contains_a_panicking_task() {
 #[tokio::test]
 async fn run_off_the_runtime_refuses_and_starts_nothing() {
     let slot: Arc<Mutex<Option<Context>>> = Arc::new(Mutex::new(None));
-    let fork = spawn_settled(
+    let fiber_handle = spawn_settled(
         &Context::new(),
         Effectful({
             let slot = slot.clone();
@@ -1722,7 +1726,7 @@ async fn run_off_the_runtime_refuses_and_starts_nothing() {
     );
     // and nothing was committed either: a phantom join-effect would
     // strand the drain waiting on a spawn that never comes
-    bounded(2000, fork.dispose())
+    bounded(2000, fiber_handle.dispose())
         .await
         .expect("the refusal left nothing generation-owned behind")
         .unwrap();
@@ -1731,7 +1735,7 @@ async fn run_off_the_runtime_refuses_and_starts_nothing() {
 #[tokio::test]
 async fn run_on_a_disposed_fiber_refuses_and_starts_nothing() {
     let slot: Arc<Mutex<Option<Context>>> = Arc::new(Mutex::new(None));
-    let fork = spawn_settled(
+    let fiber_handle = spawn_settled(
         &Context::new(),
         Effectful({
             let slot = slot.clone();
@@ -1742,7 +1746,7 @@ async fn run_on_a_disposed_fiber_refuses_and_starts_nothing() {
         }),
     )
     .await;
-    fork.dispose().await.unwrap();
+    fiber_handle.dispose().await.unwrap();
 
     let dead = slot.lock().clone().unwrap();
     let started = Arc::new(AtomicU32::new(0));
@@ -1765,7 +1769,7 @@ async fn run_task_stays_generation_owned_after_caller_cancellation() {
     // `run` is synchronous: cancellation of the calling future can only
     // ever arrive *after* the registration commit it cannot undo.
     let slot: Arc<Mutex<Option<Context>>> = Arc::new(Mutex::new(None));
-    let fork = spawn_settled(
+    let fiber_handle = spawn_settled(
         &Context::new(),
         Effectful({
             let slot = slot.clone();
@@ -1830,7 +1834,7 @@ async fn run_task_stays_generation_owned_after_caller_cancellation() {
 
     // and the drain still runs the task's own cleanup first, then joins
     drop(tx);
-    bounded(2000, fork.dispose())
+    bounded(2000, fiber_handle.dispose())
         .await
         .expect("drain joins the abandoned task")
         .unwrap();
@@ -1920,7 +1924,7 @@ async fn drain_joining_a_task_whose_output_drop_reenters_completes() {
     let (release_tx, rx) = tokio::sync::oneshot::channel();
     *release_rx.lock() = Some(rx);
 
-    let fork = spawn_settled(
+    let fiber_handle = spawn_settled(
         &Context::new(),
         Effectful({
             let parked = parked.clone();
@@ -1949,8 +1953,8 @@ async fn drain_joining_a_task_whose_output_drop_reenters_completes() {
     // start the drain, let it reach the join (the task is still parked),
     // then release the task so its output drops inside the join window
     let drain = tokio::spawn({
-        let fork = fork.clone();
-        async move { fork.dispose().await }
+        let fiber_handle = fiber_handle.clone();
+        async move { fiber_handle.dispose().await }
     });
     tokio::task::yield_now().await;
     tokio::task::yield_now().await;

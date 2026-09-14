@@ -4,7 +4,7 @@ mod common;
 
 use cordis_core::event::{Routing, observer_sync};
 use cordis_core::lifecycle::{
-    EraSwapError, EraSwapFailure, FiberState, Fork, LifecycleOperation, PluginFailureKind,
+    EraSwapError, EraSwapFailure, FiberHandle, FiberState, LifecycleOperation, PluginFailureKind,
 };
 use cordis_core::service::{ServiceControlError, ServicePublication};
 use cordis_core::{Context, Event, InjectSpec, Plugin, PreparedChange, PreparedPlugin, Service};
@@ -109,7 +109,7 @@ struct EraProbe {
     hits: Arc<AtomicUsize>,
     cleanups: Arc<AtomicUsize>,
     publications: Arc<Mutex<Vec<ServicePublication<EraValue>>>>,
-    child: Arc<Mutex<Option<Fork>>>,
+    child: Arc<Mutex<Option<FiberHandle>>>,
     spawned_child: Arc<AtomicBool>,
 }
 
@@ -184,7 +184,7 @@ async fn successor_gets_sibling_scope_and_fresh_generation_resources_without_cas
         .await
         .unwrap();
     let old_descendant = contexts.lock()[0].with_child_scope().scope();
-    let child_fork = child.lock().as_ref().unwrap().clone();
+    let child_fiber_handle = child.lock().as_ref().unwrap().clone();
 
     let successor = old
         .era_swap(PreparedChange::from_input::<EraProbe>(2))
@@ -196,7 +196,7 @@ async fn successor_gets_sibling_scope_and_fresh_generation_resources_without_cas
         "old generation effects drained exactly once"
     );
     assert_eq!(
-        child_fork.state(),
+        child_fiber_handle.state(),
         FiberState::Active,
         "spawned Fibers are not cascaded"
     );
@@ -407,7 +407,7 @@ async fn mid_swap_dependent_is_included_by_the_fresh_final_query() {
 }
 
 struct RecursiveEra {
-    fork: Arc<Mutex<Option<Fork>>>,
+    fiber_handle: Arc<Mutex<Option<FiberHandle>>>,
     refused: Arc<AtomicBool>,
 }
 impl Plugin for RecursiveEra {
@@ -419,10 +419,10 @@ impl Plugin for RecursiveEra {
         Ok(())
     }
     fn apply(&self, _: Context, _: &()) -> impl Future<Output = Result<(), Infallible>> + Send {
-        let fork = self.fork.clone();
+        let fiber_handle = self.fiber_handle.clone();
         let refused = self.refused.clone();
         async move {
-            let current = fork.lock().clone();
+            let current = fiber_handle.lock().clone();
             if let Some(current) = current {
                 let error = current
                     .era_swap(PreparedChange::from_input::<RecursiveEra>(()))
@@ -445,22 +445,22 @@ impl Plugin for RecursiveEra {
 #[tokio::test]
 async fn source_settle_recursion_is_preflight_and_leaves_the_era_intact() {
     let root = Context::new();
-    let fork_cell = Arc::new(Mutex::new(None));
+    let fiber_handle_cell = Arc::new(Mutex::new(None));
     let refused = Arc::new(AtomicBool::new(false));
-    let fork = root
+    let fiber_handle = root
         .spawn(PreparedPlugin::from_input(
             RecursiveEra {
-                fork: fork_cell.clone(),
+                fiber_handle: fiber_handle_cell.clone(),
                 refused: refused.clone(),
             },
             (),
         ))
         .await
         .unwrap();
-    *fork_cell.lock() = Some(fork.clone());
-    fork.restart().await.unwrap();
+    *fiber_handle_cell.lock() = Some(fiber_handle.clone());
+    fiber_handle.restart().await.unwrap();
     assert!(refused.load(Ordering::SeqCst));
-    assert_eq!(fork.state(), FiberState::Active);
+    assert_eq!(fiber_handle.state(), FiberState::Active);
 }
 
 struct OrderedEra {
@@ -888,8 +888,8 @@ async fn replacement_replays_a_closed_spawn_origins_view_without_false_successor
 }
 
 struct PreflightSwappingDependent {
-    source: Arc<Mutex<Option<Fork>>>,
-    outcome: Arc<Mutex<Option<Result<Fork, EraSwapError>>>>,
+    source: Arc<Mutex<Option<FiberHandle>>>,
+    outcome: Arc<Mutex<Option<Result<FiberHandle, EraSwapError>>>>,
 }
 impl Plugin for PreflightSwappingDependent {
     type Config = ();
@@ -1013,9 +1013,9 @@ impl Plugin for LatePublishingEra {
 }
 
 struct LateDiscoveredSwapper {
-    source: Arc<Mutex<Option<Fork>>>,
+    source: Arc<Mutex<Option<FiberHandle>>>,
     attempted: Arc<AtomicBool>,
-    outcome: Arc<Mutex<Option<Result<Fork, EraSwapError>>>>,
+    outcome: Arc<Mutex<Option<Result<FiberHandle, EraSwapError>>>>,
     seen: Arc<Mutex<Vec<u8>>>,
 }
 impl Plugin for LateDiscoveredSwapper {
@@ -1265,7 +1265,7 @@ impl Plugin for CancelableEra {
 
 async fn cancelable_source() -> (
     Context,
-    Fork,
+    FiberHandle,
     Arc<tokio::sync::Notify>,
     Arc<tokio::sync::Notify>,
     Arc<tokio::sync::Notify>,

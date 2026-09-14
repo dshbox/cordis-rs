@@ -38,10 +38,10 @@ impl Plugin for ContextGrabber {
     }
 }
 
-/// Spawn one grabbing fork and return `(fork, its apply-time ctx)`.
-async fn scoped_ctx(root: &Context) -> (cordis_core::Fork, Context) {
+/// Spawn one FiberHandle and return `(fiber_handle, its apply-time ctx)`.
+async fn scoped_ctx(root: &Context) -> (cordis_core::FiberHandle, Context) {
     let captured: Arc<Mutex<Option<Context>>> = Default::default();
-    let fork = root
+    let fiber_handle = root
         .spawn(PreparedPlugin::from_input(
             ContextGrabber {
                 captured: captured.clone(),
@@ -51,7 +51,7 @@ async fn scoped_ctx(root: &Context) -> (cordis_core::Fork, Context) {
         .await
         .unwrap();
     let ctx = captured.lock().clone().unwrap();
-    (fork, ctx)
+    (fiber_handle, ctx)
 }
 
 /// Scheduler turns for tasks woken by cancellation: on the
@@ -75,7 +75,7 @@ async fn settle() {
 #[tokio::test(start_paused = true)]
 async fn sleep_resolves() {
     let root = Context::new();
-    let (_fork, ctx) = scoped_ctx(&root).await;
+    let (_fiber_handle, ctx) = scoped_ctx(&root).await;
 
     let pending = ctx.sleep(Duration::from_millis(10)).unwrap();
 
@@ -89,7 +89,7 @@ async fn sleep_resolves() {
 #[tokio::test(start_paused = true)]
 async fn sleep_cancelled_by_fiber_dispose() {
     let root = Context::new();
-    let (fork, ctx) = scoped_ctx(&root).await;
+    let (fiber_handle, ctx) = scoped_ctx(&root).await;
 
     let pending = ctx.sleep(Duration::from_millis(10_000)).unwrap();
     let task = tokio::spawn(pending);
@@ -98,7 +98,7 @@ async fn sleep_cancelled_by_fiber_dispose() {
     // what resolves it
     settle().await;
 
-    fork.dispose().await.unwrap();
+    fiber_handle.dispose().await.unwrap();
     let result = task.await.unwrap();
     assert!(
         matches!(result, Err(TimerCancelled)),
@@ -111,8 +111,8 @@ async fn sleep_cancelled_by_fiber_dispose() {
 #[tokio::test(start_paused = true)]
 async fn sleep_on_dead_fiber_context_refuses_synchronously() {
     let root = Context::new();
-    let (fork, ctx) = scoped_ctx(&root).await;
-    fork.dispose().await.unwrap();
+    let (fiber_handle, ctx) = scoped_ctx(&root).await;
+    fiber_handle.dispose().await.unwrap();
 
     let result = ctx.sleep(Duration::from_secs(10_000));
     assert!(
@@ -129,11 +129,11 @@ async fn sleep_on_dead_fiber_context_refuses_synchronously() {
 #[tokio::test(start_paused = true)]
 async fn sleep_cancellation_wins_ready_but_uncommitted_expiry() {
     let root = Context::new();
-    let (fork, ctx) = scoped_ctx(&root).await;
+    let (fiber_handle, ctx) = scoped_ctx(&root).await;
     let sleep = ctx.sleep(Duration::from_millis(10)).unwrap();
 
     tokio::time::advance(Duration::from_millis(10)).await;
-    fork.dispose().await.unwrap();
+    fiber_handle.dispose().await.unwrap();
 
     assert!(matches!(sleep.await, Err(TimerCancelled)));
 }
@@ -143,12 +143,12 @@ async fn sleep_cancellation_wins_ready_but_uncommitted_expiry() {
 #[tokio::test(start_paused = true)]
 async fn completed_sleep_is_not_reacted_to_by_later_generation_disposal() {
     let root = Context::new();
-    let (fork, ctx) = scoped_ctx(&root).await;
+    let (fiber_handle, ctx) = scoped_ctx(&root).await;
     let sleep = ctx.sleep(Duration::from_millis(10)).unwrap();
 
     tokio::time::advance(Duration::from_millis(10)).await;
     assert!(matches!(sleep.await, Ok(())));
-    fork.dispose().await.unwrap();
+    fiber_handle.dispose().await.unwrap();
 }
 
 // ---------------------------------------------------------------------
@@ -162,7 +162,7 @@ fn assert_interval_type(_: cordis_timer::Interval) {}
 #[tokio::test(start_paused = true)]
 async fn interval_first_tick_is_anchored_at_construction() {
     let root = Context::new();
-    let (_fork, ctx) = scoped_ctx(&root).await;
+    let (_fiber_handle, ctx) = scoped_ctx(&root).await;
     let anchor = tokio::time::Instant::now();
     let interval = ctx.interval(Duration::from_millis(10)).unwrap();
     assert_interval_type(interval);
@@ -182,7 +182,7 @@ async fn interval_first_tick_is_anchored_at_construction() {
 #[tokio::test(start_paused = true)]
 async fn interval_on_time_ticks_are_ok() {
     let root = Context::new();
-    let (_fork, ctx) = scoped_ctx(&root).await;
+    let (_fiber_handle, ctx) = scoped_ctx(&root).await;
     let mut interval = Box::pin(ctx.interval(Duration::from_millis(5)).unwrap());
 
     for _ in 0..3 {
@@ -196,7 +196,7 @@ async fn interval_on_time_ticks_are_ok() {
 #[tokio::test(start_paused = true)]
 async fn interval_late_poll_coalesces_without_burst_or_phase_shift() {
     let root = Context::new();
-    let (_fork, ctx) = scoped_ctx(&root).await;
+    let (_fiber_handle, ctx) = scoped_ctx(&root).await;
     let anchor = tokio::time::Instant::now();
     let mut interval = Box::pin(ctx.interval(Duration::from_millis(10)).unwrap());
 
@@ -227,10 +227,10 @@ async fn interval_late_poll_coalesces_without_burst_or_phase_shift() {
 #[tokio::test(start_paused = true)]
 async fn interval_cancellation_yields_one_error_then_ends() {
     let root = Context::new();
-    let (fork, ctx) = scoped_ctx(&root).await;
+    let (fiber_handle, ctx) = scoped_ctx(&root).await;
     let mut interval = Box::pin(ctx.interval(Duration::from_millis(10)).unwrap());
 
-    fork.dispose().await.unwrap();
+    fiber_handle.dispose().await.unwrap();
     assert!(matches!(interval.next().await, Some(Err(TimerCancelled))));
     assert!(interval.next().await.is_none());
     tokio::time::advance(Duration::from_millis(100)).await;
@@ -242,11 +242,11 @@ async fn interval_cancellation_yields_one_error_then_ends() {
 #[tokio::test(start_paused = true)]
 async fn interval_cancellation_wins_uncommitted_boundary_tick() {
     let root = Context::new();
-    let (fork, ctx) = scoped_ctx(&root).await;
+    let (fiber_handle, ctx) = scoped_ctx(&root).await;
     let mut interval = Box::pin(ctx.interval(Duration::from_millis(10)).unwrap());
 
     tokio::time::advance(Duration::from_millis(10)).await;
-    fork.dispose().await.unwrap();
+    fiber_handle.dispose().await.unwrap();
     assert!(matches!(interval.next().await, Some(Err(TimerCancelled))));
     assert!(interval.next().await.is_none());
 }
@@ -256,17 +256,17 @@ async fn interval_cancellation_wins_uncommitted_boundary_tick() {
 #[tokio::test(start_paused = true)]
 async fn dropping_interval_emits_nothing() {
     let root = Context::new();
-    let (fork, ctx) = scoped_ctx(&root).await;
+    let (fiber_handle, ctx) = scoped_ctx(&root).await;
     let interval = ctx.interval(Duration::from_millis(10)).unwrap();
     drop(interval);
-    fork.dispose().await.unwrap();
+    fiber_handle.dispose().await.unwrap();
 }
 
 #[tokio::test(start_paused = true)]
 async fn interval_on_dead_fiber_context_refuses_synchronously() {
     let root = Context::new();
-    let (fork, ctx) = scoped_ctx(&root).await;
-    fork.dispose().await.unwrap();
+    let (fiber_handle, ctx) = scoped_ctx(&root).await;
+    fiber_handle.dispose().await.unwrap();
 
     let result = ctx.interval(Duration::from_secs(10_000));
     assert!(matches!(

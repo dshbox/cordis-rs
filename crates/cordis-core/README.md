@@ -24,7 +24,7 @@ keeps the historical Rust import path `use cordis::...` and re-exports the
 
 A Plugin prepares typed source configuration before lifecycle admission. A
 `PreparedPlugin` seals the Plugin/input pair, and `Context::spawn` returns a
-`Fork` only after the new Fiber reaches its current stable state.
+`FiberHandle` only after the new Fiber reaches its current stable state.
 
 ```rust
 use std::convert::Infallible;
@@ -58,16 +58,16 @@ async fn main() -> Result<(), BoxError> {
     let ctx = Context::new();
     let plugin = Greeter;
     let input = plugin.prepare("world".into())?;
-    let fork = ctx
+    let fiber_handle = ctx
         .spawn(PreparedPlugin::from_input(plugin, input))
         .await?;
 
-    fork.dispose().await?;
+    fiber_handle.dispose().await?;
     Ok(())
 }
 ```
 
-Dropping a `Fork` does not dispose its Fiber. Lifecycle ownership is explicit;
+Dropping a `FiberHandle` does not dispose its Fiber. Lifecycle ownership is explicit;
 call `dispose()` when the consumer is finished with it.
 
 ## What `cordis-core` owns
@@ -75,7 +75,7 @@ call `dispose()` when the consumer is finished with it.
 The crate deliberately groups the runtime around semantic responsibilities:
 
 - **Context** — an immutable view into one Cordis Runtime.
-- **Plugin / Fork / Fiber lifecycle** — prepare, spawn, ready, restart, update,
+- **Plugin / FiberHandle / Fiber lifecycle** — prepare, spawn, ready, restart, update,
   era replacement, and deterministic disposal.
 - **Services** — typed capabilities published into exact `(Service,
   ServiceRealm)` slots with explicit dependency convergence.

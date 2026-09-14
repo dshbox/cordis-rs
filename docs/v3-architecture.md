@@ -52,12 +52,12 @@ One **Runtime** owns shared root state, the Registry, the stores, the
 identity sources, and one permanent root Fiber. A Runtime begins with
 its root Context, and every Context derived from that root remains a
 view into the same Runtime. **Plugin** behavior is applied by spawning a
-**Fiber**; a **Fork** is the consumer's control handle to one non-root
+**Fiber**; a **FiberHandle** is the consumer's control handle to one non-root
 Fiber. [CONTEXT.md](../CONTEXT.md) defines these terms; this section
 fixes how the identities relate.
 
 Six relations are deliberately independent — the independence of
-residency, spawn origin, lifecycle ownership, and Fork control is the
+residency, spawn origin, lifecycle ownership, and FiberHandle control is the
 decision of
 [ADR 0028](adr/0028-fiber-generations-own-cleanup-runtime-owns-residency.md):
 
@@ -65,10 +65,10 @@ decision of
 | --- | --- | --- |
 | Plugin behavior | The reusable behavior or declaration object applied by spawning a Fiber | The live identity of anything running |
 | Fiber lifecycle | The era-local live identity owning one allocation's state and cleanup obligations | Residency, spawn provenance, or consumer control |
-| Fork control | A cloneable consumer handle referring to one non-root Fiber | Fiber lifetime: dropping every Fork changes neither residency nor lifecycle |
+| FiberHandle control | A cloneable consumer handle referring to one non-root Fiber | Fiber lifetime: dropping every FiberHandle changes neither residency nor lifecycle |
 | Registry residency | The Runtime and Registry keeping a Fiber strongly resident and addressable | Lifecycle ownership or public topology |
 | spawn origin | The recorded Context from which a spawn was initiated | Parenthood, teardown responsibility, Scope ancestry, Event ancestry, or axis coupling |
-| lifecycle ownership | Within a Fiber, each apply generation's ownership of the cleanup obligations that committed while its gate was open; across Fibers, explicit consumer composition of delivered Forks | Any core cross-Fiber owner: ordinary spawn creates no parent cascade |
+| lifecycle ownership | Within a Fiber, each apply generation's ownership of the cleanup obligations that committed while its gate was open; across Fibers, explicit consumer composition of delivered FiberHandles | Any core cross-Fiber owner: ordinary spawn creates no parent cascade |
 
 Core has six deep semantic owners — Context view, Registry, Fiber
 lifecycle, Service/dependency coordination, Event dispatch, and
@@ -174,8 +174,8 @@ bypass same-target parking.
 Spawn admission is generation-scoped but non-owning. Before allocation,
 cancellation has no lifecycle effect. Once allocation and publication
 create rollback responsibility, framework-owned work either delivers
-the Fork or terminally disposes and unlinks the undelivered Fiber; the
-caller receives a Fork only for a live quiescent `Active` or stable
+the FiberHandle or terminally disposes and unlinks the undelivered Fiber; the
+caller receives a FiberHandle only for a live quiescent `Active` or stable
 `Pending` Fiber, and a failed or abandoned creation leaves no resident
 attempted Fiber.
 
@@ -187,7 +187,7 @@ replacement is the identity-breaking counterpart: it fully ends the old
 Fiber before attempting at most one fresh successor with a fresh
 FiberId, fresh edges, a fresh sibling-era Scope, and fresh publication
 occurrences, then converges affected dependents to their final targets
-before delivering the fresh Fork or reporting a closed incomplete
+before delivering the fresh FiberHandle or reporting a closed incomplete
 result. That transaction is the decision of
 [ADR 0030](adr/0030-era-replacement-ends-one-fiber-before-creating-another.md);
 the operation contracts live in the
@@ -277,7 +277,7 @@ context before any detach.
 The Registry is never a consumer capability: consumers receive
 topology-free observation and the grouping-level removal operation, and
 nothing else. Residency implies no lifecycle ownership, spawn origin
-implies no teardown, and dropping every Fork changes neither — the
+implies no teardown, and dropping every FiberHandle changes neither — the
 four-way independence of [System at a glance](#system-at-a-glance).
 
 ## Services and dependency convergence
@@ -429,13 +429,13 @@ supporting rules are the decision of
 | restart | irreversible closure/replacement of the old generation | current-target quiescence |
 | update | new config plus generation-replacement commit | committed-config target quiescence |
 | era swap | source swap claim | old disposal, successor outcome/cleanup, final convergence |
-| new-Fiber creation | allocation/publication requiring rollback responsibility | Fork delivery or undelivered-Fiber disposal |
+| new-Fiber creation | allocation/publication requiring rollback responsibility | FiberHandle delivery or undelivered-Fiber disposal |
 
 The same law governs the two remaining deep operations: a winning exact
 manual cleanup dispose commits at its claim and completes under
 framework ownership despite caller cancellation, and Loader result
-handoff commits as each Fork is obtained — abandoned handoff disposes
-already-obtained Forks in reverse success order, attempt-all, while
+handoff commits as each FiberHandle is obtained — abandoned handoff disposes
+already-obtained FiberHandles in reverse success order, attempt-all, while
 dropping a delivered outcome is inert. Disposal itself coalesces: the
 first Open-to-Closing claim commits, and all concurrent or later
 disposals share the same completion.
@@ -528,9 +528,9 @@ absence, or a typed failure, so an adaptation failure creates no Fiber,
 residency, dependency projection, or generation. Realm-label policy is
 Loader's per-execution choice; core sees only opaque Runtime-local
 realms. Load is partial, not transactional, and yields exactly one
-ordered outcome per plan entry; successful Fork delivery is the
+ordered outcome per plan entry; successful FiberHandle delivery is the
 handoff that ends Loader ownership, with reverse-success-order
-attempt-all rollback of already-obtained Forks if handoff is abandoned.
+attempt-all rollback of already-obtained FiberHandles if handoff is abandoned.
 The exact schema, resolver, and outcome contracts live in the interface
 inventory's [plan](v3-public-interface.md#loader-plan-and-source-schema)
 and
@@ -567,7 +567,7 @@ consumer need justifies. Each absence below is part of the approved
 target, not an oversight:
 
 - no structured core lifecycle owner or FiberGroup, and no parent
-  cascade: consumers compose delivered Forks explicitly, including
+  cascade: consumers compose delivered FiberHandles explicitly, including
   reverse-spawn-order Harness teardown;
 - no Runtime-wide shutdown;
 - no public Registry or storage-shaped observation;
@@ -586,7 +586,7 @@ An absence stands unless its focused falsifier graduates a new
 decision. The resolved reopening conditions are exactly:
 
 - an admitted child creation that core must collectively drain before
-  its Fork has been delivered — the only condition that graduates a
+  its FiberHandle has been delivered — the only condition that graduates a
   Runtime-local structured owner, never keyed on grouping equivalence,
   spawn origin, or Fiber identity;
 - a concrete consumer requiring deterministic teardown of every
@@ -611,7 +611,7 @@ the pinned upstream contains it.
 
 ## Decision index
 
-The eleven independent hard-to-reverse decisions of the v3 architecture,
+The twelve independent hard-to-reverse decisions of the v3 architecture,
 each in one accepted ADR, linked by title:
 
 1. [Fiber generations own cleanup; Runtime owns residency](adr/0028-fiber-generations-own-cleanup-runtime-owns-residency.md)
@@ -625,10 +625,11 @@ each in one accepted ADR, linked by title:
 9. [Module and crate seams are semantic](adr/0036-module-and-crate-seams-are-semantic.md)
 10. [Public interfaces expose semantics, not representation](adr/0037-public-interfaces-expose-semantics-not-representation.md)
 11. [Plugin input names role; Prepared wrappers name stage](adr/0038-plugin-input-names-role-prepared-wrappers-name-stage.md)
+12. [Consumer Fiber control is a FiberHandle, not a Fork](adr/0039-consumer-fiber-control-is-a-fiber-handle.md)
 
 Each ADR states its rule and rationale self-contained. Its
 non-normative lineage block is historical evidence only: deleting every
 lineage block, together with the optional migration document, leaves
 the required-reading closure above — glossary, this document, the
-interface inventory, these eleven decisions, and the parity ledger —
+interface inventory, these twelve decisions, and the parity ledger —
 complete, with no historical or current-implementation dependency.

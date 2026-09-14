@@ -201,7 +201,7 @@ async fn isolate_derivation_preserves_fiber_attribution() {
     // placement. Deriving inside a Plugin's apply and registering an
     // effect through the derived view discriminates Fiber attribution:
     // a mutant that re-attributes the derived Context to the root Fiber
-    // would never run this cleanup at the fork's dispose.
+    // would never run this cleanup when the FiberHandle is disposed.
     struct DerivesInside {
         cleaned: Arc<AtomicUsize>,
     }
@@ -239,7 +239,7 @@ async fn isolate_derivation_preserves_fiber_attribution() {
     let runtime = Context::new();
     let _ = runtime.provide(Arc::new(Counter)).unwrap();
     let cleaned = Arc::new(AtomicUsize::new(0));
-    let fork = runtime
+    let fiber_handle = runtime
         .spawn(PreparedPlugin::from_input(
             DerivesInside {
                 cleaned: cleaned.clone(),
@@ -248,10 +248,10 @@ async fn isolate_derivation_preserves_fiber_attribution() {
         ))
         .await
         .unwrap();
-    fork.ready().await.unwrap();
+    fiber_handle.ready().await.unwrap();
     assert_eq!(cleaned.load(Ordering::SeqCst), 0);
 
-    fork.dispose().await.unwrap();
+    fiber_handle.dispose().await.unwrap();
     assert_eq!(
         cleaned.load(Ordering::SeqCst),
         1,
@@ -345,7 +345,7 @@ async fn root_resets_fiber_isolate_scope_and_intercept_in_the_same_runtime() {
     );
 
     let hits = Arc::new(AtomicUsize::new(0));
-    let fork = origin
+    let fiber_handle = origin
         .spawn(PreparedPlugin::from_input(
             RootProbe { hits: hits.clone() },
             (),
@@ -361,7 +361,7 @@ async fn root_resets_fiber_isolate_scope_and_intercept_in_the_same_runtime() {
         .unwrap();
     assert_eq!(hits.load(Ordering::SeqCst), 1, "root() reset Scope");
 
-    fork.dispose().await.unwrap();
+    fiber_handle.dispose().await.unwrap();
     assert!(runtime.try_service::<RootOwned>().is_ok());
     runtime
         .emit::<Ping>(Routing::Scoped(runtime.scope()), ())
@@ -427,7 +427,7 @@ async fn clone_preserves_fiber_realm_scope_and_intercept_exactly() {
         .with_intercept::<Layered>("origin".to_owned());
     let scope = Arc::new(Mutex::new(None));
     let hits = Arc::new(AtomicUsize::new(0));
-    let fork = origin
+    let fiber_handle = origin
         .spawn(PreparedPlugin::from_input(
             CloneProbe {
                 scope: scope.clone(),
@@ -455,7 +455,7 @@ async fn clone_preserves_fiber_realm_scope_and_intercept_exactly() {
         .unwrap();
     assert_eq!(hits.load(Ordering::SeqCst), 1);
 
-    fork.dispose().await.unwrap();
+    fiber_handle.dispose().await.unwrap();
     assert!(origin.try_service::<CloneOwned>().is_err());
     runtime
         .emit::<Ping>(Routing::Scoped(exact_scope.clone()), ())

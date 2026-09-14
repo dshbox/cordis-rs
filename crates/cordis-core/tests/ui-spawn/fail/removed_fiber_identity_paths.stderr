@@ -13,16 +13,16 @@ error[E0277]: the trait bound `u64: From<FiberId>` is not satisfied
             From<u8>
   = note: required for `FiberId` to implement `Into<u64>`
 
-error[E0599]: no method named `uid` found for reference `&Fork` in the current scope
- --> tests/ui-spawn/fail/removed_fiber_identity_paths.rs:8:18
+error[E0599]: no method named `uid` found for reference `&FiberHandle` in the current scope
+ --> tests/ui-spawn/fail/removed_fiber_identity_paths.rs:8:26
   |
-8 |     let _ = fork.uid();
-  |                  ^^^
+8 |     let _ = fiber_handle.uid();
+  |                          ^^^
   |
 help: there is a method `id` with a similar name
   |
-8 -     let _ = fork.uid();
-8 +     let _ = fork.id();
+8 -     let _ = fiber_handle.uid();
+8 +     let _ = fiber_handle.id();
   |
 
 error[E0599]: no method named `lookup_fiber` found for reference `&cordis_core::Context` in the current scope

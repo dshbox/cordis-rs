@@ -1,6 +1,6 @@
 #![allow(unused_imports)]
 use cordis_core::{
-    BoxError, ConfigurableService, Context, Event, FiberId, FiberState, Fork, InjectSpec, Level,
+    BoxError, ConfigurableService, Context, Event, FiberId, FiberState, FiberHandle, InjectSpec, Level,
     Logger, Plugin, PreparedChange, PreparedPlugin, QueryOutcome, Routing, Scope, Service,
     ServiceRealm, UpdateOutcome,
 };

@@ -4,21 +4,21 @@
 //! - The **SemanticTarget** combines committed apply input with the exact
 //!   publication assignment of every fixed dependency slot. Target drift
 //!   drives `unload → reload`; the protocol lives in the private `InertiaSlot`.
-//! - [`Fork`] is the public handle returned by
+//! - [`FiberHandle`] is the public handle returned by
 //!   [`Context::spawn`](crate::Context::spawn); the `Fiber` body is
-//!   `pub(crate)` so the Fork-out/Fiber-in split is enforced by
+//!   `pub(crate)` so the public-handle/private-Fiber split is enforced by
 //!   visibility, not convention (ADR 0004).
 //!
 //! ## File map
 //!
 //! | file | contents |
 //! |---|---|
-//! | `mod` | `Fiber` (private), [`FiberState`], [`Fork`], [`Context::run`] |
+//! | `mod` | `Fiber` (private), [`FiberState`], [`FiberHandle`], [`Context::run`] |
 //! | `spawn` | the spawn transaction — [`Context::spawn`], [`SpawnError`], [`PluginFailure`], and the creation-cancellation guard |
 //! | `spawn_state` | `SpawnState` — the installed spawn record, lock discipline, and purpose-specific snapshots |
 //! | `inertia` | `InertiaSlot` — the settle protocol's single home: the ops, the `SemanticTarget` cell, and the three lifecycle passes (initial spawn, convergence, restart) |
 //! | `settle_ctx` | the settle context — attribution and the lifecycle-entry refusal (ADR 0019) |
-//! | `era` | [`Fork::era_swap`] — one live-source claim, full old terminal barrier, fresh sibling-era successor, and final convergence (ADR 0030) |
+//! | `era` | [`FiberHandle::era_swap`] — one live-source claim, full old terminal barrier, fresh sibling-era successor, and final convergence (ADR 0030) |
 
 mod era;
 mod inertia;
@@ -331,9 +331,9 @@ impl DependencyEdge {
     }
 }
 
-/// Internal lifecycle state shared by a Fiber's Fork handles.
+/// Internal lifecycle state shared by the FiberHandle clones for one Fiber.
 ///
-/// `pub(crate)` on purpose (ADR 0004): callers receive the opaque [`Fork`]
+/// `pub(crate)` on purpose (ADR 0004): callers receive the opaque [`FiberHandle`]
 /// control handle and [`FiberId`] correlation value, never the Fiber body.
 pub(crate) struct Fiber {
     id: FiberId,
@@ -549,7 +549,7 @@ impl Fiber {
     /// mid-dispose), or already gone. Only Loading and Active admit —
     /// registration anywhere else would either strand its cleanup behind
     /// an already-taken drain snapshot or leak the obligation into the
-    /// next generation's journal. Lifecycle ops (`Fork::restart`) keep
+    /// next generation's journal. Lifecycle ops (`FiberHandle::restart`) keep
     /// plain `assert_alive`: they serialize through the inertia slot
     /// instead of refusing. The root fiber's generation stays open for
     /// the runtime's duration (it is permanently Active).
@@ -717,7 +717,7 @@ impl Fiber {
     /// a racing notification re-computes a all-present SemanticTarget),
     /// converts an `apply` panic into the Failed state instead of letting
     /// it escape — otherwise the fiber would stay LOADING forever and
-    /// [`Fork::ready`](Fork::ready) would hang — and tears down whatever a
+    /// [`FiberHandle::ready`](FiberHandle::ready) would hang — and tears down whatever a
     /// failed apply registered before settling on Failed. Upstream's
     /// `_reload` catch reaches the same teardown through its inactive state;
     /// this port drains directly but deliberately keeps the exact failed
@@ -787,7 +787,7 @@ impl Fiber {
                 // Containment is the boundary's catch-and-convert policy: a
                 // panicking apply becomes the Failed state below instead of
                 // unwinding through the settle loop (which would leave the
-                // fiber LOADING forever and hang `Fork::ready`).
+                // fiber LOADING forever and hang `FiberHandle::ready`).
                 // AssertUnwindSafe posture: plugin state may be inconsistent
                 // after the panic, which is exactly why the fiber goes to
                 // FAILED and its error is recorded rather than retried
@@ -1186,18 +1186,18 @@ enum RunSlot {
 
 /// Public handle of a running plugin instance (mirrors `Fiber &
 /// PromiseLike<Fiber>`; the promise mixin is JS-only — the port's
-/// Fork-out/Fiber-in split).
+/// public-handle/private-Fiber split).
 ///
 /// Cheap to clone; lifecycle operations go through the shared private Fiber
 /// body. Correlation identity is exposed separately as an opaque [`FiberId`].
 #[derive(Clone)]
-pub struct Fork {
+pub struct FiberHandle {
     pub(crate) fiber: Arc<Fiber>,
 }
 
-impl fmt::Debug for Fork {
+impl fmt::Debug for FiberHandle {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Fork")
+        f.debug_struct("FiberHandle")
             .field("id", self.fiber.id())
             .field("name", &self.fiber.name)
             .finish()
@@ -1253,7 +1253,7 @@ impl LifecycleRecursion {
     }
 }
 
-/// Why [`Fork::ready`] could not report live quiescence.
+/// Why [`FiberHandle::ready`] could not report live quiescence.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum ReadyError {
@@ -1280,7 +1280,7 @@ pub enum RestartError {
     Apply(PluginFailure),
 }
 
-/// Why a [`Fork::wait_state`](Fork::wait_state) call ended early: the
+/// Why a [`FiberHandle::wait_state`](FiberHandle::wait_state) call ended early: the
 /// deadline passed first, or the call was refused outright.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
@@ -1293,7 +1293,7 @@ pub enum WaitStateError {
     Recursion(LifecycleRecursion),
 }
 
-impl Fork {
+impl FiberHandle {
     pub(crate) fn new(fiber: Arc<Fiber>) -> Self {
         Self { fiber }
     }
@@ -1303,7 +1303,7 @@ impl Fork {
         self.fiber.state()
     }
 
-    /// Opaque Runtime-local identity shared by all clones of this Fork.
+    /// Opaque Runtime-local identity shared by all clones of this FiberHandle.
     pub fn id(&self) -> FiberId {
         self.fiber.id().clone()
     }
@@ -1315,7 +1315,7 @@ impl Fork {
 
     /// Names of this Fiber's declared dependencies that are currently Missing.
     ///
-    /// This is a per-Fork diagnostic projection only; it exposes neither
+    /// This is a per-FiberHandle diagnostic projection only; it exposes neither
     /// Registry topology nor lifecycle authority and is not target identity.
     ///
     /// Empty once the fiber is disposed (liveness early-exit; `spawn_state`

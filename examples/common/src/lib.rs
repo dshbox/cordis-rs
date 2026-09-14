@@ -6,8 +6,8 @@
 //!
 //! - the ops-console helpers — [`section`] and [`boot_report`];
 //! - the boot/teardown mechanics — [`Roster`] (the spawn-ordered
-//!   accumulation), per-fork ready rows with ✓ / ⏳ +
-//!   [`Fork::pending_missing`] / ✗ + error, and reverse-order
+//!   accumulation), per-FiberHandle ready rows with ✓ / ⏳ +
+//!   [`FiberHandle::pending_missing`] / ✗ + error, and reverse-order
 //!   [`teardown`];
 //!
 //! It deliberately does **not** own policy: supervision (the two-channel
@@ -17,9 +17,9 @@
 //! past a ✗; the helper only renders the rows and hands back
 //! [`BootSummary`]).
 //!
-//! [`Fork::pending_missing`]: cordis_core::Fork::pending_missing
+//! [`FiberHandle::pending_missing`]: cordis_core::FiberHandle::pending_missing
 
-use cordis_core::{FiberState, Fork};
+use cordis_core::{FiberHandle, FiberState};
 
 /// Print one ops-console section header — the suite's universal
 /// narrative beat (`══ title ══`).
@@ -39,7 +39,7 @@ pub fn short_type_name(type_name: &str) -> &str {
     type_name.rsplit("::").next().unwrap_or(type_name)
 }
 
-/// The deployment's forks in spawn order — the accumulation
+/// The deployment's FiberHandles in spawn order — the accumulation
 /// [`boot_report`] and [`teardown`] consume. `push` is the only way in
 /// and hands the same handle back, so callers keep binding names
 /// without the clone dance; the spawn-order contract (children die
@@ -47,11 +47,11 @@ pub fn short_type_name(type_name: &str) -> &str {
 /// not by a doc note at each call site.
 ///
 /// Reporting mid-accumulation is a supported shape (scopes_tenants
-/// boots, reports, and keeps spawning); a one-off single-fork report
+/// boots, reports, and keeps spawning); a one-off single-FiberHandle report
 /// uses the free [`boot_report`] directly.
 #[derive(Debug, Default)]
 pub struct Roster {
-    forks: Vec<Fork>,
+    fiber_handles: Vec<FiberHandle>,
 }
 
 impl Roster {
@@ -60,28 +60,28 @@ impl Roster {
         Self::default()
     }
 
-    /// Record a spawned fork, in spawn order; returns the same handle,
+    /// Record a spawned FiberHandle, in spawn order; returns the same handle,
     /// for the caller to keep binding names to.
-    pub fn push(&mut self, fork: Fork) -> Fork {
-        self.forks.push(fork.clone());
-        fork
+    pub fn push(&mut self, fiber_handle: FiberHandle) -> FiberHandle {
+        self.fiber_handles.push(fiber_handle.clone());
+        fiber_handle
     }
 
     /// [`boot_report`] over the recorded order, so far.
     pub async fn report(&self) -> BootSummary {
-        boot_report(&self.forks).await
+        boot_report(&self.fiber_handles).await
     }
 
     /// [`teardown`] over the recorded order, reversed.
     pub async fn teardown(&self) {
-        teardown(&self.forks).await
+        teardown(&self.fiber_handles).await
     }
 }
 
-impl FromIterator<Fork> for Roster {
-    fn from_iter<I: IntoIterator<Item = Fork>>(forks: I) -> Self {
+impl FromIterator<FiberHandle> for Roster {
+    fn from_iter<I: IntoIterator<Item = FiberHandle>>(fiber_handles: I) -> Self {
         Self {
-            forks: forks.into_iter().collect(),
+            fiber_handles: fiber_handles.into_iter().collect(),
         }
     }
 }
@@ -101,36 +101,36 @@ pub struct BootSummary {
     pub failed: usize,
 }
 
-/// Wait for every fork to settle and render the boot report: one row per
-/// fork — ✓ up, ⏳ waiting for the names [`Fork::pending_missing`]
+/// Wait for every FiberHandle to settle and render the boot report: one row per
+/// FiberHandle — ✓ up, ⏳ waiting for the names [`FiberHandle::pending_missing`]
 /// reports, and ✗ with the apply error.
 ///
-/// `forks` must be in spawn order: [`teardown`] disposes the same slice
+/// `fiber_handles` must be in spawn order: [`teardown`] disposes the same slice
 /// in reverse. Rows settle sequentially in that order, mirroring the
-/// probe's hand-written loop. Odd settled states (a fork disposed during
+/// probe's hand-written loop. Odd settled states (a FiberHandle disposed during
 /// boot) render as `?` rows and count nowhere — the summary counts what
 /// boot produced, not what a concurrent teardown took away.
 ///
 /// Returns the counts; whether to continue past a ✗ is the app's call.
-pub async fn boot_report(forks: &[Fork]) -> BootSummary {
+pub async fn boot_report(fiber_handles: &[FiberHandle]) -> BootSummary {
     let mut summary = BootSummary::default();
-    for fork in forks {
-        match fork.ready().await {
+    for fiber_handle in fiber_handles {
+        match fiber_handle.ready().await {
             Ok(FiberState::Active) => {
-                println!("  ✓ {} up", short_type_name(fork.name()));
+                println!("  ✓ {} up", short_type_name(fiber_handle.name()));
                 summary.up += 1;
             }
             Ok(FiberState::Pending) => {
                 println!(
                     "  ⏳ {} waiting for {:?}",
-                    short_type_name(fork.name()),
-                    fork.pending_missing()
+                    short_type_name(fiber_handle.name()),
+                    fiber_handle.pending_missing()
                 );
                 summary.pending += 1;
             }
-            Ok(other) => println!("  ? {} {other:?}", short_type_name(fork.name())),
+            Ok(other) => println!("  ? {} {other:?}", short_type_name(fiber_handle.name())),
             Err(e) => {
-                println!("  ✗ {} failed: {e}", short_type_name(fork.name()));
+                println!("  ✗ {} failed: {e}", short_type_name(fiber_handle.name()));
                 summary.failed += 1;
             }
         }
@@ -138,24 +138,27 @@ pub async fn boot_report(forks: &[Fork]) -> BootSummary {
     summary
 }
 
-/// Dispose `forks` in reverse spawn order — children die before the
+/// Dispose `fiber_handles` in reverse spawn order — children die before the
 /// furniture they were spawned under (probe wall W1's teardown half).
-/// Renders one ✓ row per fork; every effect a plugin registered
+/// Renders one ✓ row per FiberHandle; every effect a plugin registered
 /// (listeners, services, fiber-bound tasks) vanishes with its fiber.
 ///
-/// `forks` is the same spawn-ordered slice [`boot_report`] reported on.
-/// Already-disposed forks are skipped, so repeated teardown is quiet and
+/// `fiber_handles` is the same spawn-ordered slice [`boot_report`] reported on.
+/// Already-disposed FiberHandles are skipped, so repeated teardown is quiet and
 /// idempotent.
-pub async fn teardown(forks: &[Fork]) {
-    for fork in forks.iter().rev() {
-        if fork.state() == FiberState::Disposed {
+pub async fn teardown(fiber_handles: &[FiberHandle]) {
+    for fiber_handle in fiber_handles.iter().rev() {
+        if fiber_handle.state() == FiberState::Disposed {
             continue;
         }
-        // A per-Fork operation failure is rendered rather than promoted into
+        // A per-FiberHandle operation failure is rendered rather than promoted into
         // Harness policy, so one refusal cannot abort later teardown attempts.
-        match fork.dispose().await {
-            Ok(()) => println!("  ✓ {} down", short_type_name(fork.name())),
-            Err(e) => println!("  ⚠ {} dispose error: {e}", short_type_name(fork.name())),
+        match fiber_handle.dispose().await {
+            Ok(()) => println!("  ✓ {} down", short_type_name(fiber_handle.name())),
+            Err(e) => println!(
+                "  ⚠ {} dispose error: {e}",
+                short_type_name(fiber_handle.name())
+            ),
         }
     }
 }

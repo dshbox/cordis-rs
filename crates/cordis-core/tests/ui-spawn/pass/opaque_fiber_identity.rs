@@ -1,6 +1,6 @@
-use cordis_core::{FiberId, Fork};
+use cordis_core::{FiberId, FiberHandle};
 
-fn same_fiber(left: &Fork, right: &Fork) -> bool {
+fn same_fiber(left: &FiberHandle, right: &FiberHandle) -> bool {
     left.id() == right.id()
 }
 
@@ -9,6 +9,6 @@ fn correlate(id: &FiberId) -> (FiberId, String) {
 }
 
 fn main() {
-    let _ = same_fiber as fn(&Fork, &Fork) -> bool;
+    let _ = same_fiber as fn(&FiberHandle, &FiberHandle) -> bool;
     let _ = correlate as fn(&FiberId) -> (FiberId, String);
 }

@@ -1,4 +1,4 @@
-use cordis_core::{ConfigurableService, Context, Fork, InjectSpec, Plugin, PreparedChange, PreparedPlugin, Service};
+use cordis_core::{ConfigurableService, Context, FiberHandle, InjectSpec, Plugin, PreparedChange, PreparedPlugin, Service};
 use std::cell::Cell;
 use std::fmt;
 use std::future::{Future, Ready, ready};
@@ -103,13 +103,13 @@ fn main() {
 // Spawn and update accept the sealed values without adding bounds of
 // their own: the bodies only need to typecheck, never run.
 #[allow(dead_code)]
-async fn spawn_and_update(ctx: Context, fork: Fork) {
+async fn spawn_and_update(ctx: Context, fiber_handle: FiberHandle) {
     let plugin = MinimalPlugin(Cell::new(0));
     let prepared = plugin.prepare(LocalConfig(Rc::new(()))).unwrap();
     let _ = ctx.spawn(PreparedPlugin::from_input(plugin, prepared)).await;
     let spare = MinimalPlugin(Cell::new(0));
     let candidate = spare.prepare(LocalConfig(Rc::new(()))).unwrap();
-    let _ = fork
+    let _ = fiber_handle
         .update(PreparedChange::from_input::<MinimalPlugin>(candidate))
         .await;
 }

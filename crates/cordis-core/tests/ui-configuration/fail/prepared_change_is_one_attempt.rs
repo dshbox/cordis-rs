@@ -1,4 +1,4 @@
-use cordis_core::{Context, Fork, Plugin, PreparedChange};
+use cordis_core::{Context, FiberHandle, Plugin, PreparedChange};
 use std::convert::Infallible;
 use std::future::{Future, ready};
 
@@ -24,13 +24,13 @@ impl Plugin for P {
 }
 
 // A PreparedChange is consumed by one attempted lifecycle operation: the
-// real `Fork::update` entry takes it by value, so a second attempt does
+// real `FiberHandle::update` entry takes it by value, so a second attempt does
 // not compile.
 #[allow(dead_code)]
-async fn drive(fork: Fork) {
+async fn drive(fiber_handle: FiberHandle) {
     let candidate = PreparedChange::from_input::<P>(String::new());
-    let _ = fork.update(candidate).await;
-    let _ = fork.update(candidate).await;
+    let _ = fiber_handle.update(candidate).await;
+    let _ = fiber_handle.update(candidate).await;
 }
 
 fn main() {}

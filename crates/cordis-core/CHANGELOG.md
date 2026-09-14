@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- [**breaking**] rename the consumer lifecycle control type from `Fork` to `FiberHandle`; no compatibility alias is retained
+
 ## [0.1.3](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.1.2...cordis-core-v0.1.3) - 2026-09-14
 
 ### Fixed

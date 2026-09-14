@@ -1,9 +1,9 @@
 error[E0382]: use of moved value: `candidate`
-  --> tests/ui-configuration/fail/prepared_change_is_one_attempt.rs:33:25
+  --> tests/ui-configuration/fail/prepared_change_is_one_attempt.rs:33:33
    |
 31 |     let candidate = PreparedChange::from_input::<P>(String::new());
    |         --------- move occurs because `candidate` has type `PreparedChange`, which does not implement the `Copy` trait
-32 |     let _ = fork.update(candidate).await;
-   |                         --------- value moved here
-33 |     let _ = fork.update(candidate).await;
-   |                         ^^^^^^^^^ value used here after move
+32 |     let _ = fiber_handle.update(candidate).await;
+   |                                 --------- value moved here
+33 |     let _ = fiber_handle.update(candidate).await;
+   |                                 ^^^^^^^^^ value used here after move

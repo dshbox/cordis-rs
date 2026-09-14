@@ -1,8 +1,8 @@
 //! Application-facade compile smoke test.
 
 use cordis::{
-    Context, Event, Plugin, PreparedPlugin, Routing, effect, event, lifecycle, logger, observation,
-    plugin, service,
+    Context, Event, FiberHandle, Plugin, PreparedPlugin, Routing, effect, event, lifecycle, logger,
+    observation, plugin, service,
 };
 
 struct Ping;
@@ -33,6 +33,7 @@ fn application_facade_exports_the_documented_root_surface() {
     let root = Context::new();
     let _same_runtime_root = root.root();
     let _routing = Routing::Unscoped;
+    let _fiber_handle_type = std::any::type_name::<FiberHandle>();
     let _event_name = Ping::NAME;
     let _module_paths = (
         std::any::type_name::<effect::EffectRegistrationError>(),

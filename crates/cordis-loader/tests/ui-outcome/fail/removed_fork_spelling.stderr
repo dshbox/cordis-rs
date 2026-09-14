@@ -1,0 +1,11 @@
+error[E0026]: variant `Spawned` does not have a field named `fork`
+ --> tests/ui-outcome/fail/removed_fork_spelling.rs:5:36
+  |
+5 |     if let EntryOutcome::Spawned { fork, .. } = entry {
+  |                                    ^^^^ variant `Spawned` does not have this field
+
+error[E0599]: no method named `forks` found for reference `&LoadOutcome` in the current scope
+ --> tests/ui-outcome/fail/removed_fork_spelling.rs:8:21
+  |
+8 |     let _ = outcome.forks();
+  |                     ^^^^^ method not found in `&LoadOutcome`

@@ -1,12 +1,12 @@
 //! The spawn transaction: admit one typed, sealed [`PreparedPlugin`] and
 //! drive a fresh Fiber to live quiescent [`FiberState::Active`](crate::FiberState::Active) or stable
-//! [`FiberState::Pending`](crate::FiberState::Pending) before its [`Fork`] is delivered.
+//! [`FiberState::Pending`](crate::FiberState::Pending) before its [`FiberHandle`] is delivered.
 //!
 //! Creation is one transaction with one commit point and one of three
 //! endings:
 //!
 //! - **handoff** — the fiber settled Active, or is stably Pending on
-//!   missing requirements; the caller's Fork is delivered only after the
+//!   missing requirements; the caller's FiberHandle is delivered only after the
 //!   live quiescent handoff condition is satisfied;
 //! - **`InitialApply`** — the first apply returned an error or panicked:
 //!   the failed generation's complete LIFO rollback already ran inside
@@ -42,7 +42,7 @@ use crate::context::Context;
 use crate::plugin::PreparedPlugin;
 use crate::registry::PluginKey;
 
-use super::{Fiber, Fork, inertia::InitialOutcome};
+use super::{Fiber, FiberHandle, inertia::InitialOutcome};
 
 #[cfg(test)]
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -162,7 +162,7 @@ pub(crate) fn clone_owned(failure: &PluginFailure) -> PluginFailure {
 }
 
 /// Why a [`Context::spawn`] failed. Every variant is a complete answer
-/// about the attempted Fiber: on `Err` no Fork is delivered and no
+/// about the attempted Fiber: on `Err` no FiberHandle is delivered and no
 /// resident attempted Fiber remains.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
@@ -199,18 +199,18 @@ pub enum SpawnError {
     InitialApply(PluginFailure),
     /// Framework invalidation (a typed group removal racing the creation)
     /// disposed the attempted Fiber after its creation work began but
-    /// before Fork handoff; the Fiber is fully disposed and unlinked
+    /// before FiberHandle handoff; the Fiber is fully disposed and unlinked
     /// before this error returns. Caller cancellation is never reported
     /// as `Interrupted` — it is governed by commit-or-no-effect handoff
     /// ownership (see [`Context::spawn`]).
-    #[error("the creation was invalidated by the framework before its Fork was delivered")]
+    #[error("the creation was invalidated by the framework before its FiberHandle was delivered")]
     Interrupted,
 }
 
 /// Completion of the creation transaction while the spawn future may be
 /// dropped at any await.
 ///
-/// Armed at the residency commit, disarmed at Fork handoff or terminal
+/// Armed at the residency commit, disarmed at FiberHandle handoff or terminal
 /// error delivery — both endings finish the fiber's lifecycle inline, so
 /// a disarmed guard is proof the attempted Fiber needs nothing more. An
 /// armed guard firing means the caller abandoned the creation mid-flight:
@@ -252,7 +252,7 @@ impl Drop for CreationGuard {
 pub(crate) async fn spawn_prepared(
     ctx: &Context,
     prepared: PreparedPlugin,
-) -> std::result::Result<Fork, SpawnError> {
+) -> std::result::Result<FiberHandle, SpawnError> {
     spawn_prepared_inner(ctx, prepared, true).await
 }
 
@@ -263,7 +263,7 @@ pub(crate) async fn spawn_prepared(
 pub(super) async fn spawn_prepared_era_successor(
     ctx: &Context,
     prepared: PreparedPlugin,
-) -> std::result::Result<Fork, SpawnError> {
+) -> std::result::Result<FiberHandle, SpawnError> {
     spawn_prepared_inner(ctx, prepared, false).await
 }
 
@@ -271,7 +271,7 @@ async fn spawn_prepared_inner(
     ctx: &Context,
     prepared: PreparedPlugin,
     require_origin_open: bool,
-) -> std::result::Result<Fork, SpawnError> {
+) -> std::result::Result<FiberHandle, SpawnError> {
     // Ordinary consumer spawn is gated by the calling Context's current
     // generation. Era replay is different: the captured origin is provenance
     // plus view axes, never lifecycle ownership of the replacement.
@@ -346,7 +346,7 @@ async fn spawn_prepared_inner(
             fiber: crate::observation::fiber_snapshot(root, &fiber),
         });
 
-    let fork = Fork::new(fiber.clone());
+    let fiber_handle = FiberHandle::new(fiber.clone());
     // claim + initial settle + release live with the rest of the inertia
     // protocol (see InertiaSlot::initial_spawn_pass for why the claim is
     // a CAS and what a lost claim waits out); the pass returns only once
@@ -357,7 +357,7 @@ async fn spawn_prepared_inner(
             // released the slot, but a framework invalidation's dispose
             // may have been waiting it out. Wait the slot back — the
             // remover's teardown completes under its claim — then judge:
-            // alive hands the Fork off; dead reports Interrupted with the
+            // alive hands the FiberHandle off; dead reports Interrupted with the
             // teardown already complete (the variant's contract), and the
             // winner's lagging unlink is forced. An invalidation landing
             // after this recheck is indistinguishable from a post-handoff
@@ -372,7 +372,7 @@ async fn spawn_prepared_inner(
                 #[cfg(test)]
                 probe_handoff(HandoffPhase::AfterRecheck, contract).await;
                 guard.disarm();
-                Ok(fork)
+                Ok(fiber_handle)
             } else {
                 fiber.force_unlink();
                 guard.disarm();
@@ -396,14 +396,14 @@ async fn spawn_prepared_inner(
 impl Context {
     /// Admit one typed, prepared, and sealed Plugin to lifecycle creation
     /// and drive its fresh Fiber to live quiescent [`FiberState::Active`](crate::FiberState::Active)
-    /// or stable [`FiberState::Pending`](crate::FiberState::Pending) before returning its [`Fork`].
+    /// or stable [`FiberState::Pending`](crate::FiberState::Pending) before returning its [`FiberHandle`].
     ///
     /// This is the whole creation transaction: preparation and sealing
     /// have already completed ([`Plugin::prepare`](crate::Plugin::prepare),
     /// [`PreparedPlugin::from_input`] — both synchronous, ordinary
     /// panics included, under no framework lock and before any
     /// allocation); this method is the first operation allowed to
-    /// allocate Runtime state. The returned Fork belongs to a Fiber that
+    /// allocate Runtime state. The returned FiberHandle belongs to a Fiber that
     /// has settled for the current service snapshot: a missing
     /// requirement produces a stable Pending without running apply (a
     /// later publication converges it), never a transient or
@@ -427,17 +427,20 @@ impl Context {
     /// Before the allocation/publication commit, dropping this future
     /// has no lifecycle effect (the pre-commit section is synchronous).
     /// After it, the framework completes the transaction independently
-    /// of caller polling: the Fork handoff, or the full disposal and
+    /// of caller polling: the FiberHandle handoff, or the full disposal and
     /// unlink of the undelivered Fiber. Caller cancellation is never
     /// reported as [`SpawnError::Interrupted`].
-    pub async fn spawn(&self, prepared: PreparedPlugin) -> std::result::Result<Fork, SpawnError> {
+    pub async fn spawn(
+        &self,
+        prepared: PreparedPlugin,
+    ) -> std::result::Result<FiberHandle, SpawnError> {
         spawn_prepared(self, prepared).await
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Fork, HANDOFF_PROBE, HandoffPhase, HandoffProbe, spawn_prepared};
+    use super::{FiberHandle, HANDOFF_PROBE, HandoffPhase, HandoffProbe, spawn_prepared};
     use crate::context::Context;
     use crate::plugin::{Plugin, PreparedPlugin};
     use std::convert::Infallible;
@@ -475,7 +478,7 @@ mod tests {
         }
     }
 
-    async fn handoff_race(phase: HandoffPhase) -> Result<Fork, super::SpawnError> {
+    async fn handoff_race(phase: HandoffPhase) -> Result<FiberHandle, super::SpawnError> {
         let ctx = Context::new();
         let entered = Arc::new(tokio::sync::Notify::new());
         let release_apply = Arc::new(tokio::sync::Notify::new());

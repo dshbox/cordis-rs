@@ -175,7 +175,7 @@ async fn loading_publication_is_current_but_invisible_then_becomes_visible() {
     assert_eq!(provider.state(), FiberState::Loading);
 
     release.notify_one();
-    let fork = spawn.await.unwrap().unwrap();
+    let fiber_handle = spawn.await.unwrap().unwrap();
     let active = ctx.runtime_snapshot();
     let service_after = active
         .services()
@@ -188,7 +188,7 @@ async fn loading_publication_is_current_but_invisible_then_becomes_visible() {
         "visibility does not replace occurrence identity"
     );
     assert!(service_after.visible());
-    assert_eq!(service_after.provider(), &fork.id());
+    assert_eq!(service_after.provider(), &fiber_handle.id());
 }
 
 struct BlockingServiceCleanup {
@@ -221,7 +221,7 @@ async fn closed_generation_physical_service_row_is_not_current_snapshot_state() 
     let ctx = Context::new();
     let entered = Arc::new(tokio::sync::Notify::new());
     let release = Arc::new(tokio::sync::Notify::new());
-    let fork = ctx
+    let fiber_handle = ctx
         .spawn(prepared(BlockingServiceCleanup {
             entered: entered.clone(),
             release: release.clone(),
@@ -231,11 +231,11 @@ async fn closed_generation_physical_service_row_is_not_current_snapshot_state() 
     assert_eq!(ctx.runtime_snapshot().services().len(), 1);
 
     let disposing = tokio::spawn({
-        let fork = fork.clone();
-        async move { fork.dispose().await }
+        let fiber_handle = fiber_handle.clone();
+        async move { fiber_handle.dispose().await }
     });
     entered.notified().await;
-    assert_eq!(fork.state(), FiberState::Unloading);
+    assert_eq!(fiber_handle.state(), FiberState::Unloading);
 
     let during_cleanup = ctx.runtime_snapshot();
     assert!(
@@ -245,7 +245,7 @@ async fn closed_generation_physical_service_row_is_not_current_snapshot_state() 
     let fiber = during_cleanup
         .fibers()
         .iter()
-        .find(|r| r.id() == &fork.id())
+        .find(|r| r.id() == &fiber_handle.id())
         .unwrap();
     assert_eq!(
         fiber.state(),
@@ -261,11 +261,16 @@ async fn closed_generation_physical_service_row_is_not_current_snapshot_state() 
 async fn later_snapshot_recovers_current_state_after_an_unobserved_gap_only() {
     let ctx = Context::new();
     let before = ctx.runtime_snapshot();
-    let fork = ctx.spawn(prepared(Plain)).await.unwrap();
+    let fiber_handle = ctx.spawn(prepared(Plain)).await.unwrap();
     let _publication = ctx.provide(Arc::new(Counter)).unwrap();
 
     let recovered = ctx.runtime_snapshot();
-    assert!(recovered.fibers().iter().any(|r| r.id() == &fork.id()));
+    assert!(
+        recovered
+            .fibers()
+            .iter()
+            .any(|r| r.id() == &fiber_handle.id())
+    );
     assert_eq!(recovered.services().len(), 1);
     assert_eq!(
         before.fibers().len(),
@@ -273,7 +278,7 @@ async fn later_snapshot_recovers_current_state_after_an_unobserved_gap_only() {
         "an older immutable snapshot is not retroactively mutated"
     );
 
-    fork.dispose().await.unwrap();
+    fiber_handle.dispose().await.unwrap();
     let latest = ctx.runtime_snapshot();
     assert_eq!(
         latest.fibers().len(),

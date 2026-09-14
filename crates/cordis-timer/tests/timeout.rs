@@ -31,14 +31,14 @@ impl Plugin for Capture {
     }
 }
 
-async fn scoped_ctx(root: &Context) -> (cordis_core::Fork, Context) {
+async fn scoped_ctx(root: &Context) -> (cordis_core::FiberHandle, Context) {
     let captured = Arc::new(Mutex::new(None));
-    let fork = root
+    let fiber_handle = root
         .spawn(PreparedPlugin::from_input(Capture(captured.clone()), ()))
         .await
         .unwrap();
     let ctx = captured.lock().clone().unwrap();
-    (fork, ctx)
+    (fiber_handle, ctx)
 }
 
 struct PollCount<'a> {
@@ -120,20 +120,20 @@ async fn deadline_already_elapsed_drops_work_without_polling_it() {
 #[tokio::test(start_paused = true)]
 async fn generation_cancellation_is_distinct_from_elapsed() {
     let root = Context::new();
-    let (fork, ctx) = scoped_ctx(&root).await;
+    let (fiber_handle, ctx) = scoped_ctx(&root).await;
     let timeout = ctx
         .timeout(Duration::from_secs(60), pending::<()>())
         .unwrap();
     tokio::pin!(timeout);
     assert!(futures::poll!(timeout.as_mut()).is_pending());
-    fork.dispose().await.unwrap();
+    fiber_handle.dispose().await.unwrap();
     assert!(matches!(timeout.await, Err(TimerCancelled)));
 }
 
 #[tokio::test(start_paused = true)]
 async fn standing_generation_cancellation_wins_before_work_poll() {
     let root = Context::new();
-    let (fork, ctx) = scoped_ctx(&root).await;
+    let (fiber_handle, ctx) = scoped_ctx(&root).await;
     let polls = Cell::new(0);
     let timeout = ctx
         .timeout(
@@ -144,7 +144,7 @@ async fn standing_generation_cancellation_wins_before_work_poll() {
             },
         )
         .unwrap();
-    fork.dispose().await.unwrap();
+    fiber_handle.dispose().await.unwrap();
     assert!(matches!(timeout.await, Err(TimerCancelled)));
     assert_eq!(polls.get(), 0);
 }
@@ -174,7 +174,7 @@ impl Drop for DropMark<'_> {
 #[tokio::test(start_paused = true)]
 async fn generation_cleanup_never_owns_or_drops_timeout_work() {
     let root = Context::new();
-    let (fork, ctx) = scoped_ctx(&root).await;
+    let (fiber_handle, ctx) = scoped_ctx(&root).await;
     let drops = Cell::new(0);
     let mark = DropMark(&drops);
     let timeout = ctx
@@ -184,7 +184,7 @@ async fn generation_cleanup_never_owns_or_drops_timeout_work() {
         })
         .unwrap();
 
-    fork.dispose().await.unwrap();
+    fiber_handle.dispose().await.unwrap();
     assert_eq!(
         drops.get(),
         0,
@@ -219,7 +219,7 @@ fn timeout_refuses_off_runtime_synchronously_without_polling_work() {
 #[tokio::test(start_paused = true)]
 async fn cancellation_wins_ready_but_uncommitted_timeout_deadline() {
     let root = Context::new();
-    let (fork, ctx) = scoped_ctx(&root).await;
+    let (fiber_handle, ctx) = scoped_ctx(&root).await;
     let polls = Cell::new(0);
     let timeout = ctx
         .timeout(
@@ -232,7 +232,7 @@ async fn cancellation_wins_ready_but_uncommitted_timeout_deadline() {
         .unwrap();
 
     tokio::time::advance(Duration::from_secs(5)).await;
-    fork.dispose().await.unwrap();
+    fiber_handle.dispose().await.unwrap();
 
     assert!(matches!(timeout.await, Err(TimerCancelled)));
     assert_eq!(
@@ -255,7 +255,7 @@ impl Drop for DropThread<'_> {
 #[tokio::test(flavor = "current_thread", start_paused = true)]
 async fn cancelled_timeout_work_is_dropped_by_the_caller_poll() {
     let root = Context::new();
-    let (fork, ctx) = scoped_ctx(&root).await;
+    let (fiber_handle, ctx) = scoped_ctx(&root).await;
     let dropped_on = Cell::new(None);
     let caller = std::thread::current().id();
     let marker = DropThread {
@@ -270,7 +270,7 @@ async fn cancelled_timeout_work_is_dropped_by_the_caller_poll() {
     tokio::pin!(timeout);
 
     assert!(futures::poll!(timeout.as_mut()).is_pending());
-    fork.dispose().await.unwrap();
+    fiber_handle.dispose().await.unwrap();
     assert_eq!(
         dropped_on.get(),
         None,

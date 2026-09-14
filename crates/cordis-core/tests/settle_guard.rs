@@ -13,7 +13,9 @@ use cordis_core::lifecycle::{
     EraSwapError, LifecycleOperation, LifecycleRecursion, ReadyError, RestartError, UpdateError,
     WaitStateError,
 };
-use cordis_core::{Context, FiberId, FiberState, Fork, Plugin, PreparedChange, PreparedPlugin};
+use cordis_core::{
+    Context, FiberHandle, FiberId, FiberState, Plugin, PreparedChange, PreparedPlugin,
+};
 use parking_lot::Mutex;
 use std::convert::Infallible;
 use std::future::Future;
@@ -65,7 +67,7 @@ fn assert_success(observation: Observation, operation: LifecycleOperation) {
 
 async fn observe<P, F>(
     ctx: &Context,
-    fork: &Fork,
+    fiber_handle: &FiberHandle,
     operation: LifecycleOperation,
     prepared: F,
 ) -> Observation
@@ -75,13 +77,13 @@ where
 {
     bounded(750, async {
         match operation {
-            LifecycleOperation::Ready => match fork.ready().await {
+            LifecycleOperation::Ready => match fiber_handle.ready().await {
                 Ok(_) => Observation::Success,
                 Err(ReadyError::Recursion(recursion)) => Observation::Recursion(recursion),
                 Err(_other) => Observation::Other,
             },
             LifecycleOperation::WaitState => {
-                match fork
+                match fiber_handle
                     .wait_state(FiberState::Active, Duration::from_secs(5))
                     .await
                 {
@@ -90,13 +92,13 @@ where
                     Err(_other) => Observation::Other,
                 }
             }
-            LifecycleOperation::Restart => match fork.restart().await {
+            LifecycleOperation::Restart => match fiber_handle.restart().await {
                 Ok(()) => Observation::Success,
                 Err(RestartError::Recursion(recursion)) => Observation::Recursion(recursion),
                 Err(_other) => Observation::Other,
             },
             LifecycleOperation::Update => {
-                match fork
+                match fiber_handle
                     .update(PreparedChange::from_input::<P>(prepared()))
                     .await
                 {
@@ -106,7 +108,7 @@ where
                 }
             }
             LifecycleOperation::EraSwap => {
-                match fork
+                match fiber_handle
                     .era_swap(PreparedChange::from_input::<P>(prepared()))
                     .await
                 {
@@ -115,7 +117,7 @@ where
                     Err(_other) => Observation::Other,
                 }
             }
-            LifecycleOperation::Dispose => match fork.dispose().await {
+            LifecycleOperation::Dispose => match fiber_handle.dispose().await {
                 Ok(()) => Observation::Success,
                 Err(recursion) => Observation::Recursion(recursion),
             },
@@ -134,7 +136,7 @@ where
 // ---------------------------------------------------------------------------
 
 struct ApplyProbe {
-    fork: Arc<Mutex<Option<Fork>>>,
+    fiber_handle: Arc<Mutex<Option<FiberHandle>>>,
     seen: Arc<Mutex<Vec<(LifecycleOperation, Observation)>>>,
 }
 
@@ -153,13 +155,13 @@ impl Plugin for ApplyProbe {
         ctx: Context,
         operation: &LifecycleOperation,
     ) -> impl Future<Output = Result<(), Infallible>> + Send {
-        let fork = self.fork.lock().clone();
+        let fiber_handle = self.fiber_handle.lock().clone();
         let seen = self.seen.clone();
         let operation = *operation;
         async move {
-            if let Some(fork) = fork {
+            if let Some(fiber_handle) = fiber_handle {
                 let observation =
-                    observe::<ApplyProbe, _>(&ctx, &fork, operation, || operation).await;
+                    observe::<ApplyProbe, _>(&ctx, &fiber_handle, operation, || operation).await;
                 seen.lock().push((operation, observation));
             }
             Ok(())
@@ -171,22 +173,23 @@ impl Plugin for ApplyProbe {
 async fn own_apply_refuses_every_lifecycle_self_wait_by_exact_allocation() {
     for operation in OPERATIONS {
         let ctx = Context::new();
-        let fork_cell = Arc::new(Mutex::new(None));
+        let fiber_handle_cell = Arc::new(Mutex::new(None));
         let seen = Arc::new(Mutex::new(Vec::new()));
-        let fork = ctx
+        let fiber_handle = ctx
             .spawn(PreparedPlugin::from_input(
                 ApplyProbe {
-                    fork: fork_cell.clone(),
+                    fiber_handle: fiber_handle_cell.clone(),
                     seen: seen.clone(),
                 },
                 operation,
             ))
             .await
             .unwrap();
-        *fork_cell.lock() = Some(fork.clone());
-        let id = fork.id();
+        *fiber_handle_cell.lock() = Some(fiber_handle.clone());
+        let id = fiber_handle.id();
 
-        fork.restart()
+        fiber_handle
+            .restart()
             .await
             .unwrap_or_else(|error| panic!("host restart for {operation:?} failed: {error:?}"));
 
@@ -201,9 +204,9 @@ async fn own_apply_refuses_every_lifecycle_self_wait_by_exact_allocation() {
         };
         assert_eq!(reported_operation, operation);
         assert_recursion(observation, operation, &id);
-        assert_eq!(fork.id(), id);
-        assert_eq!(fork.state(), FiberState::Active);
-        fork.dispose().await.unwrap();
+        assert_eq!(fiber_handle.id(), id);
+        assert_eq!(fiber_handle.state(), FiberState::Active);
+        fiber_handle.dispose().await.unwrap();
     }
 }
 
@@ -212,7 +215,7 @@ async fn own_apply_refuses_every_lifecycle_self_wait_by_exact_allocation() {
 // ---------------------------------------------------------------------------
 
 struct CleanupProbe {
-    fork: Arc<Mutex<Option<Fork>>>,
+    fiber_handle: Arc<Mutex<Option<FiberHandle>>>,
     seen: Arc<Mutex<Vec<(LifecycleOperation, Observation)>>>,
 }
 
@@ -231,18 +234,19 @@ impl Plugin for CleanupProbe {
         ctx: Context,
         _prepared: &(),
     ) -> impl Future<Output = Result<(), Infallible>> + Send {
-        let fork = self.fork.clone();
+        let fiber_handle = self.fiber_handle.clone();
         let seen = self.seen.clone();
         let cleanup_ctx = ctx.clone();
         async move {
             ctx.effect(move || async move {
-                let fork = fork
+                let fiber_handle = fiber_handle
                     .lock()
                     .clone()
-                    .expect("Fork is installed before terminal cleanup");
+                    .expect("FiberHandle is installed before terminal cleanup");
                 for operation in OPERATIONS {
                     let observation =
-                        observe::<CleanupProbe, _>(&cleanup_ctx, &fork, operation, || ()).await;
+                        observe::<CleanupProbe, _>(&cleanup_ctx, &fiber_handle, operation, || ())
+                            .await;
                     seen.lock().push((operation, observation));
                 }
             })
@@ -255,26 +259,26 @@ impl Plugin for CleanupProbe {
 #[tokio::test]
 async fn terminal_disposer_keeps_exact_allocation_attribution_after_lifecycle_death() {
     let ctx = Context::new();
-    let fork_cell = Arc::new(Mutex::new(None));
+    let fiber_handle_cell = Arc::new(Mutex::new(None));
     let seen = Arc::new(Mutex::new(Vec::new()));
-    let fork = ctx
+    let fiber_handle = ctx
         .spawn(PreparedPlugin::from_input(
             CleanupProbe {
-                fork: fork_cell.clone(),
+                fiber_handle: fiber_handle_cell.clone(),
                 seen: seen.clone(),
             },
             (),
         ))
         .await
         .unwrap();
-    *fork_cell.lock() = Some(fork.clone());
-    let id = fork.id();
+    *fiber_handle_cell.lock() = Some(fiber_handle.clone());
+    let id = fiber_handle.id();
 
-    bounded(7_000, fork.dispose())
+    bounded(7_000, fiber_handle.dispose())
         .await
         .expect("terminal disposal must complete")
         .unwrap();
-    assert_eq!(fork.state(), FiberState::Disposed);
+    assert_eq!(fiber_handle.state(), FiberState::Disposed);
 
     let outcomes = std::mem::take(&mut *seen.lock());
     assert_eq!(outcomes.len(), OPERATIONS.len());
@@ -286,26 +290,26 @@ async fn terminal_disposer_keeps_exact_allocation_attribution_after_lifecycle_de
 #[tokio::test]
 async fn reload_disposer_refuses_every_lifecycle_self_wait_by_exact_allocation() {
     let ctx = Context::new();
-    let fork_cell = Arc::new(Mutex::new(None));
+    let fiber_handle_cell = Arc::new(Mutex::new(None));
     let seen = Arc::new(Mutex::new(Vec::new()));
-    let fork = ctx
+    let fiber_handle = ctx
         .spawn(PreparedPlugin::from_input(
             CleanupProbe {
-                fork: fork_cell.clone(),
+                fiber_handle: fiber_handle_cell.clone(),
                 seen: seen.clone(),
             },
             (),
         ))
         .await
         .unwrap();
-    *fork_cell.lock() = Some(fork.clone());
-    let id = fork.id();
+    *fiber_handle_cell.lock() = Some(fiber_handle.clone());
+    let id = fiber_handle.id();
 
-    bounded(7_000, fork.restart())
+    bounded(7_000, fiber_handle.restart())
         .await
         .expect("reload must complete")
         .unwrap();
-    assert_eq!(fork.state(), FiberState::Active);
+    assert_eq!(fiber_handle.state(), FiberState::Active);
 
     let outcomes = std::mem::take(&mut *seen.lock());
     assert_eq!(outcomes.len(), OPERATIONS.len());
@@ -319,7 +323,7 @@ async fn reload_disposer_refuses_every_lifecycle_self_wait_by_exact_allocation()
 // ---------------------------------------------------------------------------
 
 struct RunProbe {
-    fork: Arc<Mutex<Option<Fork>>>,
+    fiber_handle: Arc<Mutex<Option<FiberHandle>>>,
     start: Arc<Notify>,
     seen: Arc<Mutex<Vec<(LifecycleOperation, Observation)>>>,
     done: Arc<Mutex<Option<tokio::sync::oneshot::Sender<()>>>>,
@@ -340,7 +344,7 @@ impl Plugin for RunProbe {
         ctx: Context,
         _prepared: &(),
     ) -> impl Future<Output = Result<(), Infallible>> + Send {
-        let fork = self.fork.clone();
+        let fiber_handle = self.fiber_handle.clone();
         let start = self.start.clone();
         let seen = self.seen.clone();
         let done = self.done.lock().take();
@@ -349,18 +353,20 @@ impl Plugin for RunProbe {
                 let task_ctx = ctx.clone();
                 ctx.run(async move {
                     start.notified().await;
-                    let fork = fork
+                    let fiber_handle = fiber_handle
                         .lock()
                         .clone()
-                        .expect("Fork installed before task starts");
+                        .expect("FiberHandle installed before task starts");
                     for operation in [LifecycleOperation::Ready, LifecycleOperation::WaitState] {
                         let observation =
-                            observe::<RunProbe, _>(&task_ctx, &fork, operation, || ()).await;
+                            observe::<RunProbe, _>(&task_ctx, &fiber_handle, operation, || ())
+                                .await;
                         seen.lock().push((operation, observation));
                     }
                     for operation in MUTATING_OPERATIONS {
                         let observation =
-                            observe::<RunProbe, _>(&task_ctx, &fork, operation, || ()).await;
+                            observe::<RunProbe, _>(&task_ctx, &fiber_handle, operation, || ())
+                                .await;
                         seen.lock().push((operation, observation));
                     }
                     let _ = done.send(());
@@ -375,14 +381,14 @@ impl Plugin for RunProbe {
 #[tokio::test]
 async fn run_task_refuses_mutators_but_allows_idle_observers() {
     let ctx = Context::new();
-    let fork_cell = Arc::new(Mutex::new(None));
+    let fiber_handle_cell = Arc::new(Mutex::new(None));
     let start = Arc::new(Notify::new());
     let seen = Arc::new(Mutex::new(Vec::new()));
     let (done_tx, done_rx) = tokio::sync::oneshot::channel();
-    let fork = ctx
+    let fiber_handle = ctx
         .spawn(PreparedPlugin::from_input(
             RunProbe {
-                fork: fork_cell.clone(),
+                fiber_handle: fiber_handle_cell.clone(),
                 start: start.clone(),
                 seen: seen.clone(),
                 done: Arc::new(Mutex::new(Some(done_tx))),
@@ -391,8 +397,8 @@ async fn run_task_refuses_mutators_but_allows_idle_observers() {
         ))
         .await
         .unwrap();
-    *fork_cell.lock() = Some(fork.clone());
-    let id = fork.id();
+    *fiber_handle_cell.lock() = Some(fiber_handle.clone());
+    let id = fiber_handle.id();
     start.notify_one();
     bounded(4_000, done_rx)
         .await
@@ -411,11 +417,11 @@ async fn run_task_refuses_mutators_but_allows_idle_observers() {
             assert_recursion(observation, operation, &id);
         }
     }
-    fork.dispose().await.unwrap();
+    fiber_handle.dispose().await.unwrap();
 }
 
 struct DrainObserverProbe {
-    fork: Arc<Mutex<Option<Fork>>>,
+    fiber_handle: Arc<Mutex<Option<FiberHandle>>>,
     seen: Arc<Mutex<Vec<(LifecycleOperation, Observation)>>>,
 }
 
@@ -434,17 +440,25 @@ impl Plugin for DrainObserverProbe {
         ctx: Context,
         _prepared: &(),
     ) -> impl Future<Output = Result<(), Infallible>> + Send {
-        let fork = self.fork.clone();
+        let fiber_handle = self.fiber_handle.clone();
         let seen = self.seen.clone();
         async move {
             let (signal_tx, signal_rx) = tokio::sync::oneshot::channel();
             let task_ctx = ctx.clone();
             ctx.run(async move {
                 signal_rx.await.expect("cleanup signals the run task once");
-                let fork = fork.lock().clone().expect("Fork installed before drain");
+                let fiber_handle = fiber_handle
+                    .lock()
+                    .clone()
+                    .expect("FiberHandle installed before drain");
                 for operation in [LifecycleOperation::Ready, LifecycleOperation::WaitState] {
-                    let observation =
-                        observe::<DrainObserverProbe, _>(&task_ctx, &fork, operation, || ()).await;
+                    let observation = observe::<DrainObserverProbe, _>(
+                        &task_ctx,
+                        &fiber_handle,
+                        operation,
+                        || (),
+                    )
+                    .await;
                     seen.lock().push((operation, observation));
                 }
             })
@@ -465,22 +479,22 @@ impl Plugin for DrainObserverProbe {
 #[tokio::test]
 async fn run_task_observers_refuse_only_while_the_target_drain_joins_them() {
     let ctx = Context::new();
-    let fork_cell = Arc::new(Mutex::new(None));
+    let fiber_handle_cell = Arc::new(Mutex::new(None));
     let seen = Arc::new(Mutex::new(Vec::new()));
-    let fork = ctx
+    let fiber_handle = ctx
         .spawn(PreparedPlugin::from_input(
             DrainObserverProbe {
-                fork: fork_cell.clone(),
+                fiber_handle: fiber_handle_cell.clone(),
                 seen: seen.clone(),
             },
             (),
         ))
         .await
         .unwrap();
-    *fork_cell.lock() = Some(fork.clone());
-    let id = fork.id();
+    *fiber_handle_cell.lock() = Some(fiber_handle.clone());
+    let id = fiber_handle.id();
 
-    bounded(4_000, fork.dispose())
+    bounded(4_000, fiber_handle.dispose())
         .await
         .expect("observer refusal lets drain join complete")
         .unwrap();
@@ -527,7 +541,7 @@ async fn unrelated_task_restart_waits_out_an_inflight_pass_instead_of_over_refus
     let applies = Arc::new(AtomicUsize::new(0));
     let entered = Arc::new(Notify::new());
     let release = Arc::new(Notify::new());
-    let fork = ctx
+    let fiber_handle = ctx
         .spawn(PreparedPlugin::from_input(
             BlockingRestart {
                 applies: applies.clone(),
@@ -540,20 +554,20 @@ async fn unrelated_task_restart_waits_out_an_inflight_pass_instead_of_over_refus
         .unwrap();
 
     let first = tokio::spawn({
-        let fork = fork.clone();
-        async move { fork.restart().await }
+        let fiber_handle = fiber_handle.clone();
+        async move { fiber_handle.restart().await }
     });
     entered.notified().await;
     let second = tokio::spawn({
-        let fork = fork.clone();
-        async move { fork.restart().await }
+        let fiber_handle = fiber_handle.clone();
+        async move { fiber_handle.restart().await }
     });
     release.notify_one();
 
     first.await.unwrap().unwrap();
     second.await.unwrap().unwrap();
     assert_eq!(applies.load(Ordering::SeqCst), 3);
-    assert_eq!(fork.ready().await.unwrap(), FiberState::Active);
+    assert_eq!(fiber_handle.ready().await.unwrap(), FiberState::Active);
 }
 
 #[derive(Clone)]
@@ -575,8 +589,8 @@ impl Plugin for CrossTarget {
 }
 
 struct CrossCaller {
-    target: Fork,
-    successor: Arc<Mutex<Option<Fork>>>,
+    target: FiberHandle,
+    successor: Arc<Mutex<Option<FiberHandle>>>,
     completed: Arc<AtomicBool>,
 }
 impl Plugin for CrossCaller {

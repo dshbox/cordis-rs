@@ -70,10 +70,10 @@ adaptation completes before the one complete core spawn call, so an
 adaptation failure creates no Fiber, residency, dependency
 projection, or generation. Loader owns textual realm-label policy
 per execution; core creates only opaque Runtime-local service realms
-and exact immutable Service-to-realm mappings. Successful Fork
+and exact immutable Service-to-realm mappings. Successful FiberHandle
 delivery is the handoff that ends Loader ownership: before outcome
-delivery Loader still owns obtained Forks and rolls them back in
-reverse success order if handoff is abandoned; after delivery, Fork
+delivery Loader still owns obtained FiberHandles and rolls them back in
+reverse success order if handoff is abandoned; after delivery, FiberHandle
 and outcome Drop are inert and the consumer owns composition.
 
 ### Timer seam over core cleanup

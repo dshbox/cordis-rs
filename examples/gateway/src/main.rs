@@ -1,7 +1,7 @@
 //! gateway — EX-03: final-v3 declarative boot and live gateway runbook.
 //!
 //! The consumer freezes an immutable Loader plan, resolves and prepares typed
-//! Plugins outside Loader, retains every delivered Fork in the shared Harness,
+//! Plugins outside Loader, retains every delivered FiberHandle in the shared Harness,
 //! dispatches Events with explicit scoped routing, applies typed same-Fiber
 //! update control, uses exact Service publication capabilities, and exercises
 //! the complete work-owning Timeout outcome family. No TTY is required.
@@ -17,7 +17,9 @@ use cordis_core::event::{
 };
 use cordis_core::lifecycle::UpdateNext;
 use cordis_core::lifecycle::{UpdateError, UpdateOutcome};
-use cordis_core::{BoxError, Context, Event, Fork, Plugin, PreparedChange, Routing, Service};
+use cordis_core::{
+    BoxError, Context, Event, FiberHandle, Plugin, PreparedChange, Routing, Service,
+};
 use cordis_loader::outcome::EntryOutcome;
 use cordis_loader::plan::PluginEntry;
 use cordis_loader::resolver::{PluginRequest, prepare_plugin_json};
@@ -419,9 +421,9 @@ fn resolve(request: PluginRequest<'_>) -> Result<Option<cordis_core::PreparedPlu
     Ok(Some(target))
 }
 
-fn fork_for(outcome: &LoadOutcome, id: &EntryId) -> Fork {
+fn fiber_handle_for(outcome: &LoadOutcome, id: &EntryId) -> FiberHandle {
     match outcome.entry(id).expect("plan id has one complete outcome") {
-        EntryOutcome::Spawned { fork, .. } => fork.clone(),
+        EntryOutcome::Spawned { fiber_handle, .. } => fiber_handle.clone(),
         _ => panic!("required gateway row did not spawn"),
     }
 }
@@ -470,16 +472,16 @@ async fn main() -> Result<(), BoxError> {
         }
     }
 
-    let roster: Roster = outcome.forks().cloned().collect();
+    let roster: Roster = outcome.fiber_handles().cloned().collect();
     println!(
-        "  roster handoff: {} successful Forks",
-        outcome.forks().count()
+        "  roster handoff: {} successful FiberHandles",
+        outcome.fiber_handles().count()
     );
     roster.report().await;
 
-    let auth = fork_for(&outcome, &ids.auth);
-    let rate = fork_for(&outcome, &ids.rate);
-    let deadline = fork_for(&outcome, &ids.deadline);
+    let auth = fiber_handle_for(&outcome, &ids.auth);
+    let rate = fiber_handle_for(&outcome, &ids.rate);
+    let deadline = fiber_handle_for(&outcome, &ids.deadline);
     let traffic = gateway.try_service::<Traffic>()?;
 
     section("events: explicit scoped waterfall/query");

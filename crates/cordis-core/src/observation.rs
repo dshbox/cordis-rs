@@ -554,7 +554,7 @@ mod tests {
         );
 
         release.notify_one();
-        let fork = task.await.unwrap();
+        let fiber_handle = task.await.unwrap();
         let active = ctx.root.observations.take();
         assert!(active.iter().any(|r| matches!(
             r,
@@ -573,7 +573,7 @@ mod tests {
             }
         )));
 
-        fork.dispose().await.unwrap();
+        fiber_handle.dispose().await.unwrap();
         let disposed = ctx.root.observations.take();
         assert!(disposed.iter().any(|r| matches!(
             r,
@@ -707,13 +707,13 @@ mod tests {
     #[tokio::test]
     async fn restart_preserves_residency_while_era_swap_replaces_it_and_manual_withdraw_is_exact() {
         let ctx = Context::new();
-        let fork = ctx
+        let fiber_handle = ctx
             .spawn(crate::PreparedPlugin::from_input(Plain, ()))
             .await
             .unwrap();
         ctx.root.observations.take();
 
-        fork.restart().await.unwrap();
+        fiber_handle.restart().await.unwrap();
         let restarted = ctx.root.observations.take();
         assert!(
             !restarted
@@ -722,8 +722,8 @@ mod tests {
             "same-Fiber restart is not a residency transition"
         );
 
-        let old = fork.id();
-        let successor = fork
+        let old = fiber_handle.id();
+        let successor = fiber_handle
             .era_swap(crate::PreparedChange::from_input::<Plain>(()))
             .await
             .unwrap();

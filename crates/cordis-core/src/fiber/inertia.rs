@@ -47,7 +47,7 @@ const INERTIA_RELEASING: u64 = 2;
 /// Three pieces of state, every rule for using them:
 ///
 /// - `inertia: AtomicU64` (`SeqCst` throughout) — IDLE / ACTIVE /
-///   RELEASING. `IDLE` is the *only* quiescent value: [`Fork::ready`](crate::Fork::ready)
+///   RELEASING. `IDLE` is the *only* quiescent value: [`FiberHandle::ready`](crate::FiberHandle::ready)
 ///   and [`Self::claim`] treat it as "no pass in flight or pending", so a
 ///   holder may only store it once it has verified no follow-up pass will
 ///   start. `RELEASING` is the recheck state that makes that verifiable:
@@ -235,7 +235,7 @@ impl InertiaSlot {
     }
 
     /// Wait for quiescence: the observe side behind
-    /// [`Fork::ready`](crate::Fork::ready). Enable-before-check, same
+    /// [`FiberHandle::ready`](crate::FiberHandle::ready). Enable-before-check, same
     /// lost-wakeup discipline as [`Self::claim`]; returns only once the
     /// slot reads IDLE, which a holder may store only after a clean drift
     /// recheck — so returning implies the fiber converged for the current
@@ -263,7 +263,7 @@ impl InertiaSlot {
     }
 
     /// Whether the slot currently reads IDLE — the quiescence probe
-    /// [`Fork::ready`](crate::Fork::ready) uses to reject states observed
+    /// [`FiberHandle::ready`](crate::FiberHandle::ready) uses to reject states observed
     /// after a pass snuck between its wake and its state read.
     pub(crate) fn is_idle(&self) -> bool {
         self.inertia.load(Ordering::SeqCst) == INERTIA_IDLE
@@ -435,7 +435,7 @@ impl InertiaSlot {
     /// Drive the initial settle pass of a freshly spawned fiber: claim the
     /// inertia slot (CAS, not a bare store), then settle toward the live
     /// semantic target and keep converging inline until the release recheck
-    /// comes back clean — the spawn transaction delivers a Fork only for
+    /// comes back clean — the spawn transaction delivers a FiberHandle only for
     /// a *live quiescent* fiber, so raced-in service mutations are
     /// converged here, never handed to a background pass the caller
     /// cannot see.
@@ -531,7 +531,7 @@ impl InertiaSlot {
                 break InitialOutcome::Failed(failure);
             }
             // changes racing the initial apply are converged inline:
-            // the fork is delivered only for a live quiescent fiber
+            // the FiberHandle is delivered only for a live quiescent Fiber
             if self.exit_recheck(fiber, root, &target, revision) {
                 continue;
             }
@@ -595,7 +595,7 @@ impl InertiaSlot {
             return Err(RestartError::Closed);
         }
 
-        // A live public Fork always has installed spawn state. Missing state
+        // A live public FiberHandle always has installed spawn state. Missing state
         // here is a framework invariant violation, not a consumer-visible
         // restart phase with a fourth error meaning.
         let root = fiber

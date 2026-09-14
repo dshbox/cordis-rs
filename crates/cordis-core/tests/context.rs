@@ -82,7 +82,7 @@ async fn typed_update_control_stays_scoped_to_each_fiber() {
     )
     .unwrap();
 
-    let fork_a = root
+    let fiber_handle_a = root
         .spawn(PreparedPlugin::from_input(
             Watcher {
                 tag: "watcher-a",
@@ -93,7 +93,7 @@ async fn typed_update_control_stays_scoped_to_each_fiber() {
         ))
         .await
         .unwrap();
-    let fork_b = root
+    let fiber_handle_b = root
         .spawn(PreparedPlugin::from_input(
             Watcher {
                 tag: "watcher-b",
@@ -106,20 +106,20 @@ async fn typed_update_control_stays_scoped_to_each_fiber() {
         .unwrap();
 
     // A's own layer vetoes A's update: no restart, Ok(())
-    fork_a
+    fiber_handle_a
         .update(PreparedChange::from_input::<Watcher>(()))
         .await
         .unwrap();
-    assert_eq!(fork_a.state(), cordis_core::FiberState::Active);
+    assert_eq!(fiber_handle_a.state(), cordis_core::FiberState::Active);
     assert_eq!(hits_parent.load(Ordering::SeqCst), 1, "ancestor saw A");
 
     // B's update is untouched by A's veto layer — sibling Scopes are not
     // on each other's Scope ancestry
-    fork_b
+    fiber_handle_b
         .update(PreparedChange::from_input::<Watcher>(()))
         .await
         .unwrap();
-    assert_eq!(fork_b.state(), cordis_core::FiberState::Active);
+    assert_eq!(fiber_handle_b.state(), cordis_core::FiberState::Active);
     assert_eq!(
         hits_parent.load(Ordering::SeqCst),
         2,
@@ -174,7 +174,7 @@ async fn restart_inherits_the_fibers_spawn_scope() {
 
     let root = Context::new();
     let hits = Arc::new(AtomicU32::new(0));
-    let fork = root
+    let fiber_handle = root
         .spawn(PreparedPlugin::from_input(
             VetoingWatcher { hits: hits.clone() },
             (),
@@ -183,16 +183,18 @@ async fn restart_inherits_the_fibers_spawn_scope() {
         .unwrap();
 
     // the first apply's layer vetoes the first update
-    fork.update(PreparedChange::from_input::<VetoingWatcher>(()))
+    fiber_handle
+        .update(PreparedChange::from_input::<VetoingWatcher>(()))
         .await
         .unwrap();
     assert_eq!(hits.load(Ordering::SeqCst), 1);
 
     // a plain restart re-applies onto the same scope node; the fresh
     // layer vetoes again
-    fork.restart().await.unwrap();
-    assert_eq!(fork.state(), cordis_core::FiberState::Active);
-    fork.update(PreparedChange::from_input::<VetoingWatcher>(()))
+    fiber_handle.restart().await.unwrap();
+    assert_eq!(fiber_handle.state(), cordis_core::FiberState::Active);
+    fiber_handle
+        .update(PreparedChange::from_input::<VetoingWatcher>(()))
         .await
         .unwrap();
     assert_eq!(

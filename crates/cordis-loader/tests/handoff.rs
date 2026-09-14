@@ -287,14 +287,14 @@ async fn ordinary_entry_failure_keeps_prior_success_caller_owned_and_load_remain
     );
     assert_eq!(ctx.runtime_snapshot().fibers().len(), 2);
 
-    let fork = outcome.forks().next().unwrap().clone();
-    fork.dispose().await.unwrap();
+    let fiber_handle = outcome.fiber_handles().next().unwrap().clone();
+    fiber_handle.dispose().await.unwrap();
     first.wait().await;
     wait_for_root_only(&ctx).await;
 }
 
 #[tokio::test]
-async fn delivered_outcome_drop_is_inert_and_caller_retains_fork_ownership() {
+async fn delivered_outcome_drop_is_inert_and_caller_retains_fiber_handle_ownership() {
     let ctx = Context::new();
     let order = Arc::new(AtomicUsize::new(0));
     let first = CleanupProbe::new(CleanupMode::Ok, order);
@@ -308,8 +308,8 @@ async fn delivered_outcome_drop_is_inert_and_caller_retains_fork_ownership() {
     };
 
     let outcome = plan.load(&ctx, &resolver).await;
-    let fork = outcome.forks().next().unwrap().clone();
-    let id = fork.id();
+    let fiber_handle = outcome.fiber_handles().next().unwrap().clone();
+    let id = fiber_handle.id();
     drop(outcome);
 
     assert_eq!(first.observed_order(), 0, "delivered outcome Drop is inert");
@@ -318,10 +318,10 @@ async fn delivered_outcome_drop_is_inert_and_caller_retains_fork_ownership() {
             .fibers()
             .iter()
             .any(|fiber| fiber.id() == &id),
-        "caller-owned Fork remains resident after delivered outcome Drop"
+        "caller-owned FiberHandle remains resident after delivered outcome Drop"
     );
 
-    fork.dispose().await.unwrap();
+    fiber_handle.dispose().await.unwrap();
     first.wait().await;
     wait_for_root_only(&ctx).await;
 }

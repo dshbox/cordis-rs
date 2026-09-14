@@ -59,7 +59,7 @@ The era-local live lifecycle identity for one concrete execution
 allocation, owning that allocation's lifecycle state and cleanup
 registrations. Restart and same-Fiber update preserve it; era swap ends it
 and creates a fresh Fiber. A Runtime also owns one permanent root Fiber.
-_Avoid_: plugin instance, Fork
+_Avoid_: plugin instance, FiberHandle
 
 **FiberId**
 An opaque Runtime-local correlation identity for one Fiber allocation. It
@@ -68,16 +68,17 @@ swap creates a fresh FiberId. It grants no lookup, residency, or lifecycle
 authority and is not a persistent or cross-process identity.
 _Avoid_: UID, Registry key, lifecycle handle
 
-**Fork**
-A cloneable consumer and control handle referring to one non-root Fiber.
-Dropping every Fork does not end the Fiber.
-_Avoid_: Fiber, plugin instance
+**FiberHandle**
+A cloneable consumer control handle referring to one non-root Fiber. It grants
+lifecycle operations without owning Fiber residency or lifetime; dropping every
+FiberHandle does not end the Fiber.
+_Avoid_: Fork, Fiber, FiberRef, FiberHandler, plugin instance
 
 **residency**
 The Runtime and Registry keep a Fiber strongly resident and addressable.
-Residency does not imply lifecycle ownership, and dropping every Fork
+Residency does not imply lifecycle ownership, and dropping every FiberHandle
 changes neither residency nor lifecycle.
-_Avoid_: ownership, reachability through a Fork
+_Avoid_: ownership, reachability through a FiberHandle
 
 **spawn origin**
 The Context — and therefore the originating Fiber and view — from which a
@@ -92,7 +93,7 @@ Explicit responsibility for ending a lifecycle and enforcing teardown
 ordering: within a Fiber, each apply generation owns the cleanup
 obligations that commit while its gate is open. Ordinary spawning
 establishes residency and a spawn origin but no Fiber-to-Fiber ownership,
-so consumers compose delivered Forks explicitly (including reverse
+so consumers compose delivered FiberHandles explicitly (including reverse
 spawn-order Roster teardown) and a spawned Fiber may outlive its spawn
 origin.
 _Avoid_: residency, spawn origin, parent/child, `Lifetime`, `DisposalScope`
@@ -219,16 +220,16 @@ may repeat.
 _Avoid_: EntryId, Plugin identity, FiberId
 
 **Roster**
-The spawn-ordered accumulation of delivered Forks a consumer holds across
+The spawn-ordered accumulation of delivered FiberHandles a consumer holds across
 boot and teardown: reported in spawn order, disposed in reverse spawn
 order, attempt-all. Roster composition is consumer vocabulary; its
 reference home is the shared Harness helpers.
 _Avoid_: registry (that is core's Registry), fleet
 
 **Harness**
-The consumer-side composition layer that retains delivered Forks and owns
+The consumer-side composition layer that retains delivered FiberHandles and owns
 explicit boot and teardown policy — concretely the shared example helpers
-whose Roster records Forks in spawn order and disposes them in reverse.
+whose Roster records FiberHandles in spawn order and disposes them in reverse.
 Harness composition is consumer policy, never a core ownership relation.
 _Avoid_: core lifecycle owner, Runtime shutdown
 

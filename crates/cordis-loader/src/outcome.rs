@@ -5,13 +5,13 @@
 //! retaining declaration order. Structural, disabled, and pruned declarations
 //! remain explicit rows rather than hidden skips. Plugin execution is partial:
 //! one resolver or spawn failure becomes that entry's [`crate::outcome::EntryOutcome::Failed`]
-//! and does not erase successful Forks or stop later reachable entries.
+//! and does not erase successful FiberHandles or stop later reachable entries.
 //!
 //! [`crate::EntryId`] is the exact declarative correlation identity. Resolve
 //! keys are repeatable execution metadata, so duplicate keys stay separate
 //! occurrences and this module deliberately provides no resolve-key lookup.
 
-use cordis_core::Fork;
+use cordis_core::FiberHandle;
 use cordis_core::lifecycle::SpawnError;
 
 use crate::plan::EntryId;
@@ -50,7 +50,7 @@ pub enum EntryOutcome {
         /// Exact `key`, falling back to `name`, used for this occurrence.
         resolve_key: String,
         /// Consumer control handle for this exact successful Fiber occurrence.
-        fork: Fork,
+        fiber_handle: FiberHandle,
     },
     /// One reachable Plugin whose independent execution attempt failed.
     Failed {
@@ -101,15 +101,15 @@ pub enum LoaderFailure {
 /// Complete immutable result of one partial [`crate::LoadPlan`] execution.
 ///
 /// The ordered slice has exactly one row per plan entry. [`LoadOutcome::entry`]
-/// performs exact [`EntryId`] correlation, [`LoadOutcome::forks`] yields every
-/// successful Fork in the same semantic execution order, and
+/// performs exact [`EntryId`] correlation, [`LoadOutcome::fiber_handles`] yields every
+/// successful FiberHandle in the same semantic execution order, and
 /// [`LoadOutcome::is_ok`] is true exactly when no row is
 /// [`EntryOutcome::Failed`]. Resolve keys may repeat; Loader intentionally has
 /// no last-wins resolve-key projection. Construction is the Loader-to-caller
-/// ownership handoff for successful Forks; after delivery, dropping this value or
-/// any contained Fork is inert and lifecycle composition is caller policy.
+/// ownership handoff for successful FiberHandles; after delivery, dropping this value or
+/// any contained FiberHandle is inert and lifecycle composition is caller policy.
 #[derive(Debug)]
-#[must_use = "LoadOutcome carries the caller's Fork controls; inspect or retain it explicitly"]
+#[must_use = "LoadOutcome carries the caller's FiberHandle controls; inspect or retain it explicitly"]
 pub struct LoadOutcome {
     entries: Vec<EntryOutcome>,
 }
@@ -129,10 +129,10 @@ impl LoadOutcome {
         self.entries.iter().find(|entry| entry.id() == id)
     }
 
-    /// Iterate successful Forks in their outcome/spawn order.
-    pub fn forks(&self) -> impl Iterator<Item = &Fork> {
+    /// Iterate successful FiberHandles in their outcome/spawn order.
+    pub fn fiber_handles(&self) -> impl Iterator<Item = &FiberHandle> {
         self.entries.iter().filter_map(|entry| match entry {
-            EntryOutcome::Spawned { fork, .. } => Some(fork),
+            EntryOutcome::Spawned { fiber_handle, .. } => Some(fiber_handle),
             _ => None,
         })
     }

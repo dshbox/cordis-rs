@@ -1,5 +1,5 @@
 //! Spawn contract: `Context::spawn(PreparedPlugin)` performs the whole
-//! creation transaction and delivers a [`Fork`] only for a live quiescent
+//! creation transaction and delivers a [`FiberHandle`] only for a live quiescent
 //! Fiber — `Active`, or stable `Pending` while required services are
 //! missing (LF-01). An initial apply that returns an error or panics runs
 //! its complete LIFO rollback, leaves no resident attempted Fiber, and
@@ -102,7 +102,7 @@ async fn initial_apply_error_rolls_back_lifo_and_leaves_no_resident_fiber() {
             (),
         ))
         .await
-        .expect_err("a failed initial apply refuses the Fork");
+        .expect_err("a failed initial apply refuses the FiberHandle");
 
     let SpawnError::InitialApply(failure) = err else {
         panic!("expected InitialApply, got {err:?}");
@@ -148,7 +148,7 @@ async fn initial_apply_panic_rolls_back_and_leaves_no_resident_fiber() {
     let outcome = ctx.spawn(PreparedPlugin::from_input(Panicky, ())).await;
     std::panic::set_hook(default_hook);
 
-    let err = outcome.expect_err("a panicking initial apply refuses the Fork");
+    let err = outcome.expect_err("a panicking initial apply refuses the FiberHandle");
     let SpawnError::InitialApply(failure) = err else {
         panic!("expected InitialApply, got {err:?}");
     };
@@ -218,16 +218,16 @@ fn preparation_panic_is_an_ordinary_unwind_before_admission() {
 }
 // ---------------------------------------------------------------------------
 // LF-01: an eligible creation settles Pending → Loading → Active and the
-// delivered Fork belongs to a live quiescent fiber.
+// delivered FiberHandle belongs to a live quiescent fiber.
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn eligible_spawn_delivers_a_live_quiescent_active_fork() {
+async fn eligible_spawn_delivers_a_live_quiescent_active_fiber_handle() {
     let ctx = Context::new();
 
     let applied = Arc::new(AtomicU32::new(0));
     let applied_probe = applied.clone();
-    let fork = ctx
+    let fiber_handle = ctx
         .spawn(PreparedPlugin::from_input(
             Scripted(move |_ctx: Context| -> Result<(), ApplyBoom> {
                 applied_probe.fetch_add(1, Ordering::SeqCst);
@@ -236,10 +236,10 @@ async fn eligible_spawn_delivers_a_live_quiescent_active_fork() {
             (),
         ))
         .await
-        .expect("an eligible spawn hands off its Fork");
+        .expect("an eligible spawn hands off its FiberHandle");
 
-    assert_eq!(fork.state(), FiberState::Active);
-    let _identity = fork.id();
+    assert_eq!(fiber_handle.state(), FiberState::Active);
+    let _identity = fiber_handle.id();
     assert_eq!(ordinary_fiber_count(&ctx), 1);
     // Lifecycle transition narration belongs to Runtime observation; this
     // spawn contract proves only the live quiescent handoff.
@@ -253,7 +253,7 @@ async fn eligible_spawn_delivers_a_live_quiescent_active_fork() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn missing_requirements_hand_off_a_stable_pending_fork_without_applying() {
+async fn missing_requirements_hand_off_a_stable_pending_fiber_handle_without_applying() {
     struct Wants;
     impl Plugin for Wants {
         type Config = ();
@@ -280,12 +280,12 @@ async fn missing_requirements_hand_off_a_stable_pending_fork_without_applying() 
 
     let ctx = Context::new();
     let counter = Arc::new(Counter::default());
-    let fork = ctx
+    let fiber_handle = ctx
         .spawn(PreparedPlugin::from_input(Wants, ()))
         .await
         .expect("a Pending fiber is still a live quiescent handoff");
-    assert_eq!(fork.state(), FiberState::Pending);
-    assert_eq!(fork.pending_missing(), [Counter::NAME.to_owned()]);
+    assert_eq!(fiber_handle.state(), FiberState::Pending);
+    assert_eq!(fiber_handle.pending_missing(), [Counter::NAME.to_owned()]);
     assert_eq!(
         counter.uses.load(Ordering::SeqCst),
         0,
@@ -294,9 +294,9 @@ async fn missing_requirements_hand_off_a_stable_pending_fork_without_applying() 
     // stable and quiescent: ready() answers immediately, nothing is
     // in flight
     assert_eq!(
-        bounded(200, fork.ready())
+        bounded(200, fiber_handle.ready())
             .await
-            .expect("the Pending fork is quiescent at handoff")
+            .expect("the Pending FiberHandle is quiescent at handoff")
             .unwrap(),
         FiberState::Pending
     );
@@ -305,7 +305,7 @@ async fn missing_requirements_hand_off_a_stable_pending_fork_without_applying() 
     // provider and applies exactly once
     let _ = ctx.provide::<Counter>(counter.clone()).unwrap();
     assert_eq!(
-        fork.ready().await.unwrap(),
+        fiber_handle.ready().await.unwrap(),
         FiberState::Active,
         "the publication converged the parked fiber"
     );
@@ -314,7 +314,7 @@ async fn missing_requirements_hand_off_a_stable_pending_fork_without_applying() 
 
 // ---------------------------------------------------------------------------
 // LF-01: a service mutation racing the initial apply is converged before
-// the handoff — the Fork is delivered only once the fiber is quiescent
+// the handoff — the FiberHandle is delivered only once the fiber is quiescent
 // for the current service snapshot, here: stable Pending over a
 // requirement that disappeared mid-apply.
 // ---------------------------------------------------------------------------
@@ -416,16 +416,16 @@ async fn a_mutation_racing_the_initial_apply_is_converged_before_handoff() {
     provider.dispose().await.unwrap();
     go_tx.send(()).unwrap();
 
-    // the handoff waits out the drift: the delivered fork is the
+    // the handoff waits out the drift: the delivered FiberHandle is the
     // quiescent converged answer, stable Pending over the vanished
     // requirement — not the Active the first apply briefly reached
-    let fork = bounded(2000, spawn)
+    let fiber_handle = bounded(2000, spawn)
         .await
         .expect("the creation completes")
         .unwrap()
         .expect("the raced withdrawal converges, not fails");
-    assert_eq!(fork.state(), FiberState::Pending);
-    assert_eq!(fork.pending_missing(), [Counter::NAME.to_owned()]);
+    assert_eq!(fiber_handle.state(), FiberState::Pending);
+    assert_eq!(fiber_handle.pending_missing(), [Counter::NAME.to_owned()]);
     assert_eq!(
         applies.load(Ordering::SeqCst),
         1,
@@ -448,7 +448,7 @@ async fn spawn_through_an_inactive_context_is_refused_before_allocation() {
     let ctx = Context::new();
     let captured: Arc<Mutex<Option<Context>>> = Arc::new(Mutex::new(None));
     let captured_probe = captured.clone();
-    let fork = ctx
+    let fiber_handle = ctx
         .spawn(PreparedPlugin::from_input(
             Scripted(move |ctx: Context| -> Result<(), ApplyBoom> {
                 *captured_probe.lock() = Some(ctx);
@@ -458,7 +458,7 @@ async fn spawn_through_an_inactive_context_is_refused_before_allocation() {
         ))
         .await
         .expect("the first spawn hands off");
-    fork.dispose().await.unwrap();
+    fiber_handle.dispose().await.unwrap();
 
     let captured_ctx = captured.lock().clone().unwrap();
     let err = captured_ctx

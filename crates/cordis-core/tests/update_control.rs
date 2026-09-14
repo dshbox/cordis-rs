@@ -45,18 +45,18 @@ async fn typed_mapper_transforms_before_one_commit() {
             ListenerOptions::default(),
         )
         .unwrap();
-    let fork = ctx
+    let fiber_handle = ctx
         .spawn(PreparedPlugin::from_input(Probe { seen: seen.clone() }, 1))
         .await
         .unwrap();
-    let id = fork.id();
+    let id = fiber_handle.id();
 
-    let outcome = fork
+    let outcome = fiber_handle
         .update(PreparedChange::from_input::<Probe>(2))
         .await
         .unwrap();
     assert_eq!(outcome, UpdateOutcome::Committed(FiberState::Active));
-    assert_eq!(fork.id(), id);
+    assert_eq!(fiber_handle.id(), id);
     assert_eq!(*seen.lock(), vec![1, 3]);
 }
 
@@ -72,12 +72,12 @@ async fn around_can_veto_without_reaching_private_tail() {
             ListenerOptions::default(),
         )
         .unwrap();
-    let fork = ctx
+    let fiber_handle = ctx
         .spawn(PreparedPlugin::from_input(Probe { seen: seen.clone() }, 1))
         .await
         .unwrap();
 
-    let outcome = fork
+    let outcome = fiber_handle
         .update(PreparedChange::from_input::<Probe>(9))
         .await
         .unwrap();
@@ -124,11 +124,12 @@ async fn routing_is_target_scoped_and_global_widens_it() {
         .unwrap();
 
     let seen = Arc::new(Mutex::new(Vec::new()));
-    let fork = branch
+    let fiber_handle = branch
         .spawn(PreparedPlugin::from_input(Probe { seen }, 1))
         .await
         .unwrap();
-    fork.update(PreparedChange::from_input::<Probe>(2))
+    fiber_handle
+        .update(PreparedChange::from_input::<Probe>(2))
         .await
         .unwrap();
     assert_eq!(*calls.lock(), vec!["ancestor", "global"]);
@@ -151,17 +152,17 @@ async fn wrong_contract_is_precommit_and_typed() {
     }
     let ctx = Context::new();
     let seen = Arc::new(Mutex::new(Vec::new()));
-    let fork = ctx
+    let fiber_handle = ctx
         .spawn(PreparedPlugin::from_input(Probe { seen: seen.clone() }, 1))
         .await
         .unwrap();
-    let id = fork.id();
-    let err = fork
+    let id = fiber_handle.id();
+    let err = fiber_handle
         .update(PreparedChange::from_input::<Other>(()))
         .await
         .unwrap_err();
     assert!(matches!(err, UpdateError::PluginContractMismatch));
-    assert_eq!(fork.id(), id);
+    assert_eq!(fiber_handle.id(), id);
     assert_eq!(*seen.lock(), vec![1]);
 }
 
@@ -188,17 +189,21 @@ async fn private_tail_is_provisional_until_outer_control_returns() {
             ListenerOptions::default(),
         )
         .unwrap();
-    let fork = ctx
+    let fiber_handle = ctx
         .spawn(PreparedPlugin::from_input(Probe { seen: seen.clone() }, 1))
         .await
         .unwrap();
     let task = tokio::spawn({
-        let fork = fork.clone();
-        async move { fork.update(PreparedChange::from_input::<Probe>(2)).await }
+        let fiber_handle = fiber_handle.clone();
+        async move {
+            fiber_handle
+                .update(PreparedChange::from_input::<Probe>(2))
+                .await
+        }
     });
     tail_seen.notified().await;
     assert_eq!(*seen.lock(), vec![1], "tail reach is not lifecycle commit");
-    assert_eq!(fork.state(), FiberState::Active);
+    assert_eq!(fiber_handle.state(), FiberState::Active);
     release.notify_one();
     assert_eq!(
         task.await.unwrap().unwrap(),
@@ -234,12 +239,13 @@ async fn outer_around_can_recover_downstream_failure_after_tail() {
             ListenerOptions::default(),
         )
         .unwrap();
-    let fork = ctx
+    let fiber_handle = ctx
         .spawn(PreparedPlugin::from_input(Probe { seen: seen.clone() }, 1))
         .await
         .unwrap();
     assert_eq!(
-        fork.update(PreparedChange::from_input::<Probe>(2))
+        fiber_handle
+            .update(PreparedChange::from_input::<Probe>(2))
             .await
             .unwrap(),
         UpdateOutcome::Committed(FiberState::Active)
@@ -269,16 +275,20 @@ async fn close_during_awaited_control_reports_admission_lost() {
             ListenerOptions::default(),
         )
         .unwrap();
-    let fork = ctx
+    let fiber_handle = ctx
         .spawn(PreparedPlugin::from_input(Probe { seen: seen.clone() }, 1))
         .await
         .unwrap();
     let task = tokio::spawn({
-        let fork = fork.clone();
-        async move { fork.update(PreparedChange::from_input::<Probe>(2)).await }
+        let fiber_handle = fiber_handle.clone();
+        async move {
+            fiber_handle
+                .update(PreparedChange::from_input::<Probe>(2))
+                .await
+        }
     });
     entered.notified().await;
-    fork.dispose().await.unwrap();
+    fiber_handle.dispose().await.unwrap();
     release.notify_one();
     assert!(matches!(
         task.await.unwrap(),
@@ -317,7 +327,7 @@ async fn cancelling_postcommit_waiter_does_not_cancel_update_owner() {
     let seen = Arc::new(Mutex::new(Vec::new()));
     let entered = Arc::new(Notify::new());
     let release = Arc::new(Notify::new());
-    let fork = ctx
+    let fiber_handle = ctx
         .spawn(PreparedPlugin::from_input(
             BlockingProbe {
                 seen: seen.clone(),
@@ -329,16 +339,17 @@ async fn cancelling_postcommit_waiter_does_not_cancel_update_owner() {
         .await
         .unwrap();
     let task = tokio::spawn({
-        let fork = fork.clone();
+        let fiber_handle = fiber_handle.clone();
         async move {
-            fork.update(PreparedChange::from_input::<BlockingProbe>(2))
+            fiber_handle
+                .update(PreparedChange::from_input::<BlockingProbe>(2))
                 .await
         }
     });
     entered.notified().await;
     task.abort();
     release.notify_one();
-    assert_eq!(fork.ready().await.unwrap(), FiberState::Active);
+    assert_eq!(fiber_handle.ready().await.unwrap(), FiberState::Active);
     assert_eq!(*seen.lock(), vec![1, 2]);
 }
 
@@ -366,18 +377,26 @@ async fn concurrent_updates_commit_in_postcontrol_admission_order() {
             ListenerOptions::default(),
         )
         .unwrap();
-    let fork = ctx
+    let fiber_handle = ctx
         .spawn(PreparedPlugin::from_input(Probe { seen: seen.clone() }, 1))
         .await
         .unwrap();
     let a = tokio::spawn({
-        let fork = fork.clone();
-        async move { fork.update(PreparedChange::from_input::<Probe>(2)).await }
+        let fiber_handle = fiber_handle.clone();
+        async move {
+            fiber_handle
+                .update(PreparedChange::from_input::<Probe>(2))
+                .await
+        }
     });
     entered.notified().await;
     let b = tokio::spawn({
-        let fork = fork.clone();
-        async move { fork.update(PreparedChange::from_input::<Probe>(3)).await }
+        let fiber_handle = fiber_handle.clone();
+        async move {
+            fiber_handle
+                .update(PreparedChange::from_input::<Probe>(3))
+                .await
+        }
     });
     assert_eq!(
         b.await.unwrap().unwrap(),
@@ -428,7 +447,7 @@ async fn postcommit_apply_failure_is_invisible_to_control_and_candidate_is_retai
             ListenerOptions::default(),
         )
         .unwrap();
-    let fork = ctx
+    let fiber_handle = ctx
         .spawn(PreparedPlugin::from_input(
             FailingProbe { seen: seen.clone() },
             1,
@@ -436,13 +455,14 @@ async fn postcommit_apply_failure_is_invisible_to_control_and_candidate_is_retai
         .await
         .unwrap();
     assert!(matches!(
-        fork.update(PreparedChange::from_input::<FailingProbe>(2))
+        fiber_handle
+            .update(PreparedChange::from_input::<FailingProbe>(2))
             .await,
         Err(UpdateError::Apply(_))
     ));
-    assert_eq!(fork.state(), FiberState::Failed);
+    assert_eq!(fiber_handle.state(), FiberState::Failed);
     assert_eq!(hits.load(Ordering::SeqCst), 1);
-    assert!(fork.restart().await.is_err());
+    assert!(fiber_handle.restart().await.is_err());
     assert_eq!(
         hits.load(Ordering::SeqCst),
         1,
@@ -477,19 +497,23 @@ async fn cancelling_during_precommit_control_commits_nothing() {
             ListenerOptions::default(),
         )
         .unwrap();
-    let fork = ctx
+    let fiber_handle = ctx
         .spawn(PreparedPlugin::from_input(Probe { seen: seen.clone() }, 1))
         .await
         .unwrap();
     let task = tokio::spawn({
-        let fork = fork.clone();
-        async move { fork.update(PreparedChange::from_input::<Probe>(2)).await }
+        let fiber_handle = fiber_handle.clone();
+        async move {
+            fiber_handle
+                .update(PreparedChange::from_input::<Probe>(2))
+                .await
+        }
     });
     entered.notified().await;
     task.abort();
     release.notify_one();
     tokio::task::yield_now().await;
-    assert_eq!(fork.state(), FiberState::Active);
+    assert_eq!(fiber_handle.state(), FiberState::Active);
     assert_eq!(*seen.lock(), vec![1]);
 }
 
@@ -508,12 +532,12 @@ async fn era_swap_never_invokes_update_control() {
             ListenerOptions::default(),
         )
         .unwrap();
-    let fork = ctx
+    let fiber_handle = ctx
         .spawn(PreparedPlugin::from_input(Probe { seen: seen.clone() }, 1))
         .await
         .unwrap();
-    let old_id = fork.id();
-    let replacement = fork
+    let old_id = fiber_handle.id();
+    let replacement = fiber_handle
         .era_swap(PreparedChange::from_input::<Probe>(2))
         .await
         .unwrap();
@@ -532,23 +556,25 @@ async fn unrecovered_control_error_preserves_old_generation() {
             ListenerOptions::default(),
         )
         .unwrap();
-    let fork = ctx
+    let fiber_handle = ctx
         .spawn(PreparedPlugin::from_input(Probe { seen: seen.clone() }, 1))
         .await
         .unwrap();
-    let id = fork.id();
+    let id = fiber_handle.id();
     assert!(matches!(
-        fork.update(PreparedChange::from_input::<Probe>(2)).await,
+        fiber_handle
+            .update(PreparedChange::from_input::<Probe>(2))
+            .await,
         Err(UpdateError::Control(_))
     ));
-    assert_eq!(fork.id(), id);
-    assert_eq!(fork.state(), FiberState::Active);
+    assert_eq!(fiber_handle.id(), id);
+    assert_eq!(fiber_handle.state(), FiberState::Active);
     assert_eq!(*seen.lock(), vec![1]);
 }
 
 #[derive(Clone)]
 struct ReentrantProbe {
-    fork: Arc<Mutex<Option<cordis_core::Fork>>>,
+    fiber_handle: Arc<Mutex<Option<cordis_core::FiberHandle>>>,
     result: Arc<Mutex<Option<Result<UpdateOutcome, UpdateError>>>>,
 }
 impl Plugin for ReentrantProbe {
@@ -560,9 +586,9 @@ impl Plugin for ReentrantProbe {
         Ok(v)
     }
     async fn apply(&self, _: Context, _: &u8) -> Result<(), Infallible> {
-        let fork = self.fork.lock().clone();
-        if let Some(fork) = fork {
-            let outcome = fork
+        let fiber_handle = self.fiber_handle.lock().clone();
+        if let Some(fiber_handle) = fiber_handle {
+            let outcome = fiber_handle
                 .update(PreparedChange::from_input::<ReentrantProbe>(2))
                 .await;
             *self.result.lock() = Some(outcome);
@@ -574,7 +600,7 @@ impl Plugin for ReentrantProbe {
 #[tokio::test]
 async fn same_fiber_update_recursion_is_refused_before_control() {
     let ctx = Context::new();
-    let fork_cell = Arc::new(Mutex::new(None));
+    let fiber_handle_cell = Arc::new(Mutex::new(None));
     let result = Arc::new(Mutex::new(None));
     let hits = Arc::new(AtomicUsize::new(0));
     let h = hits.clone();
@@ -587,18 +613,18 @@ async fn same_fiber_update_recursion_is_refused_before_control() {
             ListenerOptions::default(),
         )
         .unwrap();
-    let fork = ctx
+    let fiber_handle = ctx
         .spawn(PreparedPlugin::from_input(
             ReentrantProbe {
-                fork: fork_cell.clone(),
+                fiber_handle: fiber_handle_cell.clone(),
                 result: result.clone(),
             },
             1,
         ))
         .await
         .unwrap();
-    *fork_cell.lock() = Some(fork.clone());
-    fork.restart().await.unwrap();
+    *fiber_handle_cell.lock() = Some(fiber_handle.clone());
+    fiber_handle.restart().await.unwrap();
     let outcome = result
         .lock()
         .take()
@@ -609,7 +635,7 @@ async fn same_fiber_update_recursion_is_refused_before_control() {
                 recursion.operation(),
                 cordis_core::lifecycle::LifecycleOperation::Update
             );
-            assert_eq!(recursion.fiber_id(), &fork.id());
+            assert_eq!(recursion.fiber_id(), &fiber_handle.id());
         }
         other => panic!("expected typed update recursion refusal, got {other:?}"),
     }
@@ -645,7 +671,7 @@ impl Plugin for PendingProbe {
 async fn accepted_update_can_commit_to_stable_pending_without_apply() {
     let ctx = Context::new();
     let applies = Arc::new(AtomicUsize::new(0));
-    let fork = ctx
+    let fiber_handle = ctx
         .spawn(PreparedPlugin::from_input(
             PendingProbe {
                 applies: applies.clone(),
@@ -654,15 +680,16 @@ async fn accepted_update_can_commit_to_stable_pending_without_apply() {
         ))
         .await
         .unwrap();
-    assert_eq!(fork.ready().await.unwrap(), FiberState::Pending);
-    let id = fork.id();
+    assert_eq!(fiber_handle.ready().await.unwrap(), FiberState::Pending);
+    let id = fiber_handle.id();
     assert_eq!(
-        fork.update(PreparedChange::from_input::<PendingProbe>(2))
+        fiber_handle
+            .update(PreparedChange::from_input::<PendingProbe>(2))
             .await
             .unwrap(),
         UpdateOutcome::Committed(FiberState::Pending)
     );
-    assert_eq!(fork.id(), id);
+    assert_eq!(fiber_handle.id(), id);
     assert_eq!(applies.load(Ordering::SeqCst), 0);
 }
 
@@ -682,14 +709,16 @@ async fn prepend_and_once_fix_typed_transformation_order() {
             ListenerOptions::default().prepend().once(),
         )
         .unwrap();
-    let fork = ctx
+    let fiber_handle = ctx
         .spawn(PreparedPlugin::from_input(Probe { seen: seen.clone() }, 1))
         .await
         .unwrap();
-    fork.update(PreparedChange::from_input::<Probe>(2))
+    fiber_handle
+        .update(PreparedChange::from_input::<Probe>(2))
         .await
         .unwrap();
-    fork.update(PreparedChange::from_input::<Probe>(2))
+    fiber_handle
+        .update(PreparedChange::from_input::<Probe>(2))
         .await
         .unwrap();
     assert_eq!(*seen.lock(), vec![1, 21, 3]);
@@ -705,11 +734,14 @@ async fn mapper_failure_is_correlated_to_a_claimed_update_occurrence() {
             ListenerOptions::default(),
         )
         .unwrap();
-    let fork = ctx
+    let fiber_handle = ctx
         .spawn(PreparedPlugin::from_input(Probe { seen: seen.clone() }, 1))
         .await
         .unwrap();
-    match fork.update(PreparedChange::from_input::<Probe>(2)).await {
+    match fiber_handle
+        .update(PreparedChange::from_input::<Probe>(2))
+        .await
+    {
         Err(UpdateError::Control(failure)) => assert!(failure.registration_id().is_some()),
         other => panic!("expected correlated mapper control failure, got {other:?}"),
     }

@@ -26,14 +26,14 @@ impl Plugin for Capture {
     }
 }
 
-async fn scoped_ctx(root: &Context) -> (cordis_core::Fork, Context) {
+async fn scoped_ctx(root: &Context) -> (cordis_core::FiberHandle, Context) {
     let captured = Arc::new(Mutex::new(None));
-    let fork = root
+    let fiber_handle = root
         .spawn(PreparedPlugin::from_input(Capture(captured.clone()), ()))
         .await
         .unwrap();
     let ctx = captured.lock().clone().unwrap();
-    (fork, ctx)
+    (fiber_handle, ctx)
 }
 
 #[tokio::test(start_paused = true)]
@@ -66,13 +66,13 @@ fn inactive_context_precedes_timer_environment_validation() {
         .enable_all()
         .build()
         .unwrap();
-    let (fork, ctx) = rt.block_on(async {
+    let (fiber_handle, ctx) = rt.block_on(async {
         let root = Context::new();
         let pair = scoped_ctx(&root).await;
         pair.0.dispose().await.unwrap();
         pair
     });
-    drop(fork);
+    drop(fiber_handle);
     assert!(matches!(
         ctx.sleep(Duration::MAX),
         Err(TimerRegistrationError::InactiveContext)
@@ -104,11 +104,11 @@ async fn out_of_range_deadline_is_a_registration_error() {
 #[tokio::test(start_paused = true)]
 async fn generation_cleanup_cancels_a_constructed_sleep_once() {
     let root = Context::new();
-    let (fork, ctx) = scoped_ctx(&root).await;
+    let (fiber_handle, ctx) = scoped_ctx(&root).await;
     let sleep = ctx.sleep(Duration::from_secs(60)).unwrap();
     let task = tokio::spawn(sleep);
     tokio::task::yield_now().await;
-    fork.dispose().await.unwrap();
+    fiber_handle.dispose().await.unwrap();
     assert!(matches!(task.await.unwrap(), Err(TimerCancelled)));
 }
 
@@ -146,9 +146,9 @@ fn zero_interval_precedes_context_and_timer_validation() {
 #[tokio::test(start_paused = true)]
 async fn standing_generation_cancellation_is_observed_before_sleep_parks() {
     let root = Context::new();
-    let (fork, ctx) = scoped_ctx(&root).await;
+    let (fiber_handle, ctx) = scoped_ctx(&root).await;
     let sleep = ctx.sleep(Duration::from_secs(60)).unwrap();
-    fork.dispose().await.unwrap();
+    fiber_handle.dispose().await.unwrap();
     let before = tokio::time::Instant::now();
     assert!(matches!(sleep.await, Err(TimerCancelled)));
     assert_eq!(tokio::time::Instant::now(), before);
@@ -162,8 +162,8 @@ fn zero_interval_precedes_inactive_context() {
         .unwrap();
     let ctx = rt.block_on(async {
         let root = Context::new();
-        let (fork, ctx) = scoped_ctx(&root).await;
-        fork.dispose().await.unwrap();
+        let (fiber_handle, ctx) = scoped_ctx(&root).await;
+        fiber_handle.dispose().await.unwrap();
         ctx
     });
     assert!(matches!(

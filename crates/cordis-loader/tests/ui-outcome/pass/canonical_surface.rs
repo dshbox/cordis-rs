@@ -6,7 +6,7 @@ fn inspect(outcome: &LoadOutcome, id: &EntryId) {
     let _: &EntryId = outcome.entries()[0].id();
     let _: Option<&EntryOutcome> = outcome.entry(id);
     let _: bool = outcome.is_ok();
-    let _forks = outcome.forks();
+    let _fiber_handles = outcome.fiber_handles();
 }
 
 fn failure_is_specialist(failure: &LoaderFailure) {

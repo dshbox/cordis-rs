@@ -557,11 +557,11 @@ impl Plugin for CloseProbe {
 async fn closing_generation_refuses_publication_without_slot_residue() {
     let root = Context::new();
     let seen = Arc::new(parking_lot::Mutex::new(None));
-    let fork = root
+    let fiber_handle = root
         .spawn(prepared(CloseProbe { seen: seen.clone() }))
         .await
         .unwrap();
-    fork.dispose().await.unwrap();
+    fiber_handle.dispose().await.unwrap();
 
     assert_eq!(
         seen.lock().take(),
@@ -768,7 +768,7 @@ impl Plugin for RestartingProvider {
 async fn same_fiber_new_generation_replacement_makes_old_publication_handle_stale() {
     let root = Context::new();
     let publications = Arc::new(parking_lot::Mutex::new(Vec::new()));
-    let fork = root
+    let fiber_handle = root
         .spawn(prepared(RestartingProvider {
             publications: publications.clone(),
             next: Arc::new(AtomicU32::new(0)),
@@ -781,7 +781,7 @@ async fn same_fiber_new_generation_replacement_makes_old_publication_handle_stal
         .expect("first generation handed out its publication capability");
     assert_eq!(root.try_service::<Counter>().unwrap().0, 1);
 
-    fork.restart().await.unwrap();
+    fiber_handle.restart().await.unwrap();
     assert_eq!(root.try_service::<Counter>().unwrap().0, 2);
     assert_eq!(
         old.set(Arc::new(Counter(99))).unwrap_err(),

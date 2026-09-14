@@ -337,7 +337,7 @@ impl Plugin for EffectAttributionPlugin {
 async fn callback_context_keeps_the_registering_fiber_for_new_effects() {
     let root = Context::new();
     let cleaned = Arc::new(AtomicUsize::new(0));
-    let fork = root
+    let fiber_handle = root
         .spawn(PreparedPlugin::from_input(
             EffectAttributionPlugin {
                 cleaned: cleaned.clone(),
@@ -349,7 +349,7 @@ async fn callback_context_keeps_the_registering_fiber_for_new_effects() {
 
     root.emit::<Ping>(Routing::Unscoped, 1).await.unwrap();
     assert_eq!(cleaned.load(Ordering::SeqCst), 0);
-    fork.dispose().await.unwrap();
+    fiber_handle.dispose().await.unwrap();
     assert_eq!(cleaned.load(Ordering::SeqCst), 1);
 }
 
@@ -702,7 +702,7 @@ async fn claimed_callback_continues_after_registering_fiber_closes_but_new_effec
     let (started_tx, started_rx) = tokio::sync::oneshot::channel();
     let release = Arc::new(tokio::sync::Notify::new());
     let refused = Arc::new(AtomicUsize::new(0));
-    let fork = root
+    let fiber_handle = root
         .spawn(PreparedPlugin::from_input(
             ClaimedClosePlugin {
                 started: Arc::new(Mutex::new(Some(started_tx))),
@@ -718,7 +718,7 @@ async fn claimed_callback_continues_after_registering_fiber_closes_but_new_effec
     let dispatch = tokio::spawn(async move { emitter.emit::<Ping>(Routing::Unscoped, 1).await });
     started_rx.await.unwrap();
 
-    let disposed = common::bounded(1_000, fork.dispose())
+    let disposed = common::bounded(1_000, fiber_handle.dispose())
         .await
         .expect("listener cleanup must not join an already-claimed callback");
     disposed.unwrap();
@@ -765,7 +765,7 @@ async fn global_routing_does_not_change_registration_cleanup_ownership() {
     let root = Context::new();
     let sibling = root.with_child_scope();
     let hits = Arc::new(AtomicUsize::new(0));
-    let fork = root
+    let fiber_handle = root
         .spawn(PreparedPlugin::from_input(
             GlobalOwnershipPlugin { hits: hits.clone() },
             (),
@@ -778,7 +778,7 @@ async fn global_routing_does_not_change_registration_cleanup_ownership() {
         .unwrap();
     assert_eq!(hits.load(Ordering::SeqCst), 1);
 
-    fork.dispose().await.unwrap();
+    fiber_handle.dispose().await.unwrap();
     root.emit::<Ping>(Routing::Scoped(sibling.scope()), 2)
         .await
         .unwrap();

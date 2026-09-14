@@ -1,7 +1,7 @@
-use cordis_core::Fork;
+use cordis_core::FiberHandle;
 
-async fn old_dispose_channel(fork: &Fork) {
-    let _: cordis_core::Result<()> = fork.dispose().await;
+async fn old_dispose_channel(fiber_handle: &FiberHandle) {
+    let _: cordis_core::Result<()> = fiber_handle.dispose().await;
 }
 
 fn main() {}

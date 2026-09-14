@@ -260,7 +260,7 @@ impl Context {
     }
 
     /// The fiber this handle registers through (crate-internal callers
-    /// only; consumers observe fibers through [`Fork`](crate::Fork)).
+    /// only; consumers observe fibers through [`FiberHandle`](crate::FiberHandle)).
     pub(crate) fn fiber(&self) -> &Arc<Fiber> {
         &self.fiber
     }

@@ -33,7 +33,7 @@ Veto or precommit error never returns or replays the consumed
 Admission is revalidated after awaited control completes and before
 lifecycle commit: `UpdateError::AdmissionLost` leaves the old state
 intact, and only the final accepted candidate crosses the commit. A valid
-`PreparedChange` sealed for Plugin contract Q submitted to a Fork for
+`PreparedChange` sealed for Plugin contract Q submitted to a FiberHandle for
 contract P fails precommit with `UpdateError::PluginContractMismatch`,
 leaving config, generation, and FiberId untouched. A committed update
 returns `UpdateOutcome::Committed(FiberState)` with a state that is only

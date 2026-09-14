@@ -4,7 +4,7 @@
 //! preflight is effect-free, one live source is claimed, the old terminal
 //! barrier completes, one fresh successor is created from the captured creation
 //! recipe plus a `PreparedChange`, affected dependents converge to their current
-//! targets, and only then may the fresh `Fork` be handed off.
+//! targets, and only then may the fresh `FiberHandle` be handed off.
 
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
@@ -13,17 +13,17 @@ use crate::context::{RealmKey, Root};
 use crate::plugin::{PreparedChange, PreparedPlugin};
 
 use super::spawn::{SpawnError, spawn_prepared_era_successor};
-use super::{EraSwapError, EraSwapFailure, Fiber, Fork, LifecycleOperation};
+use super::{EraSwapError, EraSwapFailure, Fiber, FiberHandle, LifecycleOperation};
 
 struct EraHandoff {
-    fork: Fork,
+    fiber_handle: FiberHandle,
     guard: EraHandoffGuard,
 }
 
 impl EraHandoff {
-    fn accept(self) -> Fork {
+    fn accept(self) -> FiberHandle {
         self.guard.disarm();
-        self.fork
+        self.fiber_handle
     }
 }
 
@@ -68,13 +68,14 @@ impl Drop for EraHandoffGuard {
         crate::effect::detach(super::settle_ctx::with_attribution(
             attribution,
             async move {
-                cleanup_undelivered_successor(&root, &edges, &source, Fork::new(successor)).await;
+                cleanup_undelivered_successor(&root, &edges, &source, FiberHandle::new(successor))
+                    .await;
             },
         ));
     }
 }
 
-impl Fork {
+impl FiberHandle {
     /// Replace this live Fiber with one freshly created successor era.
     ///
     /// Exact-allocation recursion is refused before liveness, compatibility,
@@ -95,7 +96,7 @@ impl Fork {
     pub async fn era_swap(
         &self,
         change: PreparedChange,
-    ) -> std::result::Result<Fork, EraSwapError> {
+    ) -> std::result::Result<FiberHandle, EraSwapError> {
         super::settle_ctx::refuse_recursion(&self.fiber, LifecycleOperation::EraSwap)
             .map_err(EraSwapError::Recursion)?;
         if !self.fiber.is_alive() || self.fiber.disposing.load(Ordering::SeqCst) {
@@ -161,7 +162,7 @@ impl Fork {
                             successor.fiber.clone(),
                         );
                         let offer = EraHandoff {
-                            fork: successor,
+                            fiber_handle: successor,
                             guard,
                         };
                         let _ = send.send(Ok(offer));
@@ -184,7 +185,7 @@ async fn cleanup_undelivered_successor(
     root: &Arc<Root>,
     old_publication_edges: &[(String, RealmKey)],
     source: &Arc<Fiber>,
-    successor: Fork,
+    successor: FiberHandle,
 ) {
     let successor_edges = root.services.slots_owned_by(&successor.fiber);
     successor.fiber.dispose().await;
@@ -204,7 +205,7 @@ async fn run_committed_replacement(
     change: PreparedChange,
     old_publication_edges: Vec<(String, RealmKey)>,
     entry_dependents: Vec<Arc<Fiber>>,
-) -> std::result::Result<Fork, EraSwapError> {
+) -> std::result::Result<FiberHandle, EraSwapError> {
     // The source claim already owns the lifecycle slot and closed every
     // generation gate through `disposing`. The Fiber lifecycle owner completes
     // the same full terminal barrier used by ordinary disposal.
@@ -308,7 +309,7 @@ async fn converge_final(
 
 async fn converge(fibers: Vec<Arc<Fiber>>) {
     for fiber in fibers {
-        let _ = Fork::new(fiber).ready().await;
+        let _ = FiberHandle::new(fiber).ready().await;
     }
 }
 
@@ -385,7 +386,7 @@ mod tests {
             successor.fiber.clone(),
         );
         let offer = EraHandoff {
-            fork: successor.clone(),
+            fiber_handle: successor.clone(),
             guard,
         };
         let (send, receive) = tokio::sync::oneshot::channel::<Result<EraHandoff, EraSwapError>>();

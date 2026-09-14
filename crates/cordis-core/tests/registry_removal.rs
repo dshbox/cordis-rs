@@ -233,22 +233,22 @@ impl Plugin for RecursingRemoval {
 async fn self_wait_recursion_is_refused_before_typed_group_detach() {
     let ctx = Context::new();
     let seen = Arc::new(Mutex::new(None));
-    let fork = ctx
+    let fiber_handle = ctx
         .spawn(prepared(RecursingRemoval { seen: seen.clone() }))
         .await
         .unwrap();
 
     let recorded = seen.lock().clone().expect("apply observed refusal");
     assert_eq!(recorded.0, LifecycleOperation::RemovePlugins);
-    assert_eq!(recorded.1, fork.id());
+    assert_eq!(recorded.1, fiber_handle.id());
     assert_eq!(
-        fork.state(),
+        fiber_handle.state(),
         FiberState::Active,
         "refusal did not detach the group"
     );
 
     ctx.remove_plugins::<RecursingRemoval>().await.unwrap();
-    assert_eq!(fork.state(), FiberState::Disposed);
+    assert_eq!(fiber_handle.state(), FiberState::Disposed);
 }
 
 struct RemovesPlainFromAnotherFiber {

@@ -235,14 +235,14 @@ where
     PreparedPlugin::from_input(plugin, ())
 }
 
-async fn scoped_context(root: &Context) -> (cordis_core::Fork, Context) {
+async fn scoped_context(root: &Context) -> (cordis_core::FiberHandle, Context) {
     let slot = Arc::new(Mutex::new(None));
-    let fork = root
+    let fiber_handle = root
         .spawn(prepared(CapturePlugin { slot: slot.clone() }))
         .await
         .unwrap();
     let ctx = slot.lock().clone().expect("apply captured its Context");
-    (fork, ctx)
+    (fiber_handle, ctx)
 }
 
 async fn assert_core_retained_refusal(ctx: &Context, root: &Context) {
@@ -359,7 +359,7 @@ async fn loading_active_and_permanent_root_admit_and_own_their_core_resources() 
     assert_eq!(loading_exporter.hits(), 1);
     assert_eq!(loading_effect.load(Ordering::SeqCst), 1);
 
-    let (active_fork, active) = scoped_context(&root).await;
+    let (active_fiber_handle, active) = scoped_context(&root).await;
     let active_effect = Arc::new(AtomicUsize::new(0));
     active
         .effect_sync({
@@ -406,7 +406,7 @@ async fn loading_active_and_permanent_root_admit_and_own_their_core_resources() 
     root.add_exporter(root_exporter.clone()).unwrap();
     root.run(async {}).unwrap();
 
-    active_fork.dispose().await.unwrap();
+    active_fiber_handle.dispose().await.unwrap();
     assert_eq!(active_effect.load(Ordering::SeqCst), 1);
     assert!(matches!(
         root.try_service::<ActiveService>(),
@@ -473,7 +473,7 @@ async fn pending_failed_closing_and_disposed_refuse_every_core_retained_family()
     // Closing: a newest blocking cleanup gives a deterministic point after the
     // generation gate has closed but before the terminal drain is complete.
     let closing_root = Context::new();
-    let (closing_fork, closing_ctx) = scoped_context(&closing_root).await;
+    let (closing_fiber_handle, closing_ctx) = scoped_context(&closing_root).await;
     let cleanup_started = Arc::new(tokio::sync::Notify::new());
     let cleanup_release = Arc::new(tokio::sync::Notify::new());
     closing_ctx
@@ -487,15 +487,15 @@ async fn pending_failed_closing_and_disposed_refuse_every_core_retained_family()
         })
         .unwrap();
     let disposer = tokio::spawn({
-        let closing_fork = closing_fork.clone();
-        async move { closing_fork.dispose().await }
+        let closing_fiber_handle = closing_fiber_handle.clone();
+        async move { closing_fiber_handle.dispose().await }
     });
     cleanup_started.notified().await;
     assert_core_retained_refusal(&closing_ctx, &closing_root).await;
     cleanup_release.notify_one();
     disposer.await.unwrap().unwrap();
 
-    assert_eq!(closing_fork.state(), FiberState::Disposed);
+    assert_eq!(closing_fiber_handle.state(), FiberState::Disposed);
     assert_core_retained_refusal(&closing_ctx, &closing_root).await;
 }
 
@@ -504,7 +504,7 @@ async fn every_core_family_publish_versus_close_has_only_refusal_or_owned_commit
     // Pure Effect.
     {
         let root = Context::new();
-        let (fork, ctx) = scoped_context(&root).await;
+        let (fiber_handle, ctx) = scoped_context(&root).await;
         let barrier = Arc::new(tokio::sync::Barrier::new(3));
         let ran = Arc::new(AtomicUsize::new(0));
         let register = tokio::spawn({
@@ -519,10 +519,10 @@ async fn every_core_family_publish_versus_close_has_only_refusal_or_owned_commit
         });
         let close = tokio::spawn({
             let barrier = barrier.clone();
-            let fork = fork.clone();
+            let fiber_handle = fiber_handle.clone();
             async move {
                 barrier.wait().await;
-                fork.dispose().await.unwrap();
+                fiber_handle.dispose().await.unwrap();
             }
         });
         barrier.wait().await;
@@ -546,7 +546,7 @@ async fn every_core_family_publish_versus_close_has_only_refusal_or_owned_commit
     // Service publication.
     {
         let root = Context::new();
-        let (fork, ctx) = scoped_context(&root).await;
+        let (fiber_handle, ctx) = scoped_context(&root).await;
         let barrier = Arc::new(tokio::sync::Barrier::new(3));
         let register = tokio::spawn({
             let barrier = barrier.clone();
@@ -557,10 +557,10 @@ async fn every_core_family_publish_versus_close_has_only_refusal_or_owned_commit
         });
         let close = tokio::spawn({
             let barrier = barrier.clone();
-            let fork = fork.clone();
+            let fiber_handle = fiber_handle.clone();
             async move {
                 barrier.wait().await;
-                fork.dispose().await.unwrap();
+                fiber_handle.dispose().await.unwrap();
             }
         });
         barrier.wait().await;
@@ -583,7 +583,7 @@ async fn every_core_family_publish_versus_close_has_only_refusal_or_owned_commit
     // Event listener registration.
     {
         let root = Context::new();
-        let (fork, ctx) = scoped_context(&root).await;
+        let (fiber_handle, ctx) = scoped_context(&root).await;
         let barrier = Arc::new(tokio::sync::Barrier::new(3));
         let hits = Arc::new(AtomicUsize::new(0));
         let register = tokio::spawn({
@@ -599,10 +599,10 @@ async fn every_core_family_publish_versus_close_has_only_refusal_or_owned_commit
         });
         let close = tokio::spawn({
             let barrier = barrier.clone();
-            let fork = fork.clone();
+            let fiber_handle = fiber_handle.clone();
             async move {
                 barrier.wait().await;
-                fork.dispose().await.unwrap();
+                fiber_handle.dispose().await.unwrap();
             }
         });
         barrier.wait().await;
@@ -625,7 +625,7 @@ async fn every_core_family_publish_versus_close_has_only_refusal_or_owned_commit
     // Logger exporter registration.
     {
         let root = Context::new();
-        let (fork, ctx) = scoped_context(&root).await;
+        let (fiber_handle, ctx) = scoped_context(&root).await;
         let barrier = Arc::new(tokio::sync::Barrier::new(3));
         let exporter = Arc::new(CountingExporter::default());
         let register = tokio::spawn({
@@ -638,10 +638,10 @@ async fn every_core_family_publish_versus_close_has_only_refusal_or_owned_commit
         });
         let close = tokio::spawn({
             let barrier = barrier.clone();
-            let fork = fork.clone();
+            let fiber_handle = fiber_handle.clone();
             async move {
                 barrier.wait().await;
-                fork.dispose().await.unwrap();
+                fiber_handle.dispose().await.unwrap();
             }
         });
         barrier.wait().await;
@@ -657,7 +657,7 @@ async fn every_core_family_publish_versus_close_has_only_refusal_or_owned_commit
     // Cooperative task registration.
     {
         let root = Context::new();
-        let (fork, ctx) = scoped_context(&root).await;
+        let (fiber_handle, ctx) = scoped_context(&root).await;
         let barrier = Arc::new(tokio::sync::Barrier::new(3));
         let polls = Arc::new(AtomicUsize::new(0));
         let register = tokio::spawn({
@@ -670,10 +670,10 @@ async fn every_core_family_publish_versus_close_has_only_refusal_or_owned_commit
         });
         let close = tokio::spawn({
             let barrier = barrier.clone();
-            let fork = fork.clone();
+            let fiber_handle = fiber_handle.clone();
             async move {
                 barrier.wait().await;
-                fork.dispose().await.unwrap();
+                fiber_handle.dispose().await.unwrap();
             }
         });
         barrier.wait().await;

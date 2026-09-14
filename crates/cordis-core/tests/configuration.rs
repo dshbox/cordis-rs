@@ -307,10 +307,14 @@ async fn sealing_materializes_declarations_once_before_lifecycle() {
     assert_eq!(applied.load(Ordering::SeqCst), 0);
     assert_eq!(ordinary_fiber_count(&ctx), 0, "sealing allocates no Fiber");
 
-    let fork = ctx.spawn(sealed).await.unwrap();
-    let identity = fork.id();
-    fork.ready().await.unwrap();
-    assert_eq!(fork.id(), identity, "ready preserves Fiber identity");
+    let fiber_handle = ctx.spawn(sealed).await.unwrap();
+    let identity = fiber_handle.id();
+    fiber_handle.ready().await.unwrap();
+    assert_eq!(
+        fiber_handle.id(),
+        identity,
+        "ready preserves Fiber identity"
+    );
     assert_eq!(
         names.load(Ordering::SeqCst),
         1,
@@ -486,13 +490,13 @@ async fn inject_overlay_cannot_select_a_service_realm() {
             InjectSpec::none().require_configured::<Pipeline>("isolated".to_owned()),
         );
 
-    let fork = isolated.spawn(sealed).await.unwrap();
-    assert_eq!(fork.state(), FiberState::Pending);
-    assert_eq!(fork.pending_missing(), [Pipeline::NAME.to_owned()]);
+    let fiber_handle = isolated.spawn(sealed).await.unwrap();
+    assert_eq!(fiber_handle.state(), FiberState::Pending);
+    assert_eq!(fiber_handle.pending_missing(), [Pipeline::NAME.to_owned()]);
     assert!(seen.lock().is_empty());
 
     let _ = isolated.provide(Arc::new(Pipeline)).unwrap();
-    fork.ready().await.unwrap();
+    fiber_handle.ready().await.unwrap();
     assert_eq!(*seen.lock(), ["isolated"]);
 }
 
@@ -559,8 +563,8 @@ async fn intercept_derivation_changes_no_other_context_axis() {
         },
         (),
     );
-    let fork = origin.spawn(sealed).await.unwrap();
-    fork.ready().await.unwrap();
+    let fiber_handle = origin.spawn(sealed).await.unwrap();
+    fiber_handle.ready().await.unwrap();
 
     let derived = derived.lock().take().unwrap();
     assert!(derived.try_service::<AxisMarker>().is_ok());
@@ -572,7 +576,7 @@ async fn intercept_derivation_changes_no_other_context_axis() {
         .unwrap();
     assert_eq!(hits.load(Ordering::SeqCst), 1);
 
-    fork.dispose().await.unwrap();
+    fiber_handle.dispose().await.unwrap();
     assert!(matches!(
         derived.effect_sync(|| {}),
         Err(cordis_core::effect::EffectRegistrationError::InactiveContext)
@@ -628,16 +632,16 @@ impl Plugin for ForeignPlugin {
 async fn update_installs_the_consumed_candidate_and_restarts_onto_it() {
     let ctx = Context::new();
     let seen = Arc::new(Mutex::new(Vec::new()));
-    let fork = ctx
+    let fiber_handle = ctx
         .spawn(PreparedPlugin::from_input(
             ConfigRecorder { seen: seen.clone() },
             "v1".to_owned(),
         ))
         .await
         .unwrap();
-    fork.ready().await.unwrap();
+    fiber_handle.ready().await.unwrap();
 
-    let outcome = fork
+    let outcome = fiber_handle
         .update(cordis_core::PreparedChange::from_input::<ConfigRecorder>(
             "v2".to_owned(),
         ))
@@ -659,16 +663,16 @@ async fn update_installs_the_consumed_candidate_and_restarts_onto_it() {
 async fn a_foreign_contract_update_is_refused_precommit_with_state_intact() {
     let ctx = Context::new();
     let seen = Arc::new(Mutex::new(Vec::new()));
-    let fork = ctx
+    let fiber_handle = ctx
         .spawn(PreparedPlugin::from_input(
             ConfigRecorder { seen: seen.clone() },
             "v1".to_owned(),
         ))
         .await
         .unwrap();
-    fork.ready().await.unwrap();
+    fiber_handle.ready().await.unwrap();
 
-    let error = fork
+    let error = fiber_handle
         .update(cordis_core::PreparedChange::from_input::<ForeignPlugin>(()))
         .await
         .unwrap_err();
@@ -683,11 +687,12 @@ async fn a_foreign_contract_update_is_refused_precommit_with_state_intact() {
     );
 
     // the old state is intact: a valid candidate still installs and applies
-    fork.update(cordis_core::PreparedChange::from_input::<ConfigRecorder>(
-        "v2".to_owned(),
-    ))
-    .await
-    .unwrap();
+    fiber_handle
+        .update(cordis_core::PreparedChange::from_input::<ConfigRecorder>(
+            "v2".to_owned(),
+        ))
+        .await
+        .unwrap();
     assert_eq!(*seen.lock(), ["v1".to_owned(), "v2".to_owned()]);
 }
 

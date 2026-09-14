@@ -1,4 +1,4 @@
-//! Private ownership bridge from core Fork handoff to caller outcome delivery.
+//! Private ownership bridge from core FiberHandle handoff to caller outcome delivery.
 
 use std::future::Future;
 
@@ -38,8 +38,8 @@ impl ResultHandoff {
     }
 }
 
-/// If final delivery never happens, transfer every successful Fork to detached
-/// rollback before these private entries can fall through inert Fork Drop.
+/// If final delivery never happens, transfer every successful FiberHandle to detached
+/// rollback before these private entries can fall through inert FiberHandle Drop.
 impl Drop for ResultHandoff {
     fn drop(&mut self) {
         let Some(entries) = self.entries.take() else {
@@ -52,10 +52,10 @@ impl Drop for ResultHandoff {
 fn rollback(entries: Vec<EntryOutcome>) {
     detach_completion(async move {
         for entry in entries.into_iter().rev() {
-            let EntryOutcome::Spawned { fork, .. } = entry else {
+            let EntryOutcome::Spawned { fiber_handle, .. } = entry else {
                 continue;
             };
-            let _ = fork.dispose().await;
+            let _ = fiber_handle.dispose().await;
         }
     });
 }

@@ -196,7 +196,7 @@ async fn equivalent_views_match_for_typed_update_control() {
         .unwrap();
 
     let applied = Arc::new(Mutex::new(Vec::new()));
-    let fork = root
+    let fiber_handle = root
         .spawn(PreparedPlugin::from_input(
             UpdateProbe {
                 applied: applied.clone(),
@@ -206,7 +206,8 @@ async fn equivalent_views_match_for_typed_update_control() {
         .await
         .unwrap();
 
-    fork.update(PreparedChange::from_input::<UpdateProbe>(10))
+    fiber_handle
+        .update(PreparedChange::from_input::<UpdateProbe>(10))
         .await
         .unwrap();
     assert_eq!(&*applied.lock(), &[1, 12]);
@@ -277,7 +278,7 @@ async fn equivalent_views_register_cleanup_to_the_same_current_fiber() {
     let repeated_cleaned = Arc::new(AtomicUsize::new(0));
     let root_cleaned = Arc::new(AtomicUsize::new(0));
     let root_registration = Arc::new(Mutex::new(None));
-    let fork = root
+    let fiber_handle = root
         .spawn(PreparedPlugin::from_input(
             CleanupProbe {
                 realm: root.new_service_realm(),
@@ -291,7 +292,7 @@ async fn equivalent_views_register_cleanup_to_the_same_current_fiber() {
         .await
         .unwrap();
 
-    fork.dispose().await.unwrap();
+    fiber_handle.dispose().await.unwrap();
     assert_eq!(direct_cleaned.load(Ordering::SeqCst), 1);
     assert_eq!(repeated_cleaned.load(Ordering::SeqCst), 1);
     assert_eq!(

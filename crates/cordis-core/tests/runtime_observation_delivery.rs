@@ -220,7 +220,7 @@ async fn failing_and_panicking_observers_do_not_veto_and_later_observers_are_att
         }
     }))
     .unwrap();
-    let fork = ctx.spawn(prepared(Plain)).await.unwrap();
+    let fiber_handle = ctx.spawn(prepared(Plain)).await.unwrap();
     for _ in 0..100 {
         if hits.load(Ordering::SeqCst) > 0 {
             break;
@@ -228,7 +228,7 @@ async fn failing_and_panicking_observers_do_not_veto_and_later_observers_are_att
         tokio::task::yield_now().await;
     }
     assert!(hits.load(Ordering::SeqCst) > 0);
-    fork.dispose().await.unwrap();
+    fiber_handle.dispose().await.unwrap();
 }
 
 #[tokio::test]
@@ -307,7 +307,7 @@ impl Plugin for DropObserverCapture {
 async fn observer_capture_destruction_can_reenter_observer_registration() {
     let root = Context::new();
     let reentered = Arc::new(AtomicUsize::new(0));
-    let fork = root
+    let fiber_handle = root
         .spawn(prepared(DropObserverCapture {
             root: root.clone(),
             reentered: reentered.clone(),
@@ -315,7 +315,7 @@ async fn observer_capture_destruction_can_reenter_observer_registration() {
         .await
         .unwrap();
 
-    common::bounded(5_000, fork.dispose())
+    common::bounded(5_000, fiber_handle.dispose())
         .await
         .expect("observer capture destruction deadlocked")
         .unwrap();

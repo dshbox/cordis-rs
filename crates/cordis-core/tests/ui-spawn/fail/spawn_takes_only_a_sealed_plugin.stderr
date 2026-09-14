@@ -9,7 +9,7 @@ error[E0308]: mismatched types
 note: method defined here
   --> src/fiber/spawn.rs
    |
-   |     pub async fn spawn(&self, prepared: PreparedPlugin) -> std::result::Result<Fork, SpawnError> {
+   |     pub async fn spawn(
    |                  ^^^^^
 
 error[E0308]: mismatched types
@@ -23,5 +23,5 @@ error[E0308]: mismatched types
 note: method defined here
   --> src/fiber/spawn.rs
    |
-   |     pub async fn spawn(&self, prepared: PreparedPlugin) -> std::result::Result<Fork, SpawnError> {
+   |     pub async fn spawn(
    |                  ^^^^^

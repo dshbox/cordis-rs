@@ -60,13 +60,13 @@ deterministic without ordering locks across core.
 | restart | irreversible closure/replacement of the old generation | current-target quiescence |
 | update | new config plus generation-replacement commit | committed-config target quiescence |
 | era swap | source swap claim | old disposal, successor outcome/cleanup, final convergence |
-| new-Fiber creation | allocation/publication requiring rollback responsibility | Fork delivery or undelivered-Fiber disposal |
+| new-Fiber creation | allocation/publication requiring rollback responsibility | FiberHandle delivery or undelivered-Fiber disposal |
 
 The same law governs the two remaining deep operations. A winning exact
 manual cleanup dispose commits at its claim and completes under
 framework ownership despite caller cancellation. Loader result handoff
-commits as each Fork is obtained; if load or result construction is
-abandoned before delivery, the already-obtained Forks are disposed in
+commits as each FiberHandle is obtained; if load or result construction is
+abandoned before delivery, the already-obtained FiberHandles are disposed in
 reverse success order, attempt-all, under framework-owned completion,
 while dropping a delivered outcome is inert.
 

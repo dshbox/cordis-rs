@@ -326,7 +326,7 @@ impl LoadPlanBuilder {
 /// Cloning shares the same frozen plan lineage and preserves every `EntryId`.
 /// Repeated execution preserves those correlations and semantic ordering while
 /// realm identities, Fiber identities, Service publication occurrences, outcome
-/// values, and Fork ownership are created fresh for that execution. Structural
+/// values, and FiberHandle ownership are created fresh for that execution. Structural
 /// parentage is private sequencing input only: `LoadPlan` exposes no entry
 /// iterator, children, arbitrary enablement query, path/index lookup, mutation,
 /// patch, or removal API.
@@ -400,13 +400,13 @@ impl LoadPlan {
     /// rendezvous only inside this call. Labels never enter core or survive into
     /// another execution, and structural parentage contributes no placement.
     /// Plan EntryIds/order remain stable while realms, Fibers, publications,
-    /// outcomes, and Fork ownership are execution-specific. Core owns each
-    /// in-progress spawn through its Fork handoff. After a successful spawn,
-    /// Loader owns that Fork until the complete outcome is returned; abandoning
-    /// this future transfers all already-obtained Forks to framework-owned,
+    /// outcomes, and FiberHandle ownership are execution-specific. Core owns each
+    /// in-progress spawn through its FiberHandle handoff. After a successful spawn,
+    /// Loader owns that FiberHandle until the complete outcome is returned; abandoning
+    /// this future transfers all already-obtained FiberHandles to framework-owned,
     /// reverse-success-order attempt-all disposal. Ordinary entry failure remains
     /// partial and never triggers rollback. Once this method returns, ownership is
-    /// the caller's and dropping the delivered outcome or its Forks is inert.
+    /// the caller's and dropping the delivered outcome or its FiberHandles is inert.
     pub async fn load<R>(
         &self,
         ctx: &cordis_core::Context,
@@ -468,10 +468,10 @@ impl LoadPlan {
                             Ok(Some(prepared)) => {
                                 let placed = realms.place(ctx, &entry.isolate);
                                 match placed.spawn(prepared).await {
-                                    Ok(fork) => EntryOutcome::Spawned {
+                                    Ok(fiber_handle) => EntryOutcome::Spawned {
                                         id: node.id.clone(),
                                         resolve_key,
-                                        fork,
+                                        fiber_handle,
                                     },
                                     Err(failure) => EntryOutcome::Failed {
                                         id: node.id.clone(),

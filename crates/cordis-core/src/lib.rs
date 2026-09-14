@@ -13,7 +13,7 @@
 //! | `utils.ts` (disposables) | [`effect`] | LIFO cleanup lists, sync + async registration |
 //! | `context.ts` | [`Context`] | cheap-clone Runtime view over orthogonal axes |
 //! | Plugin preparation | [`plugin`] | typed preparation, sealing, and normalized dependency declarations |
-//! | `fiber.ts` | [`Fork`] and lifecycle types | private settle protocol, semantic public facade |
+//! | `fiber.ts` | [`FiberHandle`] and lifecycle types | private settle protocol, semantic public facade |
 //! | `registry.ts` | private Registry implementation | Runtime residency machinery |
 //! | `logger.ts` | [`logger`] | named channels, [`logger::Exporter`] fan-out, level routing |
 //! | `reflect.ts` + `service.ts` | [`service`] | exact Service-slot publication, lookup, and dependency visibility |
@@ -62,9 +62,9 @@ pub mod __internal {
 /// Fiber identity, lifecycle control, and creation outcomes.
 pub mod lifecycle {
     pub use crate::fiber::{
-        EraSwapError, EraSwapFailure, FiberId, FiberRole, FiberState, Fork, LifecycleOperation,
-        LifecycleRecursion, PluginFailure, PluginFailureKind, ReadyError, RestartError, SpawnError,
-        UpdateError, UpdateOutcome, WaitStateError,
+        EraSwapError, EraSwapFailure, FiberHandle, FiberId, FiberRole, FiberState,
+        LifecycleOperation, LifecycleRecursion, PluginFailure, PluginFailureKind, ReadyError,
+        RestartError, SpawnError, UpdateError, UpdateOutcome, WaitStateError,
     };
     pub use crate::update::{UpdateListener, UpdateNext};
 }
@@ -84,7 +84,7 @@ pub mod event {
 }
 
 pub use event::{Event, QueryOutcome, Routing, Scope};
-pub use fiber::{FiberId, FiberState, Fork, UpdateOutcome};
+pub use fiber::{FiberHandle, FiberId, FiberState, UpdateOutcome};
 pub use logger::{Level, Logger};
 pub use plugin::{InjectSpec, Plugin, PreparedChange, PreparedPlugin};
 pub use service::{ConfigurableService, Service, ServiceRealm};

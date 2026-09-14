@@ -73,7 +73,7 @@ Its crate-root re-export whitelist is exactly:
 ```text
 Context
 Plugin  PreparedPlugin  PreparedChange  InjectSpec
-Fork  FiberId  FiberState  UpdateOutcome
+FiberHandle  FiberId  FiberState  UpdateOutcome
 Service  ConfigurableService  ServiceRealm
 Event  Scope  Routing  QueryOutcome
 Logger  Level  BoxError
@@ -86,7 +86,7 @@ one canonical semantic module path:
 | Core module | Canonical specialist items |
 | --- | --- |
 | `plugin` | `Plugin`, `PreparedPlugin`, `PreparedChange`, `InjectSpec` |
-| `lifecycle` | `Fork`, `FiberId`, `FiberState`, `FiberRole`, `UpdateOutcome`, `PluginFailure`, `PluginFailureKind`, `LifecycleRecursion`, `LifecycleOperation`, `SpawnError`, `ReadyError`, `RestartError`, `WaitStateError`, `UpdateError`, `EraSwapError`, `EraSwapFailure`, `UpdateListener`, `UpdateNext` |
+| `lifecycle` | `FiberHandle`, `FiberId`, `FiberState`, `FiberRole`, `UpdateOutcome`, `PluginFailure`, `PluginFailureKind`, `LifecycleRecursion`, `LifecycleOperation`, `SpawnError`, `ReadyError`, `RestartError`, `WaitStateError`, `UpdateError`, `EraSwapError`, `EraSwapFailure`, `UpdateListener`, `UpdateNext` |
 | `service` | `Service`, `ConfigurableService`, `ServiceRealm`, `ServicePublication`, `RealmMappingError`, `ServiceLookupError`, `ServicePublishError`, `ServiceControlError`, `ConfigResolutionError` |
 | `event` | `Event`, `Scope`, `Routing`, `QueryOutcome`, `Listener`, `ListenerOptions`, `ListenerRegistration`, `ListenerRegistrationId`, `Next`, `StatefulCallback`, `observer`, `observer_sync`, `responder`, `responder_sync`, `mapper`, `mapper_sync`, `around`, `ListenerRole`, `EventOperation`, `DispatchOutcomeKind`, `InvocationFailure`, `InvocationFailureKind`, `ParallelFailures`, `ListenerRegistrationError`, `DispatchError` |
 | `effect` | `CleanupResult`, `EffectRegistration`, `EffectRegistrationError`, `EffectFailure`, `EffectFailureKind`, `TaskRegistrationError` |
@@ -207,7 +207,7 @@ Creation crosses three explicit boundaries:
 ```rust
 let input = plugin.prepare(config)?;
 let target = PreparedPlugin::from_input(plugin, input);
-let fork = ctx.spawn(target).await?;
+let fiber_handle = ctx.spawn(target).await?;
 ```
 
 `PreparedPlugin` is opaque, move-only, and `must_use`, with one public
@@ -221,11 +221,11 @@ contracts unwind normally, under no framework lock and before lifecycle
 admission.
 
 `Context::spawn(PreparedPlugin)` is the whole creation transaction. It
-returns a `Fork` only after a fresh Fiber reaches live quiescent
+returns a `FiberHandle` only after a fresh Fiber reaches live quiescent
 `Active` or stable `Pending`. Initial apply failure leaves no resident
 Fiber. Cancellation law: before the allocation/publication commit,
 cancelling the spawn future has no lifecycle effect; afterward the
-framework completes the Fork handoff or fully disposes and unlinks the
+framework completes the FiberHandle handoff or fully disposes and unlinks the
 undelivered Fiber independently of caller polling.
 
 Absent from the interface: public `DynPlugin`, raw `ErasedConfig`,
@@ -316,13 +316,13 @@ Service name, or slot state.
 `Unloading`, `Failed`, and `Disposed`, with `Debug + Clone + Copy + Eq`;
 it has no default, numeric representation, ordering, or serde contract.
 
-`Fork` is opaque, `Clone + Debug`, and inert on Drop. It offers `name`,
-`state`, per-Fork `pending_missing`, `ready`, `wait_state`, `restart`,
+`FiberHandle` is opaque, `Clone + Debug`, and inert on Drop. It offers `name`,
+`state`, per-FiberHandle `pending_missing`, `ready`, `wait_state`, `restart`,
 and `dispose`, each with its operation-specific error. `ready` drives
 the target Fiber toward convergence; `wait_state` passively awaits a
 target state and can elapse.
 
-`Fork::id() -> FiberId`; there is no nullable numeric `uid()`.
+`FiberHandle::id() -> FiberId`; there is no nullable numeric `uid()`.
 `FiberId` is opaque Runtime-local correlation identity with
 `Debug + Clone + Eq + Hash` only. Restart, same-Fiber update, and
 disposal preserve it; era replacement allocates a new identity;
@@ -349,7 +349,7 @@ parks the target as `Failed`. `UpdateOutcome` is
 Era swap completes compatibility, liveness, and recursion preflight
 before its single irreversible source claim. Success requires old-Fiber
 disposal, a live quiescent successor, fresh dependent queries and final
-convergence, and Fork handoff. `EraSwapError::Incomplete` means the old
+convergence, and FiberHandle handoff. `EraSwapError::Incomplete` means the old
 Fiber is gone, no attempted successor remains resident, and final
 cleanup and convergence completed; it reports successor-specific causes
 and never embeds `SpawnError`.
@@ -800,31 +800,31 @@ pub enum EntryOutcome {
     Group { id: EntryId },
     Disabled { id: EntryId },
     Pruned { id: EntryId, disabled_ancestor: EntryId },
-    Spawned { id: EntryId, resolve_key: String, fork: Fork },
+    Spawned { id: EntryId, resolve_key: String, fiber_handle: FiberHandle },
     Failed { id: EntryId, resolve_key: String, failure: LoaderFailure },
 }
 ```
 
 `EntryOutcome` is `Debug` and exposes `id() -> &EntryId` for exact
 correlation without variant matching. `LoadOutcome` is `Debug + must_use`:
-ignoring a delivered outcome would discard the caller's Fork controls while
+ignoring a delivered outcome would discard the caller's FiberHandle controls while
 Fiber residency remains explicit. `Pruned` wins for every descendant of a disabled Plugin, including
 groups and separately disabled Plugins. Reachable groups yield `Group`;
 reachable disabled Plugins yield `Disabled`. Ordinary resolver,
 preparation, placement, or spawn failure yields `Failed` and does not
 prune descendants. `LoadOutcome` exposes ordered entries, exact EntryId
-lookup, spawned Fork iteration, and `is_ok`, which is true exactly when
+lookup, spawned FiberHandle iteration, and `is_ok`, which is true exactly when
 no `Failed` exists. Resolve key is repeatable metadata; there is no
 `by_resolve_key` lookup.
 
 Load is partial, not transactional. Before final outcome handoff, Loader
-is responsible for either handing each already-delivered Fork to the
+is responsible for either handing each already-delivered FiberHandle to the
 caller or disposing it when the result cannot be delivered; abandonment
 transfers reverse-success-order, attempt-all rollback to framework-owned
-completion. Core owns an in-progress spawn until Fork handoff; Loader
+completion. Core owns an in-progress spawn until FiberHandle handoff; Loader
 owns result handoff afterward; the caller owns the delivered outcome.
 Ordinary entry failures do not trigger rollback. Dropping a delivered
-LoadOutcome or Fork is inert.
+LoadOutcome or FiberHandle is inert.
 
 Plan construction fails with `PlanError`; execution associates
 `LoaderFailure` with one outer EntryOutcome and never aborts the whole
@@ -1100,7 +1100,7 @@ Failure phases stay distinct. Service errors distinguish realm
 derivation, lookup, publication, and exact control. Effect registration
 and execution are separate. `Context::run` uses
 `TaskRegistrationError::{InactiveContext, ExecutorUnavailable}`.
-Lifecycle errors state their commit phase: spawn delivers no Fork and
+Lifecycle errors state their commit phase: spawn delivers no FiberHandle and
 leaves no attempted resident; ready, restart, and update Apply failures
 park `Failed` according to whether their commit occurred; era-swap
 `Incomplete` is postclaim. `SpawnError::Interrupted` and era

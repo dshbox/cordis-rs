@@ -564,7 +564,7 @@ async fn generation_close_keeps_occurrence_eligible_until_exact_cleanup_and_stal
     let hits = Arc::new(AtomicUsize::new(0));
     let (cleanup_started_tx, cleanup_started_rx) = tokio::sync::oneshot::channel();
     let cleanup_release = Arc::new(tokio::sync::Notify::new());
-    let fork = root
+    let fiber_handle = root
         .spawn(PreparedPlugin::from_input(
             DrainPlugin {
                 hits: hits.clone(),
@@ -576,7 +576,7 @@ async fn generation_close_keeps_occurrence_eligible_until_exact_cleanup_and_stal
         .await
         .unwrap();
 
-    let disposal = tokio::spawn(async move { fork.dispose().await });
+    let disposal = tokio::spawn(async move { fiber_handle.dispose().await });
     cleanup_started_rx.await.unwrap();
 
     // The generation is closed, but its listener cleanup is still behind the
@@ -734,7 +734,7 @@ async fn manual_remove_and_generation_cleanup_arbitrate_one_exact_unregister() {
         let root = Context::new();
         let slot = Arc::new(Mutex::new(None));
         let drops = Arc::new(AtomicUsize::new(0));
-        let fork = root
+        let fiber_handle = root
             .spawn(PreparedPlugin::from_input(
                 RegistrationControlPlugin {
                     slot: slot.clone(),
@@ -758,7 +758,7 @@ async fn manual_remove_and_generation_cleanup_arbitrate_one_exact_unregister() {
             let barrier = barrier.clone();
             tokio::spawn(async move {
                 barrier.wait();
-                fork.dispose().await
+                fiber_handle.dispose().await
             })
         };
         barrier.wait();
@@ -803,7 +803,7 @@ impl Plugin for CaptureContextPlugin {
 async fn closing_first_refuses_registration_without_a_listener_trace() {
     let root = Context::new();
     let slot = Arc::new(Mutex::new(None));
-    let fork = root
+    let fiber_handle = root
         .spawn(PreparedPlugin::from_input(
             CaptureContextPlugin { slot: slot.clone() },
             (),
@@ -811,7 +811,7 @@ async fn closing_first_refuses_registration_without_a_listener_trace() {
         .await
         .unwrap();
     let captured = slot.lock().take().unwrap();
-    fork.dispose().await.unwrap();
+    fiber_handle.dispose().await.unwrap();
 
     let hits = Arc::new(AtomicUsize::new(0));
     let callback_hits = hits.clone();
@@ -832,7 +832,7 @@ async fn registration_racing_generation_close_never_strands_an_occurrence() {
     for _round in 0..24 {
         let root = Context::new();
         let slot = Arc::new(Mutex::new(None));
-        let fork = root
+        let fiber_handle = root
             .spawn(PreparedPlugin::from_input(
                 CaptureContextPlugin { slot: slot.clone() },
                 (),
@@ -858,7 +858,7 @@ async fn registration_racing_generation_close_never_strands_an_occurrence() {
             let barrier = barrier.clone();
             tokio::spawn(async move {
                 barrier.wait();
-                fork.dispose().await
+                fiber_handle.dispose().await
             })
         };
         barrier.wait();

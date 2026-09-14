@@ -388,29 +388,30 @@ async fn disposed_is_published_only_after_terminal_cleanup_finishes() {
     let root = Context::new();
     let cleanup_started = Arc::new(tokio::sync::Notify::new());
     let cleanup_release = Arc::new(tokio::sync::Notify::new());
-    let fork = root
+    let fiber_handle = root
         .spawn(prepared(BlocksTerminalCleanup {
             cleanup_started: cleanup_started.clone(),
             cleanup_release: cleanup_release.clone(),
         }))
         .await
         .unwrap();
-    assert_eq!(fork.state(), FiberState::Active);
+    assert_eq!(fiber_handle.state(), FiberState::Active);
 
     let disposed_waiter = tokio::spawn({
-        let fork = fork.clone();
+        let fiber_handle = fiber_handle.clone();
         async move {
-            fork.wait_state(FiberState::Disposed, Duration::from_secs(2))
+            fiber_handle
+                .wait_state(FiberState::Disposed, Duration::from_secs(2))
                 .await
         }
     });
     let disposer = tokio::spawn({
-        let fork = fork.clone();
-        async move { fork.dispose().await }
+        let fiber_handle = fiber_handle.clone();
+        async move { fiber_handle.dispose().await }
     });
     cleanup_started.notified().await;
 
-    assert_eq!(fork.state(), FiberState::Unloading);
+    assert_eq!(fiber_handle.state(), FiberState::Unloading);
     assert!(
         !disposed_waiter.is_finished(),
         "Disposed must not publish before terminal generation cleanup completes"
@@ -419,9 +420,9 @@ async fn disposed_is_published_only_after_terminal_cleanup_finishes() {
     cleanup_release.notify_one();
     disposer.await.unwrap().unwrap();
     disposed_waiter.await.unwrap().unwrap();
-    assert_eq!(fork.state(), FiberState::Disposed);
+    assert_eq!(fiber_handle.state(), FiberState::Disposed);
     assert_eq!(
-        fork.ready().await.unwrap(),
+        fiber_handle.ready().await.unwrap(),
         FiberState::Disposed,
         "ready reports the terminal closed outcome instead of a transient state"
     );

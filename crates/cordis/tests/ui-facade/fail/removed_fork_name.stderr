@@ -1,0 +1,15 @@
+error[E0432]: unresolved import `cordis::Fork`
+ --> tests/ui-facade/fail/removed_fork_name.rs:1:5
+  |
+1 | use cordis::Fork as RootFork;
+  |     ^^^^^^^^----^^^^^^^^^^^^
+  |             |
+  |             no `Fork` in the root
+
+error[E0432]: unresolved import `cordis::lifecycle::Fork`
+ --> tests/ui-facade/fail/removed_fork_name.rs:2:5
+  |
+2 | use cordis::lifecycle::Fork as LifecycleFork;
+  |     ^^^^^^^^^^^^^^^^^^^----^^^^^^^^^^^^^^^^^
+  |                        |
+  |                        no `Fork` in `lifecycle`

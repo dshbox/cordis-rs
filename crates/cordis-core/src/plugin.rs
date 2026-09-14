@@ -354,7 +354,7 @@ impl PreparedPlugin {
 /// A move-only, one-attempt prepared input replacement for update or era replacement.
 ///
 /// The value contains only Plugin contract identity and one complete replacement
-/// Input value. It contains no Plugin behavior, creation recipe, Context, Fork,
+/// Input value. It contains no Plugin behavior, creation recipe, Context, FiberHandle,
 /// or lifecycle authority.
 #[must_use = "a PreparedChange is consumed by one update or era-replacement attempt"]
 pub struct PreparedChange {

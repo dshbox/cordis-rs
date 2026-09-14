@@ -3,8 +3,8 @@
 //! A [`Plugin`] prepares typed source configuration before lifecycle admission.
 //! [`PreparedPlugin`] then seals that input value to the Plugin contract, and
 //! [`Context::spawn`] performs the complete lifecycle transaction before handing
-//! the consumer a live quiescent [`cordis_core::Fork`]. The consumer keeps that
-//! Fork in its Harness roster and deterministically disposes it at teardown.
+//! the consumer a live quiescent [`cordis_core::FiberHandle`]. The consumer keeps that
+//! FiberHandle in its Harness roster and deterministically disposes it at teardown.
 //!
 //! Run with `cargo run -p hello_plugin`.
 
@@ -43,7 +43,7 @@ impl Plugin for Echo {
     async fn apply(&self, ctx: Context, _input: &EchoInput) -> Result<(), Self::ApplyError> {
         // 3. Register typed Plugin behavior. The returned exact-occurrence
         // capability may be dropped inertly because the Fiber generation owns
-        // cleanup; deterministic Fork disposal removes the registration.
+        // cleanup; deterministic FiberHandle disposal removes the registration.
         let _listener = ctx.on::<Ping, _>(observer_sync(|_, name| {
             println!("  hello, {name}");
             Ok::<_, Infallible>(())
@@ -59,7 +59,7 @@ async fn main() -> Result<(), BoxError> {
 
     // 4. Prepare explicitly, seal the exact Plugin/input association, then
     //    perform complete spawn. A successful handoff is already live and
-    //    quiescent; the Harness records the delivered Fork for teardown.
+    //    quiescent; the Harness records the delivered FiberHandle for teardown.
     section("boot: one echo plugin");
     let plugin = Echo;
     let input = plugin.prepare(())?;
@@ -72,14 +72,14 @@ async fn main() -> Result<(), BoxError> {
     section("run: emit Ping");
     ctx.emit::<Ping>(Routing::Unscoped, "world".into()).await?;
 
-    // 6. Consumer-owned teardown deterministically disposes the delivered Fork.
-    section("teardown: dispose the fork");
+    // 6. Consumer-owned teardown deterministically disposes the delivered FiberHandle.
+    section("teardown: dispose the FiberHandle");
     roster.teardown().await;
 
     // The listener was generation-owned: after disposal there is no callback.
     ctx.emit::<Ping>(Routing::Unscoped, "nobody listens anymore".into())
         .await?;
-    println!("  (the second Ping printed nothing — the listener died with the fork)");
+    println!("  (the second Ping printed nothing — the listener died with the FiberHandle)");
 
     Ok(())
 }

@@ -64,8 +64,8 @@ note: the module `events` is defined here
 error[E0603]: module `fiber` is private
  --> tests/ui-facade58/fail/removed_facade_paths.rs:5:18
   |
-5 | use cordis_core::fiber::Fork as OldFork;
-  |                  ^^^^^  ---- struct `Fork` is not publicly re-exported
+5 | use cordis_core::fiber::FiberHandle as OldFiberHandle;
+  |                  ^^^^^  ----------- struct `FiberHandle` is not publicly re-exported
   |                  |
   |                  private module
   |

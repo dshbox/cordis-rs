@@ -26,7 +26,7 @@ impl Plugin for Noop {
 }
 
 #[tokio::test]
-async fn cloned_forks_share_an_opaque_id_and_runtimes_do_not() {
+async fn cloned_fiber_handles_share_an_opaque_id_and_runtimes_do_not() {
     let first_context = Context::new();
     let first = first_context
         .spawn(PreparedPlugin::from_input(Noop, ()))

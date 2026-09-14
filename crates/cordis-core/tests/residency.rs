@@ -1,4 +1,4 @@
-//! LF-11 public evidence: Registry residency is independent of Forks and
+//! LF-11 public evidence: Registry residency is independent of FiberHandles and
 //! spawn origin, while lifecycle control remains explicit.
 
 mod common;
@@ -6,7 +6,7 @@ mod common;
 use common::ordinary_fiber_count;
 
 use cordis_core::lifecycle::SpawnError;
-use cordis_core::{Context, FiberState, Fork, Plugin, PreparedPlugin, Service};
+use cordis_core::{Context, FiberHandle, FiberState, Plugin, PreparedPlugin, Service};
 use parking_lot::Mutex;
 use std::convert::Infallible;
 use std::future::Future;
@@ -53,7 +53,7 @@ impl Plugin for Resident {
 }
 
 struct Origin {
-    child: Arc<Mutex<Option<Fork>>>,
+    child: Arc<Mutex<Option<FiberHandle>>>,
     child_disposed: Arc<AtomicUsize>,
 }
 
@@ -133,7 +133,7 @@ impl Plugin for Origin {
         let child = self.child.clone();
         let child_disposed = self.child_disposed.clone();
         async move {
-            let fork = ctx
+            let fiber_handle = ctx
                 .spawn(PreparedPlugin::from_input(
                     Resident {
                         disposed: child_disposed,
@@ -141,7 +141,7 @@ impl Plugin for Origin {
                     (),
                 ))
                 .await?;
-            *child.lock() = Some(fork);
+            *child.lock() = Some(fiber_handle);
             Ok(())
         }
     }
@@ -221,10 +221,10 @@ async fn admission_first_child_finishes_after_its_origin_is_disposed() {
 }
 
 #[tokio::test]
-async fn dropping_every_fork_does_not_end_a_resident_fiber() {
+async fn dropping_every_fiber_handle_does_not_end_a_resident_fiber() {
     let runtime = Context::new();
     let disposed = Arc::new(AtomicUsize::new(0));
-    let fork = runtime
+    let fiber_handle = runtime
         .spawn(PreparedPlugin::from_input(
             Resident {
                 disposed: disposed.clone(),
@@ -234,7 +234,7 @@ async fn dropping_every_fork_does_not_end_a_resident_fiber() {
         .await
         .unwrap();
 
-    drop(fork);
+    drop(fiber_handle);
 
     assert_eq!(ordinary_fiber_count(&runtime), 1);
     assert!(runtime.try_service::<Marker>().is_ok());

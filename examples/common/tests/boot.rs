@@ -90,7 +90,7 @@ fn prepared<P: Plugin<Config = (), Input = (), PrepareError = Infallible>>(
 }
 
 #[tokio::test]
-async fn boot_report_counts_active_pending_and_delivered_failed_forks() {
+async fn boot_report_counts_active_pending_and_delivered_failed_fiber_handles() {
     let ctx = Context::new();
     let up = ctx.spawn(prepared(Up)).await.unwrap();
     let waiting = ctx.spawn(prepared(Waiting)).await.unwrap();
@@ -133,11 +133,11 @@ async fn initial_apply_rejection_never_enters_the_roster() {
 }
 
 #[tokio::test]
-async fn boot_report_summary_is_all_up_when_every_fork_activates() {
+async fn boot_report_summary_is_all_up_when_every_fiber_handle_activates() {
     let ctx = Context::new();
-    let fork = ctx.spawn(prepared(Up)).await.unwrap();
+    let fiber_handle = ctx.spawn(prepared(Up)).await.unwrap();
     assert_eq!(
-        boot_report(&[fork]).await,
+        boot_report(&[fiber_handle]).await,
         BootSummary {
             up: 1,
             pending: 0,
@@ -166,7 +166,7 @@ async fn teardown_disposes_in_reverse_spawn_order_attempt_all() {
     assert!(
         spawned
             .iter()
-            .all(|fork| fork.state() == FiberState::Disposed)
+            .all(|fiber_handle| fiber_handle.state() == FiberState::Disposed)
     );
     assert_eq!(
         ctx.runtime_snapshot()
@@ -181,9 +181,9 @@ async fn teardown_disposes_in_reverse_spawn_order_attempt_all() {
 #[tokio::test]
 async fn teardown_is_idempotent_across_repeat_calls() {
     let ctx = Context::new();
-    let fork = ctx.spawn(prepared(Up)).await.unwrap();
-    teardown(std::slice::from_ref(&fork)).await;
-    teardown(&[fork]).await;
+    let fiber_handle = ctx.spawn(prepared(Up)).await.unwrap();
+    teardown(std::slice::from_ref(&fiber_handle)).await;
+    teardown(&[fiber_handle]).await;
     assert_eq!(
         ctx.runtime_snapshot()
             .fibers()
@@ -204,7 +204,7 @@ async fn roster_push_returns_the_same_handle_it_records() {
     assert_eq!(
         returned.id(),
         id,
-        "push returns the exact delivered Fork handle"
+        "push returns the exact delivered FiberHandle"
     );
     returned.dispose().await.unwrap();
     assert_eq!(roster.report().await, BootSummary::default());

@@ -131,7 +131,7 @@ async fn interval_keeps_construction_phase_and_generation_teardown_cancels_it() 
         events: events_tx,
     };
     plugin.prepare(()).unwrap();
-    let fork = root
+    let fiber_handle = root
         .spawn(PreparedPlugin::from_input(plugin, ()))
         .await
         .unwrap();
@@ -155,7 +155,7 @@ async fn interval_keeps_construction_phase_and_generation_teardown_cancels_it() 
     tokio::time::advance(Duration::from_millis(1)).await;
     assert_eq!(events_rx.recv().await, Some("tick"));
 
-    fork.dispose().await.unwrap();
+    fiber_handle.dispose().await.unwrap();
     assert_eq!(events_rx.recv().await, Some("cancelled"));
     assert!(matches!(
         generation_ctx.sleep(Duration::from_millis(1)),

@@ -1,10 +1,10 @@
 error[E0308]: mismatched types
- --> tests/ui-lifecycle/fail/update_rejects_raw_any.rs:3:71
+ --> tests/ui-lifecycle/fail/update_rejects_raw_any.rs:3:94
   |
-3 | fn raw(fork: &Fork, value: Box<dyn Any + Send>) { let _ = fork.update(value); }
-  |                                                                ------ ^^^^^ expected `PreparedChange`, found `Box<dyn Any + Send>`
-  |                                                                |
-  |                                                                arguments to this method are incorrect
+3 | fn raw(fiber_handle: &FiberHandle, value: Box<dyn Any + Send>) { let _ = fiber_handle.update(value); }
+  |                                                                                       ------ ^^^^^ expected `PreparedChange`, found `Box<dyn Any + Send>`
+  |                                                                                       |
+  |                                                                                       arguments to this method are incorrect
   |
   = note: expected struct `PreparedChange`
              found struct `Box<(dyn Any + Send + 'static)>`

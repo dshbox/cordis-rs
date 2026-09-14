@@ -2,7 +2,7 @@
 
 [English](README.md) | **简体中文**
 
-Cordis v3 是面向长期运行、插件化 Rust 应用的类型化 runtime。它把 Plugin/Fork 生命周期、Service 依赖、类型化 Event、资源清理，以及显式隔离边界放进同一套模型中。
+Cordis v3 是面向长期运行、插件化 Rust 应用的类型化 runtime。它把 Plugin/FiberHandle 生命周期、Service 依赖、类型化 Event、资源清理，以及显式隔离边界放进同一套模型中。
 
 ## 当前状态
 
@@ -41,7 +41,7 @@ v3 使用 Rust 2024 Edition，MSRV 为 **Rust 1.88**。
 
 - `Context`：同一个 Runtime 上的轻量不可变视图。
 - `Plugin`：可复用行为；`prepare()` 在生命周期准入之前完成输入准备。
-- `Fork`：一个已准入非 root Fiber 的生命周期控制 handle。
+- `FiberHandle`：一个已准入非 root Fiber 的生命周期控制 handle。
 - `Service` / `ServiceRealm`：Service 解析到精确 realm slot，不存在隐式 fallback。
 - `Event` / `Scope`：Event routing 与 Service isolation 是相互独立的 Context axes。
 - generation 拥有 cleanup；Runtime/Registry 拥有 Fiber residency。

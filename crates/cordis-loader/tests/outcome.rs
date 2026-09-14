@@ -95,8 +95,8 @@ fn resolver_with_log(
 }
 
 async fn dispose_spawned(outcome: &cordis_loader::LoadOutcome) {
-    for fork in outcome.forks() {
-        fork.dispose().await.unwrap();
+    for fiber_handle in outcome.fiber_handles() {
+        fiber_handle.dispose().await.unwrap();
     }
 }
 
@@ -210,7 +210,7 @@ async fn outcomes_are_complete_depth_first_and_pruning_names_the_disabling_plugi
         "disabled/pruned rows never resolve"
     );
     assert!(outcome.is_ok());
-    assert_eq!(outcome.forks().count(), 2);
+    assert_eq!(outcome.fiber_handles().count(), 2);
 
     dispose_spawned(&outcome).await;
 }
@@ -267,9 +267,9 @@ async fn independent_failures_do_not_prune_descendants_or_stop_later_reachable_e
         "is_ok is false iff at least one Failed row exists"
     );
     assert_eq!(
-        outcome.forks().count(),
+        outcome.fiber_handles().count(),
         2,
-        "successful Forks survive partial failure"
+        "successful FiberHandles survive partial failure"
     );
     assert_eq!(
         &*calls.borrow(),
@@ -363,7 +363,7 @@ async fn inactive_context_reports_each_reachable_plugin_and_leaves_no_runtime_re
         Some(EntryOutcome::Pruned { disabled_ancestor, .. }) if disabled_ancestor == &disabled
     ));
     assert_eq!(&*calls.borrow(), &["first", "second"]);
-    assert_eq!(outcome.forks().count(), 0);
+    assert_eq!(outcome.fiber_handles().count(), 0);
     assert!(!outcome.is_ok());
 
     let after = inactive.runtime_snapshot();
@@ -380,7 +380,7 @@ async fn inactive_context_reports_each_reachable_plugin_and_leaves_no_runtime_re
 }
 
 #[tokio::test]
-async fn duplicate_resolve_keys_remain_distinct_occurrences_by_entry_order_and_fork() {
+async fn duplicate_resolve_keys_remain_distinct_occurrences_by_entry_order_and_fiber_handle() {
     let mut builder = LoadPlanBuilder::new();
     let mut first_entry = plugin("same");
     first_entry.name = Some("first-display-only".into());
@@ -395,35 +395,42 @@ async fn duplicate_resolve_keys_remain_distinct_occurrences_by_entry_order_and_f
     let ctx = Context::new();
     let outcome = plan.load(&ctx, &resolver).await;
 
-    let (first_fork, second_fork) = match (outcome.entry(&first), outcome.entry(&second)) {
-        (
-            Some(EntryOutcome::Spawned {
-                resolve_key: first_key,
-                fork: first_fork,
-                ..
-            }),
-            Some(EntryOutcome::Spawned {
-                resolve_key: second_key,
-                fork: second_fork,
-                ..
-            }),
-        ) => {
-            assert_eq!(first_key, "same");
-            assert_eq!(second_key, "same");
-            (first_fork, second_fork)
-        }
-        _ => panic!("expected two spawned occurrences"),
-    };
+    let (first_fiber_handle, second_fiber_handle) =
+        match (outcome.entry(&first), outcome.entry(&second)) {
+            (
+                Some(EntryOutcome::Spawned {
+                    resolve_key: first_key,
+                    fiber_handle: first_fiber_handle,
+                    ..
+                }),
+                Some(EntryOutcome::Spawned {
+                    resolve_key: second_key,
+                    fiber_handle: second_fiber_handle,
+                    ..
+                }),
+            ) => {
+                assert_eq!(first_key, "same");
+                assert_eq!(second_key, "same");
+                (first_fiber_handle, second_fiber_handle)
+            }
+            _ => panic!("expected two spawned occurrences"),
+        };
     assert_ne!(first, second);
     assert_ne!(
-        first_fork.id(),
-        second_fork.id(),
+        first_fiber_handle.id(),
+        second_fiber_handle.id(),
         "duplicate resolve keys never collapse Fiber occurrences"
     );
     assert_eq!(outcome.entries()[0].id(), &first);
     assert_eq!(outcome.entries()[1].id(), &second);
-    let fork_ids: Vec<_> = outcome.forks().map(|fork| fork.id()).collect();
-    assert_eq!(fork_ids, vec![first_fork.id(), second_fork.id()]);
+    let fiber_handle_ids: Vec<_> = outcome
+        .fiber_handles()
+        .map(|fiber_handle| fiber_handle.id())
+        .collect();
+    assert_eq!(
+        fiber_handle_ids,
+        vec![first_fiber_handle.id(), second_fiber_handle.id()]
+    );
     assert!(outcome.is_ok());
 
     dispose_spawned(&outcome).await;

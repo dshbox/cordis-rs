@@ -1,7 +1,7 @@
 error[E0425]: cannot find type `Result` in crate `cordis_core`
  --> tests/ui-lifecycle/fail/removed_restart_global_error.rs:4:25
   |
-4 |     let _: cordis_core::Result<()> = fork.restart().await;
+4 |     let _: cordis_core::Result<()> = fiber_handle.restart().await;
   |                         ^^^^^^ not found in `cordis_core`
   |
 help: consider importing one of these items
@@ -17,6 +17,6 @@ help: consider importing one of these items
   = and 2 other candidates
 help: if you import `Result`, refer to it directly
   |
-4 -     let _: cordis_core::Result<()> = fork.restart().await;
-4 +     let _: Result<()> = fork.restart().await;
+4 -     let _: cordis_core::Result<()> = fiber_handle.restart().await;
+4 +     let _: Result<()> = fiber_handle.restart().await;
   |

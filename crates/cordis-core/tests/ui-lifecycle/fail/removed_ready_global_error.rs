@@ -1,7 +1,7 @@
-use cordis_core::{FiberState, Fork};
+use cordis_core::{FiberState, FiberHandle};
 
-async fn old_ready_channel(fork: &Fork) {
-    let _: cordis_core::Result<FiberState> = fork.ready().await;
+async fn old_ready_channel(fiber_handle: &FiberHandle) {
+    let _: cordis_core::Result<FiberState> = fiber_handle.ready().await;
 }
 
 fn main() {}

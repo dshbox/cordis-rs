@@ -1,10 +1,10 @@
 error[E0308]: mismatched types
- --> tests/ui-lifecycle/fail/era_swap_rejects_raw_config.rs:4:27
+ --> tests/ui-lifecycle/fail/era_swap_rejects_raw_config.rs:4:35
   |
-4 |     let _ = fork.era_swap(7u8).await;
-  |                  -------- ^^^ expected `PreparedChange`, found `u8`
-  |                  |
-  |                  arguments to this method are incorrect
+4 |     let _ = fiber_handle.era_swap(7u8).await;
+  |                          -------- ^^^ expected `PreparedChange`, found `u8`
+  |                          |
+  |                          arguments to this method are incorrect
   |
 note: method defined here
  --> src/fiber/era.rs

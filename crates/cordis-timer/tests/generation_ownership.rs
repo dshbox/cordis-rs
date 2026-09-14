@@ -124,14 +124,14 @@ where
     PreparedPlugin::from_input(plugin, ())
 }
 
-async fn scoped_context(root: &Context) -> (cordis_core::Fork, Context) {
+async fn scoped_context(root: &Context) -> (cordis_core::FiberHandle, Context) {
     let slot = Arc::new(Mutex::new(None));
-    let fork = root
+    let fiber_handle = root
         .spawn(prepared(CapturePlugin { slot: slot.clone() }))
         .await
         .unwrap();
     let ctx = slot.lock().clone().unwrap();
-    (fork, ctx)
+    (fiber_handle, ctx)
 }
 
 fn assert_timer_refused(ctx: &Context) {
