@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.3.1](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.3.0...cordis-core-v0.3.1) - 2026-09-15
+
+### Other
+
+- *(core)* establish performance regression baseline ([#131](https://github.com/dshbox/cordis-rs/pull/131))
+
 ## [0.3.0](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.2.12...cordis-core-v0.3.0) - 2026-09-15
 
 ### Fixed
