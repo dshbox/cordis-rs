@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.2.9](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.2.8...cordis-core-v0.2.9) - 2026-09-15
+
+### Other
+
+- *(core)* model era handoff ownership ([#117](https://github.com/dshbox/cordis-rs/pull/117))
+
 ## [0.2.8](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.2.7...cordis-core-v0.2.8) - 2026-09-15
 
 ### Other
