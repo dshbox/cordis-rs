@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.2.4](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.2.3...cordis-core-v0.2.4) - 2026-09-15
+
+### Other
+
+- *(core)* model ready linearization ([#107](https://github.com/dshbox/cordis-rs/pull/107))
+
 ## [0.2.3](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.2.2...cordis-core-v0.2.3) - 2026-09-15
 
 ### Fixed
