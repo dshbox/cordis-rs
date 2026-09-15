@@ -2,7 +2,7 @@
 
 Guidance for agents working in this repo.
 
-## Agent skills
+## Agent workflow conventions
 
 ### Issue tracker
 

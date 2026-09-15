@@ -5,3 +5,6 @@
 /.cargo-home/
 /.scratch/
 /.codegraph/
+# Local agent skill packs and lockfiles
+/.agents/
+skills-lock.json
