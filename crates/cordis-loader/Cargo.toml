@@ -11,11 +11,7 @@ repository.workspace = true
 readme = "README.md"
 
 [dependencies]
-cordis-core = { workspace = true }
-# Private result-handoff completion uses core-compatible async driving only;
-# Loader owns no time policy.
-futures = { workspace = true }
-tokio = { workspace = true }
+cordis-core = { workspace = true, features = ["internal-api"] }
 # serde/serde_json stay in the loader and never enter core (ADR 0036).
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -25,4 +21,5 @@ thiserror = { workspace = true }
 workspace = true
 
 [dev-dependencies]
+tokio = { workspace = true }
 trybuild = { workspace = true }

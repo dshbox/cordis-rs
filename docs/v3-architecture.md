@@ -418,8 +418,10 @@ Cancellation before that commit changes no framework state — no state,
 configuration, gate, claim, allocation, publication, or observation.
 Cancellation after it abandons only the caller's wait while
 framework-owned work continues independently of caller polling until it
-reaches the operation's documented barrier. This uniform law and its
-supporting rules are the decision of
+reaches the operation's documented barrier. Executor shutdown cannot silently
+discard normally pending framework-owned completion: the same pinned future
+transfers to the off-runtime completion driver, while a poll unwind is never
+retried. This uniform law and its supporting rules are the decision of
 [ADR 0029](adr/0029-lifecycle-commits-complete-and-critical-sections-are-closed.md).
 
 | Operation | Irreversible commit | Required independent completion |
@@ -435,8 +437,9 @@ The same law governs the two remaining deep operations: a winning exact
 manual cleanup dispose commits at its claim and completes under
 framework ownership despite caller cancellation, and Loader result
 handoff commits as each FiberHandle is obtained — abandoned handoff disposes
-already-obtained FiberHandles in reverse success order, attempt-all, while
-dropping a delivered outcome is inert. Disposal itself coalesces: the
+already-obtained FiberHandles in reverse success order, attempt-all, through the
+same shutdown-resilient completion seam, while dropping a delivered outcome is
+inert. Disposal itself coalesces: the
 first Open-to-Closing claim commits, and all concurrent or later
 disposals share the same completion.
 

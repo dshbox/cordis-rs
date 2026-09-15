@@ -1,6 +1,8 @@
 //! Private ownership bridge from core FiberHandle handoff to caller outcome delivery.
-
-use std::future::Future;
+//!
+//! Abandoned pre-delivery successes roll back through core's framework-owned
+//! completion seam, so executor shutdown cannot silently discard the reverse-order
+//! disposal obligation.
 
 use crate::outcome::{EntryOutcome, LoadOutcome};
 
@@ -50,7 +52,7 @@ impl Drop for ResultHandoff {
 }
 
 fn rollback(entries: Vec<EntryOutcome>) {
-    detach_completion(async move {
+    cordis_core::__internal::detach_completion(async move {
         for entry in entries.into_iter().rev() {
             let EntryOutcome::Spawned { fiber_handle, .. } = entry else {
                 continue;
@@ -58,25 +60,4 @@ fn rollback(entries: Vec<EntryOutcome>) {
             let _ = fiber_handle.dispose().await;
         }
     });
-}
-
-fn detach_completion(work: impl Future<Output = ()> + Send + 'static) {
-    if let Ok(handle) = tokio::runtime::Handle::try_current() {
-        let _join = handle.spawn(work);
-        return;
-    }
-    drive_off_runtime(work);
-}
-
-fn drive_off_runtime(work: impl Future<Output = ()> + Send + 'static) {
-    let driver = move || {
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build();
-        match runtime {
-            Ok(runtime) => runtime.block_on(work),
-            Err(_) => futures::executor::block_on(work),
-        }
-    };
-    let _thread = std::thread::spawn(driver);
 }

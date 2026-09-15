@@ -127,6 +127,48 @@ async fn detach_commits_removal_and_caller_cancellation_cannot_stop_the_frozen_d
     assert_eq!(fresh.state(), FiberState::Disposed);
 }
 
+#[test]
+fn committed_removal_survives_runtime_shutdown() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    let ctx = Context::new();
+    let started = Arc::new(tokio::sync::Notify::new());
+    let release = Arc::new(tokio::sync::Notify::new());
+    let finished = Arc::new(AtomicBool::new(false));
+
+    runtime.block_on(async {
+        ctx.spawn(prepared(BlockingCleanup {
+            started: started.clone(),
+            release: release.clone(),
+            finished: finished.clone(),
+        }))
+        .await
+        .unwrap();
+    });
+
+    let handle = runtime.handle().clone();
+    let remover_ctx = ctx.clone();
+    let remover = std::thread::spawn(move || {
+        handle.block_on(remover_ctx.remove_plugins::<BlockingCleanup>())
+    });
+
+    runtime.block_on(started.notified());
+    runtime.shutdown_background();
+    release.notify_one();
+
+    remover
+        .join()
+        .expect("runtime shutdown must not panic a committed removal")
+        .unwrap();
+    assert!(
+        finished.load(Ordering::SeqCst),
+        "framework-owned cleanup must finish after executor shutdown"
+    );
+}
+
 #[derive(Clone, Copy)]
 enum CleanupMode {
     Panics,

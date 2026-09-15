@@ -440,33 +440,132 @@ impl Context {
 /// driven by one dedicated std thread running its own current-thread
 /// Tokio runtime, so cleanups that legitimately touch Tokio (`spawn`,
 /// channel joins) run as written instead of panicking inside a
-/// runtime-less `block_on` (the postcommit-completion law, ADR 0029).
+/// runtime-less `block_on` (the postcommit-completion law, ADR 0029). Work
+/// first spawned on the caller's runtime remains pinned inside `DetachedWork`;
+/// if that executor drops a normally-pending task during shutdown, ownership
+/// transfers to the same off-runtime driver instead of dropping the work.
+/// A poll unwind is not a transfer signal and is never retried.
 /// Building that runtime can only fail on OS resource exhaustion; the
 /// last-resort fallback drives without one. Same thread posture as
 /// deadline.rs's watchdogs (bare spawn, panic on OS failure); each
 /// thread exits when its work completes.
+struct DetachedWork<F>
+where
+    F: Future<Output = ()> + Send + 'static,
+{
+    work: Option<Pin<Box<F>>>,
+    transfer_on_drop: bool,
+}
+
+impl<F> Future for DetachedWork<F>
+where
+    F: Future<Output = ()> + Send + 'static,
+{
+    type Output = ();
+
+    fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<()> {
+        let this = self.get_mut();
+        // Unwind means the framework task itself failed; only a normal Pending
+        // return authorizes executor-shutdown transfer of this exact future.
+        this.transfer_on_drop = false;
+        let work = this
+            .work
+            .as_mut()
+            .expect("live detached work owns its future");
+        match work.as_mut().poll(cx) {
+            std::task::Poll::Pending => {
+                this.transfer_on_drop = true;
+                std::task::Poll::Pending
+            }
+            std::task::Poll::Ready(()) => {
+                this.work.take();
+                std::task::Poll::Ready(())
+            }
+        }
+    }
+}
+
+impl<F> Drop for DetachedWork<F>
+where
+    F: Future<Output = ()> + Send + 'static,
+{
+    fn drop(&mut self) {
+        if self.transfer_on_drop
+            && let Some(work) = self.work.take()
+        {
+            drive_off_runtime(work);
+        }
+    }
+}
+
+fn drive_off_runtime<F>(work: Pin<Box<F>>)
+where
+    F: Future<Output = ()> + Send + 'static,
+{
+    std::thread::spawn(move || {
+        match tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        {
+            Ok(runtime) => runtime.block_on(work),
+            Err(_) => futures::executor::block_on(work),
+        }
+    });
+}
+
 pub(crate) fn detach(work: impl Future<Output = ()> + Send + 'static) {
     match tokio::runtime::Handle::try_current() {
         Ok(handle) => {
-            let _join = handle.spawn(work);
-        }
-        Err(_) => {
-            std::thread::spawn(move || {
-                match tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                {
-                    Ok(runtime) => runtime.block_on(work),
-                    Err(_) => futures::executor::block_on(work),
-                }
+            let _join = handle.spawn(DetachedWork {
+                work: Some(Box::pin(work)),
+                transfer_on_drop: true,
             });
         }
+        Err(_) => drive_off_runtime(Box::pin(work)),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{DisposableList, EffectFailureKind, sync_cleanup};
+    use super::{DetachedWork, DisposableList, EffectFailureKind, sync_cleanup};
+    use std::future::Future;
+    use std::pin::Pin;
+
+    struct PollPanic(std::sync::mpsc::Sender<()>);
+
+    impl Future for PollPanic {
+        type Output = ();
+
+        fn poll(self: Pin<&mut Self>, _cx: &mut std::task::Context<'_>) -> std::task::Poll<()> {
+            self.0.send(()).unwrap();
+            panic!("detached poll probe");
+        }
+    }
+
+    #[test]
+    fn detached_poll_panic_is_not_retried_by_fallback() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut detached = Box::pin(DetachedWork {
+            work: Some(Box::pin(PollPanic(tx))),
+            transfer_on_drop: true,
+        });
+        let waker = std::task::Waker::noop();
+        let mut cx = std::task::Context::from_waker(waker);
+
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            detached.as_mut().poll(&mut cx)
+        }));
+        assert!(outcome.is_err());
+        rx.recv_timeout(std::time::Duration::from_secs(1))
+            .expect("probe reached its first poll");
+
+        drop(detached);
+        assert!(
+            rx.recv_timeout(std::time::Duration::from_millis(100))
+                .is_err(),
+            "poll panic must not transfer the same future to fallback"
+        );
+    }
 
     // The claim seam the drain and manual control compete on: `remove`
     // hands the cleanup out instead of dropping it in place — the

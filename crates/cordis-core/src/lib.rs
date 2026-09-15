@@ -58,6 +58,12 @@ pub mod __internal {
     pub fn generation_cleanup_admitted(ctx: &Context) -> bool {
         ctx.fiber().assert_can_register().is_ok()
     }
+
+    /// Transfer framework-owned completion work onto the current executor while
+    /// retaining an off-runtime fallback if that executor shuts down first.
+    pub fn detach_completion(work: impl std::future::Future<Output = ()> + Send + 'static) {
+        crate::effect::detach(work);
+    }
 }
 
 /// Fiber identity, lifecycle control, and creation outcomes.

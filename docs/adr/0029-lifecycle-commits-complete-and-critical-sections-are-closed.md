@@ -7,7 +7,11 @@ Cancellation before that commit has no framework effect: no state,
 configuration, gate, claim, allocation, publication, or observation
 changes. Cancellation after that commit abandons only the caller's wait;
 framework-owned work continues independently of caller polling until it
-reaches the operation's documented barrier. This uniform law covers
+reaches the operation's documented barrier. Executor shutdown after a
+framework-owned future has begun cannot silently discard that committed work:
+a normally pending detached future transfers its same pinned state to the
+off-runtime completion driver. A future that unwinds while being polled is a
+failure, not a transfer signal, and is never retried. This uniform law covers
 disposal, Registry removal, restart, update, era swap, new-Fiber
 creation, exact manual cleanup disposal, and Loader result handoff.
 
@@ -67,8 +71,9 @@ manual cleanup dispose commits at its claim and completes under
 framework ownership despite caller cancellation. Loader result handoff
 commits as each FiberHandle is obtained; if load or result construction is
 abandoned before delivery, the already-obtained FiberHandles are disposed in
-reverse success order, attempt-all, under framework-owned completion,
-while dropping a delivered outcome is inert.
+reverse success order, attempt-all, under framework-owned completion. Loader
+uses the same core completion seam, so abandoning a load during executor
+shutdown does not drop that rollback. Dropping a delivered outcome is inert.
 
 ## Consequences of the rule
 
