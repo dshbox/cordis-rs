@@ -64,9 +64,11 @@ const INERTIA_RELEASING: u64 = 2;
 ///   semantic target. Each target combines committed effective input with every
 ///   Fiber-owned exact slot assigned to Missing or one exact publication occurrence.
 /// - `done: Notify` — the wakeup channel. **Every** store of `IDLE` owes a
-///   `notify_waiters`: waiters register interest *before* re-checking the
-///   slot (`Notified::enable`), the lost-wakeup protection both waiting
-///   sides rely on.
+///   `notify_waiters`. Consumers create `Notified` before re-checking the slot;
+///   with the current Tokio broadcast contract, a release between that creation
+///   and the first poll is still observed. They also call `Notified::enable` to register
+///   eagerly; that is stronger than current `notify_waiters` requires and keeps
+///   the choreography safe if a future signal path uses single-waiter permits.
 ///
 /// # Who may write the target cell, and when
 ///
@@ -197,11 +199,10 @@ impl InertiaSlot {
     }
 
     /// Wait until the slot is free, then claim it (IDLE → ACTIVE, CAS so
-    /// two claimers can never both win). Wakeup interest is registered
-    /// BEFORE re-checking the slot (`Notified::enable`) so a release
-    /// racing the check can never be missed — the consumer-side half of
-    /// the lost-wakeup protection (the producer side is the release path
-    /// through [`Self::exit_recheck`]).
+    /// two claimers can never both win). Create `Notified` before re-checking
+    /// the slot: with the current `notify_waiters` contract, a release between
+    /// future creation and first poll is still observed. `enable()` additionally registers the
+    /// waiter eagerly and is intentionally retained as stronger choreography.
     pub(crate) async fn claim(&self) {
         loop {
             let notified = self.done.notified();
@@ -237,11 +238,12 @@ impl InertiaSlot {
         self.recheck_committed.load(Ordering::SeqCst)
     }
 
-    /// Wait for quiescence: the observe side behind
-    /// [`FiberHandle::ready`](crate::FiberHandle::ready). Enable-before-check, same
-    /// lost-wakeup discipline as [`Self::claim`]; returns only once the
-    /// slot reads arbitration IDLE. This says only that no pass owns the
-    /// convergence slot; callers that require semantic quiescence must also
+    /// Wait for arbitration idle: the observe side behind
+    /// [`FiberHandle::ready`](crate::FiberHandle::ready). Like [`Self::claim`],
+    /// it creates `Notified` before checking the slot, which is the current
+    /// `notify_waiters` observation boundary; `enable()` then eagerly registers
+    /// the waiter as stronger choreography. Returning says only that no pass
+    /// owns the convergence slot; callers needing semantic quiescence must also
     /// check that no durable recheck obligation remains.
     pub(crate) async fn wait_idle(&self) {
         loop {
@@ -1078,6 +1080,100 @@ mod tests {
         );
         assert!(fiber.slot.has_committed_recheck());
         fiber.slot.abandon();
+    }
+
+    #[test]
+    fn notify_waiters_between_future_creation_and_first_poll_is_observed() {
+        let notify = tokio::sync::Notify::new();
+        let notified = notify.notified();
+        tokio::pin!(notified);
+
+        // `notify_waiters` happens after `Notified` captured the broadcast
+        // generation but before enable/poll. Tokio must still complete it.
+        notify.notify_waiters();
+
+        assert!(
+            notified.as_mut().enable(),
+            "broadcast generation survives until the first poll"
+        );
+    }
+
+    #[test]
+    fn notify_waiters_before_future_creation_leaves_no_later_permit() {
+        let notify = tokio::sync::Notify::new();
+        notify.notify_waiters();
+
+        let notified = notify.notified();
+        tokio::pin!(notified);
+
+        assert!(
+            !notified.as_mut().enable(),
+            "notify_waiters is a broadcast generation, not a stored later permit"
+        );
+    }
+
+    #[test]
+    fn one_notify_waiters_broadcast_reaches_all_precreated_futures() {
+        let notify = tokio::sync::Notify::new();
+        let first = notify.notified();
+        let second = notify.notified();
+        tokio::pin!(first);
+        tokio::pin!(second);
+
+        notify.notify_waiters();
+
+        assert!(
+            first.as_mut().enable(),
+            "one broadcast reaches the first pre-created Notified future"
+        );
+        assert!(
+            second.as_mut().enable(),
+            "one broadcast reaches the second pre-created Notified future"
+        );
+    }
+
+    #[test]
+    fn cancelling_one_precreated_waiter_does_not_consume_broadcast_for_another() {
+        let notify = tokio::sync::Notify::new();
+        let cancelled = Box::pin(notify.notified());
+        let survivor = notify.notified();
+        tokio::pin!(survivor);
+
+        drop(cancelled);
+        notify.notify_waiters();
+
+        assert!(
+            survivor.as_mut().enable(),
+            "cancelled waiter cannot consume another waiter's broadcast"
+        );
+    }
+
+    #[test]
+    fn enable_registers_multiple_waiters_for_single_permit_selection() {
+        let notify = tokio::sync::Notify::new();
+        let first = notify.notified();
+        let second = notify.notified();
+        tokio::pin!(first);
+        tokio::pin!(second);
+
+        assert!(!first.as_mut().enable());
+        assert!(!second.as_mut().enable());
+
+        notify.notify_one();
+        let ready_after_one =
+            usize::from(first.as_mut().enable()) + usize::from(second.as_mut().enable());
+        assert_eq!(
+            ready_after_one, 1,
+            "one notify_one permit selects exactly one enabled waiter"
+        );
+
+        notify.notify_one();
+        let ready_after_two =
+            usize::from(first.as_mut().enable()) + usize::from(second.as_mut().enable());
+        assert_eq!(
+            ready_after_two, 2,
+            "a second permit releases the other enabled waiter"
+        );
     }
 
     #[tokio::test]

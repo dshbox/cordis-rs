@@ -347,11 +347,43 @@ After Phase 1 arbitration/revision work is credible, model the waiting layer:
 - waiter cancellation,
 - exact semantics of `notify_waiters()` versus any future use of `notify_one()`.
 
-Do not assume deleting `Notified::enable()` must fail unless the actual Cordis
-protocol depends on a behavior for which `enable()` is authoritative.
+### Phase 2 signal-contract findings
 
-Real Tokio tests should use controlled barriers/manual polling where possible;
-timeouts are guards against hung tests, not the primary correctness proof.
+Cordis currently produces only `notify_waiters()` on the inertia wake channel.
+With the currently locked Tokio 1.53.1, the observable `notify_waiters`
+contract makes future creation the broadcast observation boundary. Therefore the
+current lost-wakeup boundary is **create `Notified` before re-checking the slot**:
+a broadcast that lands after creation but before `enable()` or first poll is
+still observed.
+`Notified::enable()` is not required for that broadcast guarantee.
+
+Real Tokio contract tests pin five distinct facts:
+
+- a `notify_waiters()` between future creation and first poll completes that
+  future;
+- a `notify_waiters()` before future creation leaves no stored permit for that
+  later future, pinning creation as the broadcast observation boundary;
+- one `notify_waiters()` reaches every pre-created `Notified` future;
+- cancelling one pre-created waiter does not consume another waiter's broadcast;
+- when two futures are explicitly `enable()`d, one `notify_one()` permit selects
+  exactly one waiter and a second permit releases the other.
+
+The last test explains why retaining `enable()` is still useful stronger
+choreography even though current Cordis producers broadcast: it eagerly enters
+the single-permit waiter queue and keeps the consumer pattern safe if a future
+producer deliberately changes to `notify_one()`. Do not describe `enable()` as
+the current `notify_waiters()` lost-wakeup authority.
+
+Loom's `sync::Notify` is not an adequate substitute for this contract: it is a
+single-waiter park/unpark primitive and does not model Tokio `Notified` future
+creation-time broadcast observation, `enable()`, or multi-waiter selection.
+Phase 2 therefore treats these real Tokio tests as the authority for notification
+semantics. A reduced Loom model may still cover Cordis's abstract state/recheck
+ordering around a wake, but must not claim to verify Tokio `Notify` internals.
+
+Remaining Phase 2 work is wake-then-recheck across a new semantic mutation and
+the full `claim()` / `ready()` retry loop under waiter cancellation. Timeouts in
+real Tokio tests remain hang guards, not the primary correctness proof.
 
 ## Phase 3 — Era replacement model
 
@@ -528,3 +560,10 @@ Those can proceed separately after the concurrency evidence has a credible core.
   1.88, latest stable, Linux, macOS, and Windows. With that external execution
   evidence recorded, every Phase-1 completion item is now satisfied; Notify
   waiting remains explicitly Phase 2 and Era replacement remains Phase 3.
+- Phase 2 starts by pinning Tokio notification semantics rather than assuming
+  `enable()` is the broadcast lost-wakeup boundary. Real Tokio tests prove that
+  `notify_waiters()` is observed by every `Notified` future created before the
+  broadcast, even before first poll; cancelled waiters do not consume another
+  waiter's broadcast. A separate `notify_one()` test proves `enable()`'s actual
+  single-permit queue role. Production keeps `enable()` as stronger choreography
+  while comments now name future creation as the current broadcast boundary.
