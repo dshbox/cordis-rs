@@ -15,6 +15,8 @@ use cordis_timer::{TimerCancelled, TimerExt};
 use futures::StreamExt;
 use parking_lot::Mutex;
 use std::convert::Infallible;
+use std::panic::AssertUnwindSafe;
+use std::task::{Context as TaskContext, Waker};
 
 /// Plugin that hands its apply-time context to the test — the shapes
 /// bind to a fiber, so the tests need a context that *has* one.
@@ -136,6 +138,24 @@ async fn sleep_cancellation_wins_ready_but_uncommitted_expiry() {
     fiber_handle.dispose().await.unwrap();
 
     assert!(matches!(sleep.await, Err(TimerCancelled)));
+}
+
+/// Sleep is a one-shot Future: once its terminal result has been delivered,
+/// polling it again is a caller error and follows the documented panic contract.
+#[tokio::test(start_paused = true)]
+async fn completed_sleep_repoll_panics() {
+    let root = Context::new();
+    let (_fiber_handle, ctx) = scoped_ctx(&root).await;
+    let mut sleep = Box::pin(ctx.sleep(Duration::ZERO).unwrap());
+
+    assert!(sleep.as_mut().await.is_ok());
+
+    let waker = Waker::noop();
+    let mut task_cx = TaskContext::from_waker(waker);
+    let repoll = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        std::future::Future::poll(sleep.as_mut(), &mut task_cx)
+    }));
+    assert!(repoll.is_err(), "completed Sleep must reject a second poll");
 }
 
 /// Natural completion disarms its exact cleanup occurrence. Later generation

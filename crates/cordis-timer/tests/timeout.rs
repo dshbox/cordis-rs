@@ -3,10 +3,11 @@
 use std::cell::Cell;
 use std::convert::Infallible;
 use std::future::{Future, pending, ready};
+use std::panic::AssertUnwindSafe;
 use std::pin::Pin;
 use std::rc::Rc;
 use std::sync::Arc;
-use std::task::{Context as TaskContext, Poll};
+use std::task::{Context as TaskContext, Poll, Waker};
 use std::time::Duration;
 
 use cordis_core::{Context, Plugin, PreparedPlugin};
@@ -92,6 +93,32 @@ async fn work_ready_before_deadline_returns_completed_output() {
         .unwrap()
         .await;
     assert!(matches!(result, Ok(TimeoutOutcome::Completed("value"))));
+}
+
+/// Timeout is also one-shot; retaining it after completion does not make a
+/// second poll valid, even when the work output would happen to be Copy.
+#[tokio::test(start_paused = true)]
+async fn completed_timeout_repoll_panics() {
+    let ctx = Context::new();
+    let mut timeout = Box::pin(
+        ctx.timeout(Duration::from_secs(10), ready("value"))
+            .unwrap(),
+    );
+
+    assert!(matches!(
+        timeout.as_mut().await,
+        Ok(TimeoutOutcome::Completed("value"))
+    ));
+
+    let waker = Waker::noop();
+    let mut task_cx = TaskContext::from_waker(waker);
+    let repoll = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        Future::poll(timeout.as_mut(), &mut task_cx)
+    }));
+    assert!(
+        repoll.is_err(),
+        "completed Timeout must reject a second poll"
+    );
 }
 
 #[tokio::test(start_paused = true)]

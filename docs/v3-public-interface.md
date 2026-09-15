@@ -870,7 +870,10 @@ cleanup obligation.
 Sleep and Timeout deadlines are monotonic and pinned at successful
 construction. Work stays lazy and is owned only by `Timeout<F>`;
 generation cleanup owns only timer cancellation and imposes no universal
-`Send` or `'static` bound on `F` or its output.
+`Send` or `'static` bound on `F` or its output. Each one-shot has exactly one
+terminal result; polling `Sleep` or `Timeout<F>` again after that result is a
+caller error and panics. `Interval` differs deliberately as a stream: after its
+terminal cancellation item, every later poll returns `None`.
 
 ```rust
 impl Future for Sleep {
