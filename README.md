@@ -19,7 +19,7 @@ For applications, keep the historical package and import identity:
 
 ```toml
 [dependencies]
-cordis-rs = "0.7"
+cordis-rs = "0.8"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 ```
 
@@ -32,22 +32,23 @@ Framework and plugin authors may depend on that contract directly:
 
 ```toml
 [dependencies]
-cordis-core = "0.1"
+cordis-core = "0.2"
 ```
 
 Optional capabilities stay explicit semantic dependencies:
 
 ```toml
-cordis-timer = "0.1"
-cordis-loader = "0.1"
+cordis-timer = "0.2"
+cordis-loader = "0.2"
 ```
 
 Cordis v3 requires Rust **1.88** or newer and uses Rust 2024 Edition.
 
 ## Migrating from 0.6.x
 
-`cordis-rs 0.7` is the first release line backed by the v3 runtime architecture.
-The `0.6.x` implementation remains on the `legacy/0.6` maintenance branch for
+`cordis-rs 0.8.x` is the current application-facing v3 release line. The v3
+architecture first shipped on the `0.7.x` line. The `0.6.x` implementation remains
+on the `legacy/0.6` maintenance branch for
 critical bug and security fixes. The v3 transition is intentionally breaking;
 see [`MIGRATION.md`](https://github.com/dshbox/cordis-rs/blob/main/MIGRATION.md) and [`docs/v3-migration.md`](https://github.com/dshbox/cordis-rs/blob/main/docs/v3-migration.md).
 
@@ -350,8 +351,9 @@ independent instead of letting one hidden tree control all three.
 
 ## Project status
 
-The v3 semantic crates begin at `0.1.0`; the historical application package moves
-to `cordis-rs 0.7.0`. The workspace uses Rust 2024 Edition with MSRV 1.88.
+The v3 semantic crates began at `0.1.0` and now publish on the `0.2.x` line; the
+historical application package entered v3 at `cordis-rs 0.7.0` and now publishes
+on `0.8.x`. The workspace uses Rust 2024 Edition with MSRV 1.88.
 As a pre-1.0 project, the public API may still evolve.
 
 Cordis is a Rust port and redesign in the lineage of

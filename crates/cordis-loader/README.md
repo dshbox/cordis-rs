@@ -22,8 +22,9 @@ LoadPlanBuilder ──validate/freeze──> LoadPlan
                                   LoadOutcome
 ```
 
-This `0.1.x` line is a replacement architecture. It is **not** a
-source-compatible continuation of the legacy `cordis-loader 0.0.x` API.
+The v3 line is a replacement architecture. It began at `0.1.x` and currently
+publishes on `0.2.x`; it is **not** a source-compatible continuation of the
+legacy `cordis-loader 0.0.x` API.
 
 ## Installation
 
@@ -31,13 +32,13 @@ For an application using the `cordis` facade:
 
 ```toml
 [dependencies]
-cordis-rs = "0.7"
-cordis-loader = "0.1"
+cordis-rs = "0.8"
+cordis-loader = "0.2"
 serde_json = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 
-Framework integrations may depend on `cordis-core = "0.1"` directly instead of
+Framework integrations may depend on `cordis-core = "0.2"` directly instead of
 `cordis-rs`.
 
 ## Minimal complete load
@@ -176,8 +177,8 @@ adapt source into typed prepared targets in a resolver, then consume the complet
 
 ## Compatibility and MSRV
 
-`cordis-loader` v3 starts at `0.1.x`, depends on `cordis-core 0.1.x`, requires
-**Rust 1.88 or newer**, and uses Rust edition 2024.
+`cordis-loader` v3 began at `0.1.x`; the current `0.2.x` line depends on
+`cordis-core 0.2.x`, requires **Rust 1.88 or newer**, and uses Rust edition 2024.
 
 ## Documentation
 

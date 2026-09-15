@@ -14,7 +14,7 @@ Cordis v3 现已成为默认 `main` 主线。现有 `0.6.x` 实现保留在 `leg
 
 ```toml
 [dependencies]
-cordis-rs = "0.7"
+cordis-rs = "0.8"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 ```
 
@@ -25,14 +25,14 @@ use cordis::Context;
 `cordis-rs` 在 v3 中是很薄的 facade，真正的 runtime contract 位于：
 
 ```toml
-cordis-core = "0.1"
+cordis-core = "0.2"
 ```
 
 框架和第三方 Plugin 作者可以直接依赖 `cordis-core`。时间与声明式加载能力保持独立：
 
 ```toml
-cordis-timer = "0.1"
-cordis-loader = "0.1"
+cordis-timer = "0.2"
+cordis-loader = "0.2"
 ```
 
 v3 使用 Rust 2024 Edition，MSRV 为 **Rust 1.88**。
@@ -51,7 +51,7 @@ v3 使用 Rust 2024 Edition，MSRV 为 **Rust 1.88**。
 
 ## 从 0.6.x 迁移
 
-`cordis-rs 0.7` 是第一条使用 v3 runtime architecture 的发布线。这不是 `0.6.x` 的 source-compatible 升级。迁移入口：
+`cordis-rs 0.8.x` 是当前 application-facing v3 发布线；v3 runtime architecture 最初在 `0.7.x` 发布。这不是 `0.6.x` 的 source-compatible 升级。迁移入口：
 
 - [`MIGRATION.md`](MIGRATION.md)：面向现有用户的迁移说明。
 - [`docs/v3-migration.md`](docs/v3-migration.md)：更详细的架构迁移 inventory。
