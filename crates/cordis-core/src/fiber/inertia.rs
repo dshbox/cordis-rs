@@ -738,9 +738,12 @@ mod tests {
     use crate::context::Context;
     use crate::context::RealmKey;
     use crate::deadline::bounded;
-    use crate::fiber::{Fiber, FiberState};
+    use crate::fiber::{Fiber, FiberHandle, FiberState};
     use crate::logger::{BufferExporter, Level};
+    use crate::service::Service;
+    use std::future::Future;
     use std::sync::Arc;
+    use std::task::{Context as TaskContext, Poll, Waker};
 
     /// The direct test tier for the settle protocol — each invariant below
     /// corresponds to a class of race fix the protocol already survived
@@ -790,6 +793,12 @@ mod tests {
     #[derive(Debug, thiserror::Error)]
     #[error("test apply failure")]
     struct TestApplyError;
+
+    struct RetryWakeService;
+
+    impl crate::Service for RetryWakeService {
+        const NAME: &'static str = "phase2-retry-wake-service";
+    }
 
     struct CountApplies {
         applies: Arc<std::sync::atomic::AtomicUsize>,
@@ -1079,6 +1088,107 @@ mod tests {
             super::INERTIA_ACTIVE
         );
         assert!(fiber.slot.has_committed_recheck());
+        fiber.slot.abandon();
+    }
+
+    #[tokio::test]
+    async fn ready_rechecks_after_an_old_wake_before_returning() {
+        let ctx = Context::new();
+        let fiber = fiber_requiring(&ctx, &[RetryWakeService::NAME]);
+        let outcome = fiber.slot.initial_spawn_pass(&fiber, &ctx.root).await;
+        assert!(matches!(outcome, super::InitialOutcome::Pending));
+        assert_eq!(fiber.state(), FiberState::Pending);
+
+        // Hold arbitration so the first ready poll must register and wait.
+        fiber.slot.claim().await;
+        let handle = FiberHandle::new(fiber.clone());
+        let mut ready = Box::pin(handle.ready());
+        let mut task_cx = TaskContext::from_waker(Waker::noop());
+        assert!(matches!(ready.as_mut().poll(&mut task_cx), Poll::Pending));
+
+        // This is the old wake. Before ready may observe it again, publish a
+        // different SemanticTarget off-runtime. The Service commit is durable,
+        // but its best-effort kick cannot run on this OS thread.
+        fiber.slot.abandon();
+        let publication = std::thread::spawn({
+            let root = ctx.clone();
+            move || root.provide(Arc::new(RetryWakeService)).unwrap()
+        })
+        .join()
+        .unwrap();
+        assert!(fiber.slot.is_idle());
+        assert!(fiber.slot.has_committed_recheck());
+        assert_eq!(fiber.state(), FiberState::Pending);
+
+        // A stale-wake implementation would return the old Pending state here.
+        // The real loop must notice the durable obligation, drive the new target,
+        // and wait again for that convergence pass.
+        assert!(matches!(ready.as_mut().poll(&mut task_cx), Poll::Pending));
+
+        // The kick above transferred progress to framework-owned convergence.
+        // Cancelling this caller must not cancel that committed work.
+        drop(ready);
+        assert_eq!(
+            bounded(2000, handle.ready())
+                .await
+                .expect("replacement ready observes framework-owned convergence")
+                .unwrap(),
+            FiberState::Active
+        );
+        assert!(!fiber.slot.has_committed_recheck());
+        drop(publication);
+    }
+
+    #[tokio::test]
+    async fn cancelling_one_ready_waiter_does_not_block_another() {
+        let ctx = Context::new();
+        let fiber = fiber_requiring(&ctx, &[]);
+        let outcome = fiber.slot.initial_spawn_pass(&fiber, &ctx.root).await;
+        assert!(matches!(outcome, super::InitialOutcome::Active));
+
+        fiber.slot.claim().await;
+        let first_handle = FiberHandle::new(fiber.clone());
+        let second_handle = FiberHandle::new(fiber.clone());
+        let mut first = Box::pin(first_handle.ready());
+        let second = second_handle.ready();
+        tokio::pin!(second);
+        let mut task_cx = TaskContext::from_waker(Waker::noop());
+        assert!(matches!(first.as_mut().poll(&mut task_cx), Poll::Pending));
+        assert!(matches!(second.as_mut().poll(&mut task_cx), Poll::Pending));
+
+        drop(first);
+        fiber.slot.abandon();
+
+        assert!(matches!(
+            second.as_mut().poll(&mut task_cx),
+            Poll::Ready(Ok(FiberState::Active))
+        ));
+    }
+
+    #[tokio::test]
+    async fn cancelling_one_claim_waiter_does_not_consume_release_for_another() {
+        let ctx = Context::new();
+        let fiber = fiber_requiring(&ctx, &[]);
+        fiber.slot.claim().await;
+
+        let mut first = Box::pin(fiber.slot.claim());
+        let second = fiber.slot.claim();
+        tokio::pin!(second);
+        let mut task_cx = TaskContext::from_waker(Waker::noop());
+        assert!(matches!(first.as_mut().poll(&mut task_cx), Poll::Pending));
+        assert!(matches!(second.as_mut().poll(&mut task_cx), Poll::Pending));
+
+        drop(first);
+        fiber.slot.abandon();
+
+        assert!(matches!(
+            second.as_mut().poll(&mut task_cx),
+            Poll::Ready(())
+        ));
+        assert!(
+            !fiber.slot.is_idle(),
+            "surviving claimant owns the released slot"
+        );
         fiber.slot.abandon();
     }
 

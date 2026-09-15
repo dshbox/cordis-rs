@@ -381,9 +381,47 @@ Phase 2 therefore treats these real Tokio tests as the authority for notificatio
 semantics. A reduced Loom model may still cover Cordis's abstract state/recheck
 ordering around a wake, but must not claim to verify Tokio `Notify` internals.
 
-Remaining Phase 2 work is wake-then-recheck across a new semantic mutation and
-the full `claim()` / `ready()` retry loop under waiter cancellation. Timeouts in
-real Tokio tests remain hang guards, not the primary correctness proof.
+### Phase 2 retry/cancellation findings
+
+Deterministic manual-poll tests now cover Cordis's retry layer above Tokio's
+signal contract:
+
+- a `ready()` waiter first blocks on a busy slot, receives an older IDLE wake,
+  then sees an off-runtime Service mutation commit before its next poll; that
+  stale wake is not accepted as quiescence, the durable recheck is driven, and
+  the future waits again for convergence to the new target;
+- cancelling that `ready()` caller after it has kicked convergence does not
+  cancel framework-owned progress; a replacement `ready()` observes the final
+  `Active` state with no outstanding recheck;
+- when two `ready()` waiters are registered, cancelling one does not prevent the
+  surviving waiter from observing the release;
+- when two `claim()` waiters are registered, cancelling one does not consume the
+  release; the surviving waiter alone claims the slot.
+
+These tests deliberately use manual `Future::poll` boundaries instead of timing
+to place cancellation and semantic mutation between exact protocol steps.
+Timeouts are used only after framework-owned async convergence has been kicked,
+as a hang guard for eventual task completion.
+
+### Phase 2 completion criteria
+
+Phase 2 is complete when all of the following are true:
+
+- [x] `notify_waiters()` creation/poll ordering is pinned by real Tokio contract
+      tests.
+- [x] Multiple pre-created waiters observe one broadcast.
+- [x] `notify_waiters()` and `notify_one()` semantics are explicitly
+      distinguished, including `enable()`'s single-permit queue role.
+- [x] A wake followed by a newer semantic mutation forces `ready()` to recheck
+      and retry rather than accept the old wake as quiescence evidence.
+- [x] Cancelling one `ready()` waiter does not block another waiter.
+- [x] Cancelling one `claim()` waiter does not consume another claimant's
+      release opportunity.
+- [x] Cancelling a `ready()` caller after it drives convergence does not cancel
+      framework-owned progress.
+- [x] Tokio `Notify` internals are not falsely claimed as Loom-verified.
+- [ ] The final Phase-2 contract set passes the repository's required PR CI
+      matrix on the merge candidate.
 
 ## Phase 3 — Era replacement model
 
@@ -567,3 +605,11 @@ Those can proceed separately after the concurrency evidence has a credible core.
   waiter's broadcast. A separate `notify_one()` test proves `enable()`'s actual
   single-permit queue role. Production keeps `enable()` as stronger choreography
   while comments now name future creation as the current broadcast boundary.
+
+- Phase 2 retry/cancellation evidence manually polls `ready()` and `claim()` at
+  exact waiter boundaries. An old IDLE wake followed by an off-runtime Service
+  commit cannot return stale `Pending`; `ready()` drives the durable obligation,
+  waits again, and framework-owned convergence survives caller cancellation.
+  Separate two-waiter tests show cancellation of one `ready()` or `claim()`
+  waiter cannot consume the survivor's release progress. The only remaining
+  Phase-2 completion item is required PR CI on the merge candidate.
