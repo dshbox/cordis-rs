@@ -677,3 +677,228 @@ fn ready_that_treats_idle_as_quiescent_is_detected() {
         ready.join().unwrap();
     });
 }
+
+/// Phase-1 scenario 1: two independent kicks compete from arbitration IDLE.
+/// Neither actor releases the claimed slot inside this reduced scenario, so
+/// exactly one IDLE -> ACTIVE CAS may acquire convergence authority.
+#[test]
+fn two_idle_kickers_have_one_claim_winner() {
+    loom::model(|| {
+        let slot = Arc::new(AtomicUsize::new(IDLE));
+        let winners = Arc::new(AtomicUsize::new(0));
+
+        let spawn_kicker = |slot: Arc<AtomicUsize>, winners: Arc<AtomicUsize>| {
+            thread::spawn(move || {
+                if slot
+                    .compare_exchange(IDLE, ACTIVE, Ordering::SeqCst, Ordering::SeqCst)
+                    .is_ok()
+                {
+                    winners.fetch_add(1, Ordering::SeqCst);
+                }
+            })
+        };
+
+        let a = spawn_kicker(slot.clone(), winners.clone());
+        let b = spawn_kicker(slot.clone(), winners.clone());
+        a.join().unwrap();
+        b.join().unwrap();
+
+        assert_eq!(slot.load(Ordering::SeqCst), ACTIVE);
+        assert_eq!(
+            winners.load(Ordering::SeqCst),
+            1,
+            "two IDLE kickers acquired convergence authority"
+        );
+    });
+}
+
+/// Negative control for the two-kicker claim. Replacing the atomic claim with
+/// load -> yield -> store lets both actors decide they won from the same IDLE
+/// observation. Loom must find that duplicate-authority history.
+#[test]
+#[should_panic]
+fn load_then_store_idle_claim_is_detected() {
+    loom::model(|| {
+        let slot = Arc::new(AtomicUsize::new(IDLE));
+        let winners = Arc::new(AtomicUsize::new(0));
+
+        let spawn_bad_kicker = |slot: Arc<AtomicUsize>, winners: Arc<AtomicUsize>| {
+            thread::spawn(move || {
+                if slot.load(Ordering::SeqCst) == IDLE {
+                    thread::yield_now();
+                    slot.store(ACTIVE, Ordering::SeqCst);
+                    winners.fetch_add(1, Ordering::SeqCst);
+                }
+            })
+        };
+
+        let a = spawn_bad_kicker(slot.clone(), winners.clone());
+        let b = spawn_bad_kicker(slot.clone(), winners.clone());
+        a.join().unwrap();
+        b.join().unwrap();
+
+        assert_eq!(
+            winners.load(Ordering::SeqCst),
+            1,
+            "load/store claim admitted two logical holders"
+        );
+    });
+}
+
+/// Phase-1 scenario 5 / LC-04 finite-drain model. A semantic mutation may commit
+/// while no executor exists, leaving arbitration IDLE with committed != settled.
+/// A later legitimate driver must still find that obligation, claim the slot,
+/// converge the published state, acknowledge the revision, and return to
+/// semantic quiescence.
+#[test]
+fn off_runtime_commit_is_preserved_for_later_drive() {
+    loom::model(|| {
+        let slot = Arc::new(AtomicUsize::new(IDLE));
+        let committed = Arc::new(AtomicUsize::new(0));
+        let settled = Arc::new(AtomicUsize::new(0));
+        let state_version = Arc::new(AtomicUsize::new(0));
+
+        // No-executor semantic commit: durable truth advances, acceleration does
+        // not. IDLE therefore means only "no holder", not quiescence.
+        committed.store(1, Ordering::SeqCst);
+        assert_eq!(slot.load(Ordering::SeqCst), IDLE);
+        assert_ne!(
+            committed.load(Ordering::SeqCst),
+            settled.load(Ordering::SeqCst)
+        );
+
+        let driver = {
+            let slot = slot.clone();
+            let committed = committed.clone();
+            let settled = settled.clone();
+            let state_version = state_version.clone();
+            thread::spawn(move || {
+                if committed.load(Ordering::SeqCst) == settled.load(Ordering::SeqCst) {
+                    return;
+                }
+                slot.compare_exchange(IDLE, ACTIVE, Ordering::SeqCst, Ordering::SeqCst)
+                    .expect("later legitimate driver claims preserved obligation");
+                state_version.store(1, Ordering::SeqCst);
+                slot.store(RELEASING, Ordering::SeqCst);
+                settled.store(committed.load(Ordering::SeqCst), Ordering::SeqCst);
+                slot.compare_exchange(RELEASING, IDLE, Ordering::SeqCst, Ordering::SeqCst)
+                    .expect("finite drain releases the claimed slot");
+            })
+        };
+        driver.join().unwrap();
+
+        assert_eq!(state_version.load(Ordering::SeqCst), 1);
+        assert_eq!(slot.load(Ordering::SeqCst), IDLE);
+        assert_eq!(
+            committed.load(Ordering::SeqCst),
+            settled.load(Ordering::SeqCst)
+        );
+    });
+}
+
+/// LC-04 negative control. This deliberately treats "no executor" as if the
+/// recheck had already settled. The later driver then sees no obligation and the
+/// semantic state remains stale even though the committed revision advanced.
+#[test]
+#[should_panic]
+fn off_runtime_commit_must_not_be_consumed_without_drive() {
+    loom::model(|| {
+        let slot = Arc::new(AtomicUsize::new(IDLE));
+        let committed = Arc::new(AtomicUsize::new(1));
+        let settled = Arc::new(AtomicUsize::new(0));
+        let state_version = Arc::new(AtomicUsize::new(0));
+
+        // Historical-bad interpretation: executor absence consumes protocol
+        // truth instead of merely skipping the best-effort kick.
+        settled.store(committed.load(Ordering::SeqCst), Ordering::SeqCst);
+
+        let driver = {
+            let committed = committed.clone();
+            let settled = settled.clone();
+            let state_version = state_version.clone();
+            thread::spawn(move || {
+                if committed.load(Ordering::SeqCst) != settled.load(Ordering::SeqCst) {
+                    state_version.store(1, Ordering::SeqCst);
+                }
+            })
+        };
+        driver.join().unwrap();
+
+        assert_eq!(
+            state_version.load(Ordering::SeqCst),
+            1,
+            "executor absence erased a durable convergence obligation"
+        );
+        assert_eq!(slot.load(Ordering::SeqCst), IDLE);
+    });
+}
+
+/// Phase-1 scenario 4: two semantic mutations race around one holder's target
+/// inspection and acknowledgement. Any acknowledgement the holder actually
+/// publishes must be covered by its inspected target version; after both
+/// mutations stop, one finite final drain reaches revision 2.
+#[test]
+fn two_mutations_preserve_revision_inspection_coverage() {
+    let mut builder = loom::model::Builder::new();
+    builder.max_threads = 4; // main + two mutators + holder
+    builder.max_branches = 48;
+    // This is the first larger Phase-1 scenario. Keep its declared range
+    // explicit and bounded; the smaller core models remain exhaustive without
+    // a preemption bound.
+    builder.preemption_bound = Some(2);
+    builder.max_permutations = None;
+    builder.max_duration = None;
+    builder.check(|| {
+        let committed = Arc::new(AtomicUsize::new(0));
+        let settled = Arc::new(AtomicUsize::new(0));
+        let target_version = Arc::new(Mutex::new(0usize));
+
+        let spawn_mutator = |committed: Arc<AtomicUsize>, target_version: Arc<Mutex<usize>>| {
+            thread::spawn(move || {
+                let mut target = target_version.lock().unwrap();
+                let revision = committed.fetch_add(1, Ordering::SeqCst) + 1;
+                // ADR 0031 semantic commit keeps target readers excluded
+                // until the corresponding revision and visibility agree.
+                *target = revision;
+            })
+        };
+
+        let a = spawn_mutator(committed.clone(), target_version.clone());
+        let b = spawn_mutator(committed.clone(), target_version.clone());
+
+        let holder = {
+            let committed = committed.clone();
+            let settled = settled.clone();
+            let target_version = target_version.clone();
+            thread::spawn(move || {
+                let inspected = *target_version.lock().unwrap();
+                thread::yield_now();
+                let observed_revision = committed.load(Ordering::SeqCst);
+
+                // If a newer commit landed after the target inspection, the
+                // production holder must re-inspect rather than acknowledge it.
+                if inspected >= observed_revision {
+                    settled.store(observed_revision, Ordering::SeqCst);
+                }
+            })
+        };
+
+        a.join().unwrap();
+        b.join().unwrap();
+        holder.join().unwrap();
+
+        // Explicit progress assumption for LC-07's finite drain: mutations have
+        // stopped and a legitimate holder gets one final covering inspection.
+        let inspected = *target_version.lock().unwrap();
+        let observed_revision = committed.load(Ordering::SeqCst);
+        assert!(
+            inspected >= observed_revision,
+            "final drain inspected target {inspected} behind revision {observed_revision}"
+        );
+        settled.store(observed_revision, Ordering::SeqCst);
+
+        assert_eq!(observed_revision, 2);
+        assert_eq!(inspected, 2);
+        assert_eq!(settled.load(Ordering::SeqCst), 2);
+    });
+}

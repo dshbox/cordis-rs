@@ -267,6 +267,20 @@ The PoC must decide whether this seam remains smaller and clearer than an
 independent model. If sharing production code requires large generic/runtime
 abstractions, stop and record that result rather than forcing the design.
 
+**Phase-1 decision:** do not extract a production-shared synchronization seam.
+The production protocol currently composes three `std` atomics with
+`parking_lot` target storage, ServiceStore-backed target reconstruction,
+`tokio::sync::Notify`, runtime discovery, and task dispatch across
+`commit_recheck`, `exit_recheck`, `kick`, and `FiberHandle::ready`. Sharing the
+actual atomic operations with Loom would require a test-oriented atomic/sync
+abstraction or alternate feature build while still leaving the ServiceStore and
+Tokio boundaries outside that shared core. That is more design distortion than
+evidence gained at this stage. Phase 1 therefore keeps reduced models with exact
+production-transition mapping, discriminating historical negative controls, and
+real Tokio regressions for integration behavior. Revisit this decision if the
+production atomic protocol changes materially or model/production drift becomes
+a demonstrated maintenance problem.
+
 ### Layer C — real Tokio contracts
 
 Keep and extend real-runtime tests for integration facts outside the small model:
@@ -288,6 +302,15 @@ exploration range rather than merely exhausting a time budget.
 4. Two mutators commit revisions around one holder's inspection/acknowledgement.
 5. Commit while no executor is available, followed by a later legitimate drive.
 
+Current evidence maps to all five scenarios: the two-IDLE-kicker CAS model covers
+(1); LC-05 release/kick authority covers (2); LC-06 ready history covers (3);
+the bounded two-mutator inspection/acknowledgement model covers (4); and the
+off-runtime durable-obligation finite-drain model covers (5). The larger
+four-actor scenario (4) declares `preemption_bound = 2` and `max_branches = 48`;
+it is bounded coverage, not an unbounded/exhaustive claim. The smaller LC-06
+history model declares `max_threads = 3` and `max_branches = 64` with no
+permutation or duration cap.
+
 Model publication, revision commit, kick, inspection, acknowledgement, release,
 and observer reads as distinct scheduling points. Do not collapse
 `publish+commit+kick` or `inspect+acknowledge+release` into one atomic model step.
@@ -305,7 +328,9 @@ evidence. Phase 1 must include deterministic negative controls, at least:
 - allow revision acknowledgement before the inspection covering that revision;
 - allow a racing `RELEASING` kick to create a second logical holder;
 - let `ready()` treat arbitration `IDLE` as semantic quiescence after a
-  pre-invocation Service commit.
+  pre-invocation Service commit;
+- replace the IDLE claim CAS with load-then-store so two kickers can both win;
+- consume an off-runtime committed revision merely because no executor exists.
 
 Each mutation must cause the corresponding model invariant to fail. Where a
 counterexample can be expressed through the public/runtime API, preserve it as a
@@ -372,8 +397,10 @@ complete when all of the following are true:
 
 - [x] The production/spec terminology distinguishes arbitration idle from
       semantic quiescence.
-- [ ] LC-01 through LC-06 have explicit executable evidence or an explicit
-      documented reason a property remains outside the model.
+- [x] LC-01 through LC-06 have explicit executable evidence or an explicit
+      documented structural argument. LC-01 is structural: production writes
+      only the three named constants and panics on every other observed word;
+      the executable models exercise the legal transition set.
 - [x] The model includes revision-to-inspection coverage, not only revision
       counters.
 - [x] The model includes a ready observer capable of detecting stale quiescence
@@ -477,3 +504,22 @@ Those can proceed separately after the concurrency evidence has a credible core.
   intentionally finite: one semantic mutation, one ready actor, and the main
   test thread. CI therefore exhausts that declared range instead of stopping on
   a time/permutation budget. The full Notify wait/retry protocol remains Phase 2.
+
+- Phase-1 closeout adds the remaining scenario evidence. Two independent IDLE
+  kickers have exactly one CAS winner; a load-then-store negative control lets
+  both win and is detected. An off-runtime commit leaves `IDLE` with
+  `committed != settled` and a later legitimate driver drains it; a negative
+  control that consumes the revision without a driver leaves stale state and is
+  detected.
+- The two-mutator history uses four actors with `max_branches = 48` and
+  `preemption_bound = 2`. Any intermediate acknowledgement is permitted only
+  when the holder's inspected target covers the observed revision; after both
+  mutations stop, one explicit finite drain reaches revision/target 2. The
+  unbounded variant was intentionally rejected after its state space failed to
+  complete within the local execution window.
+- Layer B was evaluated and rejected for Phase 1: sharing actual atomic
+  operations with Loom would require a test-oriented synchronization abstraction
+  across code that is intentionally coupled to ServiceStore target reads,
+  `parking_lot`, Tokio notification, runtime discovery, and task dispatch. The
+  reduced-model + transition-map + Tokio-contract approach remains the smaller,
+  clearer evidence architecture for the current protocol.
