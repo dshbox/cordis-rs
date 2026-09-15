@@ -468,29 +468,27 @@ impl Fiber {
         if old == next {
             return;
         }
-        self.set_state(next);
-
-        // Service visibility is a lifecycle fact, not declared Plugin metadata:
-        // an occupied occurrence becomes visible exactly on entry to Active and
-        // is withdrawn exactly on exit from Active. Commit the durable affected
-        // set before waking state waiters or emitting optional observation so a
-        // published state never outruns its protocol follow-up.
+        // Service visibility is a lifecycle fact, not declared Plugin metadata.
+        // Active-boundary transitions publish the provider state and the complete
+        // dependent recheck obligation in one ServiceStore semantic commit
+        // (ADR 0031). Non-visibility transitions keep the direct state write.
         let root = self.spawn_state.root();
-        let visibility = if (old == FiberState::Active) != (next == FiberState::Active) {
-            root.as_ref()
-                .map(|root| root.services.visibility_owned_by(self))
-                .unwrap_or_default()
+        let (visibility, drift) = if (old == FiberState::Active) != (next == FiberState::Active) {
+            match root.as_ref() {
+                Some(root) => root.services.commit_fiber_transition(root, self, old, next),
+                None => {
+                    self.set_state(next);
+                    (Vec::new(), None)
+                }
+            }
         } else {
-            Vec::new()
+            self.set_state(next);
+            (Vec::new(), None)
         };
-        if !visibility.is_empty()
-            && let Some(root) = root.as_ref()
-        {
-            let changed = visibility
-                .iter()
-                .map(|slot| (slot.service.clone(), slot.realm))
-                .collect::<Vec<_>>();
-            crate::service::notify_dependents_for_edges(root, &changed);
+        if let (Some(root), Some(drift)) = (root.as_ref(), drift) {
+            // Kicks are acceleration only and deliberately run after releasing
+            // ServiceStore synchronization.
+            drift.kick(root);
         }
 
         // Reliable state wakeups are protocol signals, separate from optional

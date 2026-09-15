@@ -17,9 +17,29 @@ use crate::context::{Context, RealmKey, Root};
 use crate::fiber::Fiber;
 use parking_lot::Mutex;
 use std::any::Any;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Weak};
+
+#[cfg(test)]
+struct VisiblePublishProbe {
+    service: &'static str,
+    reached: Arc<std::sync::Barrier>,
+    resume: Arc<std::sync::Barrier>,
+}
+
+#[cfg(test)]
+static VISIBLE_PUBLISH_PROBE: parking_lot::Mutex<Option<Arc<VisiblePublishProbe>>> =
+    parking_lot::Mutex::new(None);
+
+#[cfg(test)]
+fn probe_visible_publish(service: &'static str) {
+    let probe = VISIBLE_PUBLISH_PROBE.lock().clone();
+    if let Some(probe) = probe.filter(|probe| probe.service == service) {
+        probe.reached.wait();
+        probe.resume.wait();
+    }
+}
 
 /// Private, non-zero-sized token proving a realm's Runtime membership.
 pub(crate) struct RealmMembership {
@@ -253,21 +273,93 @@ enum ServiceInstallRefusal {
     ContractMismatch,
 }
 
+/// Durable Service-drift obligations committed inside the ServiceStore semantic
+/// mutation section. Driving them is deliberately deferred until after every
+/// Service lock is released.
+pub(crate) struct CommittedServiceDrift {
+    affected: Vec<Arc<Fiber>>,
+    /// When the derived dependency index is unavailable, retain the complete
+    /// Registry snapshot until after the enclosing ServiceStore lock is gone.
+    /// Filtering that snapshot inside the semantic commit must not run a
+    /// potentially last-reference Fiber/plugin/config drop under ServiceStore
+    /// synchronization (ADR 0029).
+    retained_snapshot: Vec<Arc<Fiber>>,
+}
+
+impl CommittedServiceDrift {
+    /// Called only from a ServiceStore semantic-mutation critical section.
+    ///
+    /// The proved nested bookkeeping direction is ServiceStore -> dependency
+    /// projection/Registry. Those stores never call back into ServiceStore while
+    /// holding their guards. The complete-index path already retains one Arc for
+    /// every deduplicated Fiber before redundant clones drop; the fallback path
+    /// explicitly retains every resident Arc until [`Self::kick`] runs outside
+    /// ServiceStore synchronization.
+    fn commit(root: &Root, edges: &[(String, RealmKey)]) -> Self {
+        let (affected, retained_snapshot) = match root.deps.dependents_of(edges) {
+            Some(indexed) => (indexed, Vec::new()),
+            None => {
+                let retained_snapshot = root.registry.snapshot_fibers();
+                let requested = edges.iter().cloned().collect::<HashSet<_>>();
+                let affected = retained_snapshot
+                    .iter()
+                    .filter(|fiber| {
+                        fiber.is_alive()
+                            && fiber
+                                .dependency_edges()
+                                .iter()
+                                .any(|edge| requested.contains(&(edge.service.clone(), edge.realm)))
+                    })
+                    .cloned()
+                    .collect();
+                (affected, retained_snapshot)
+            }
+        };
+        for fiber in &affected {
+            fiber.slot.commit_recheck();
+        }
+        Self {
+            affected,
+            retained_snapshot,
+        }
+    }
+
+    pub(crate) fn kick(self, root: &Arc<Root>) {
+        let Self {
+            affected,
+            retained_snapshot,
+        } = self;
+        for fiber in affected {
+            fiber.kick_committed_recheck(root);
+        }
+        // Explicitly outside ServiceStore synchronization. This may release the
+        // last strong Fiber reference on the fallback path.
+        drop(retained_snapshot);
+    }
+}
+
 struct ServiceSlotPublish<'a> {
+    root: &'a Arc<Root>,
+    owner: &'a Arc<Fiber>,
     store: &'a ServiceStore,
     key: RealmKey,
     name: &'static str,
     slot: Option<ServiceSlot>,
     evicted: Option<ServiceSlot>,
+    drift: Option<CommittedServiceDrift>,
     refusal: Option<ServicePublishError>,
 }
 
 impl crate::gated::PublishStep for ServiceSlotPublish<'_> {
     fn publish(&mut self) -> std::result::Result<(), crate::gated::PublishRefused> {
         let slot = self.slot.take().expect("publish runs once");
-        match self.store.install(slot, self.key, self.name) {
-            Ok(evicted) => {
+        match self
+            .store
+            .install(self.root, self.owner, slot, self.key, self.name)
+        {
+            Ok((evicted, drift)) => {
                 self.evicted = evicted;
+                self.drift = drift;
                 Ok(())
             }
             Err((refusal, slot)) => {
@@ -302,10 +394,15 @@ impl ServiceStore {
 
     fn install(
         &self,
+        root: &Root,
+        owner: &Arc<Fiber>,
         slot: ServiceSlot,
         key: RealmKey,
         name: &'static str,
-    ) -> std::result::Result<Option<ServiceSlot>, (ServiceInstallRefusal, ServiceSlot)> {
+    ) -> std::result::Result<
+        (Option<ServiceSlot>, Option<CommittedServiceDrift>),
+        (ServiceInstallRefusal, ServiceSlot),
+    > {
         let mut state = self.state.lock();
         if let Some(contract) = state.contracts.get(name) {
             if *contract != slot.contract {
@@ -323,9 +420,18 @@ impl ServiceStore {
         {
             return Err((ServiceInstallRefusal::Duplicate, slot));
         }
+
+        // Visibility and its durable affected-set obligation are one semantic
+        // commit (ADR 0031). Commit the revision before mutating the slot while
+        // holding the ServiceStore lock: target reconstruction cannot observe
+        // the new slot until every pre-existing dependent already carries the
+        // obligation. A dependent registered after this snapshot blocks on this
+        // same lock in its initial target read and therefore sees the new slot.
+        let drift = (owner.state() == crate::fiber::FiberState::Active)
+            .then(|| CommittedServiceDrift::commit(root, &[(name.to_owned(), key)]));
         let evicted = state.slots.remove(&(key, name));
         state.slots.insert((key, name), slot);
-        Ok(evicted)
+        Ok((evicted, drift))
     }
 
     fn visible(slot: &ServiceSlot) -> bool {
@@ -411,11 +517,13 @@ impl ServiceStore {
 
     fn remove_exact(
         &self,
+        root: &Root,
         key: RealmKey,
         name: &'static str,
         occurrence: &ServiceOccurrenceId,
         owner: &Weak<Fiber>,
-    ) -> std::result::Result<(ServiceSlot, bool), ServiceControlError> {
+    ) -> std::result::Result<(ServiceSlot, Option<CommittedServiceDrift>), ServiceControlError>
+    {
         let mut state = self.state.lock();
         let entry = match state.slots.entry((key, name)) {
             std::collections::hash_map::Entry::Occupied(entry)
@@ -428,8 +536,13 @@ impl ServiceStore {
         let Some(owner_state) = Self::mutation_state(owner) else {
             return Err(ServiceControlError::MutationClosed { service: name });
         };
-        let was_visible = owner_state == crate::fiber::FiberState::Active;
-        Ok((entry.remove(), was_visible))
+        let drift = (owner_state == crate::fiber::FiberState::Active).then(|| {
+            // Commit before removing the visible slot while the ServiceStore
+            // lock excludes target reconstruction. This closes the same
+            // publication-to-revision window as active late publication.
+            CommittedServiceDrift::commit(root, &[(name.to_owned(), key)])
+        });
+        Ok((entry.remove(), drift))
     }
 
     fn withdraw_exact(&self, key: RealmKey, name: &'static str, occurrence: &ServiceOccurrenceId) {
@@ -463,13 +576,31 @@ impl ServiceStore {
             .collect()
     }
 
-    pub(crate) fn visibility_owned_by(
+    /// Publish an Active-visibility lifecycle boundary together with the
+    /// complete dependent recheck obligation in one ServiceStore critical
+    /// section (ADR 0031). Target reconstruction takes this same lock, so it
+    /// cannot observe the new provider state before pre-existing dependents
+    /// carry the matching durable revision.
+    pub(crate) fn commit_fiber_transition(
         &self,
+        root: &Root,
         fiber: &Arc<Fiber>,
-    ) -> Vec<ServiceVisibilityOccurrence> {
+        old: crate::fiber::FiberState,
+        next: crate::fiber::FiberState,
+    ) -> (
+        Vec<ServiceVisibilityOccurrence>,
+        Option<CommittedServiceDrift>,
+    ) {
+        debug_assert_ne!(old, next);
+        debug_assert_ne!(
+            old == crate::fiber::FiberState::Active,
+            next == crate::fiber::FiberState::Active,
+            "only Active visibility boundaries use the Service semantic commit"
+        );
+
+        let state = self.state.lock();
         let owner = Arc::downgrade(fiber);
-        self.state
-            .lock()
+        let visibility = state
             .slots
             .iter()
             .filter(|(_, slot)| Weak::ptr_eq(&slot.fiber, &owner))
@@ -478,7 +609,22 @@ impl ServiceStore {
                 realm: *key,
                 occurrence: slot.occurrence.clone(),
             })
-            .collect()
+            .collect::<Vec<_>>();
+        let drift = (!visibility.is_empty()).then(|| {
+            let edges = visibility
+                .iter()
+                .map(|slot| (slot.service.clone(), slot.realm))
+                .collect::<Vec<_>>();
+            CommittedServiceDrift::commit(root, &edges)
+        });
+
+        // Revision first, visibility second, under the one lock target readers
+        // also take. A holder that already read the old target will observe the
+        // new revision and retry; a holder retrying after that observation blocks
+        // here until the new provider state is visible.
+        fiber.set_state(next);
+        drop(state);
+        (visibility, drift)
     }
 
     pub(crate) fn snapshot_occurrences(&self) -> Vec<ServiceOccurrenceSnapshot> {
@@ -518,22 +664,6 @@ pub(crate) struct ServiceOccurrenceSnapshot {
     pub(crate) realm: RealmKey,
     pub(crate) provider: crate::fiber::FiberId,
     pub(crate) visible: bool,
-}
-
-pub(crate) fn notify_dependents_for_edges(root: &Arc<Root>, edges: &[(String, RealmKey)]) {
-    let affected = root.dependents_for_edges(edges);
-    // Commit durable protocol truth for the complete deduplicated affected set
-    // before any executor-dependent work starts. Kicks are acceleration only.
-    for fiber in &affected {
-        fiber.slot.commit_recheck();
-    }
-    for fiber in affected {
-        fiber.kick_committed_recheck(root);
-    }
-}
-
-pub(crate) fn notify_dependents_of_service(root: &Arc<Root>, name: &str, key: RealmKey) {
-    notify_dependents_for_edges(root, &[(name.to_owned(), key)]);
 }
 
 /// Move-only opaque capability naming one exact Service publication occurrence.
@@ -582,18 +712,26 @@ impl<S: Service> ServicePublication<S> {
     /// generation drain already claimed it, its exact cleanup becomes a stale
     /// no-op. Stale identity is reported before a closed-generation error.
     pub fn remove(self) -> std::result::Result<(), ServiceControlError> {
-        let (removed, was_visible) =
-            self.root
-                .services
-                .remove_exact(self.key, S::NAME, &self.occurrence, &self.owner)?;
+        let (removed, drift) = self.root.services.remove_exact(
+            &self.root,
+            self.key,
+            S::NAME,
+            &self.occurrence,
+            &self.owner,
+        )?;
+        let was_visible = drift.is_some();
 
         let claimed_cleanup = self
             .owner
             .upgrade()
             .and_then(|fiber| fiber.remove_disposable(self.cleanup));
 
+        if let Some(drift) = drift {
+            // Executor-dependent driving stays outside the ServiceStore lock;
+            // the durable obligation was already committed with the removal.
+            drift.kick(&self.root);
+        }
         if was_visible {
-            notify_dependents_of_service(&self.root, S::NAME, self.key);
             self.root.observations.publish(
                 crate::observation::RuntimeObservation::ServiceVisibility {
                     service: S::NAME.to_owned(),
@@ -630,6 +768,8 @@ impl Context {
         let cleanup_root = self.root.clone();
         let cleanup_occurrence = occurrence.clone();
         let mut step = ServiceSlotPublish {
+            root: &self.root,
+            owner: &fiber,
             store: &self.root.services,
             key,
             name: S::NAME,
@@ -640,6 +780,7 @@ impl Context {
                 fiber: Arc::downgrade(&fiber),
             }),
             evicted: None,
+            drift: None,
             refusal: None,
         };
         let committed = crate::gated::push_gated(
@@ -663,12 +804,24 @@ impl Context {
                     .unwrap_or(ServicePublishError::InactiveContext));
             }
         };
+        #[cfg(test)]
+        if step.drift.is_some() {
+            // Deterministic seam for the ADR 0031 regression: the ServiceStore
+            // mutation and durable revisions have committed, but executor-
+            // dependent kicks have not run yet.
+            probe_visible_publish(S::NAME);
+        }
+        let drift = step.drift.take();
+        let became_visible = drift.is_some();
         drop(step);
 
         // Loading installation is occupied but invisible. Active late/root
-        // publication is immediately visible and therefore creates drift.
-        if fiber.state() == crate::fiber::FiberState::Active {
-            notify_dependents_of_service(&self.root, S::NAME, key);
+        // publication committed its dependent revisions inside ServiceStore;
+        // only executor-dependent driving and observation remain here.
+        if let Some(drift) = drift {
+            drift.kick(&self.root);
+        }
+        if became_visible {
             self.root.observations.publish(
                 crate::observation::RuntimeObservation::ServiceVisibility {
                     service: S::NAME.to_owned(),
@@ -695,5 +848,112 @@ impl Context {
     pub fn try_service<S: Service>(&self) -> std::result::Result<Arc<S>, ServiceLookupError> {
         let key = self.isolate_key(S::NAME);
         self.root.services.visible_value::<S>(key)
+    }
+}
+
+#[cfg(test)]
+mod semantic_commit_tests {
+    use super::{VISIBLE_PUBLISH_PROBE, VisiblePublishProbe};
+    use crate::{Context, FiberState, InjectSpec, Plugin, PreparedPlugin, Service};
+    use std::convert::Infallible;
+    use std::future::Future;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct AtomicVisibility;
+
+    impl Service for AtomicVisibility {
+        const NAME: &'static str = "issue101/atomic-visibility";
+    }
+
+    struct WantsAtomicVisibility(Arc<AtomicUsize>);
+
+    impl Plugin for WantsAtomicVisibility {
+        type Config = ();
+        type Input = ();
+        type PrepareError = Infallible;
+        type ApplyError = Infallible;
+
+        fn inject(&self) -> InjectSpec {
+            InjectSpec::none().require(AtomicVisibility::NAME)
+        }
+
+        fn prepare(&self, _config: ()) -> Result<(), Infallible> {
+            Ok(())
+        }
+
+        fn apply(
+            &self,
+            ctx: Context,
+            _prepared: &(),
+        ) -> impl Future<Output = Result<(), Infallible>> + Send {
+            let applies = self.0.clone();
+            async move {
+                ctx.try_service::<AtomicVisibility>()
+                    .expect("committed visible Service is available to the dependent");
+                applies.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            }
+        }
+    }
+
+    struct ProbeReset;
+
+    impl Drop for ProbeReset {
+        fn drop(&mut self) {
+            *VISIBLE_PUBLISH_PROBE.lock() = None;
+        }
+    }
+
+    #[tokio::test]
+    async fn visible_publish_commits_recheck_before_kick_window() {
+        let root = Context::new();
+        let applies = Arc::new(AtomicUsize::new(0));
+        let dependent = root
+            .spawn(PreparedPlugin::from_input(
+                WantsAtomicVisibility(applies.clone()),
+                (),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(dependent.state(), FiberState::Pending);
+
+        let reached = Arc::new(std::sync::Barrier::new(2));
+        let resume = Arc::new(std::sync::Barrier::new(2));
+        *VISIBLE_PUBLISH_PROBE.lock() = Some(Arc::new(VisiblePublishProbe {
+            service: AtomicVisibility::NAME,
+            reached: reached.clone(),
+            resume: resume.clone(),
+        }));
+        let _reset = ProbeReset;
+
+        let provider = std::thread::spawn({
+            let root = root.clone();
+            move || {
+                let _publication = root.provide(Arc::new(AtomicVisibility)).unwrap();
+            }
+        });
+        reached.wait();
+
+        // The Service occurrence is already published, but its ordinary kick is
+        // deliberately paused. ADR 0031 requires the durable recheck to have
+        // committed in the same semantic transaction, so ready() must discover
+        // the obligation, drive it itself, and converge to the visible target.
+        // The historical ordering (publish -> later commit_recheck) returned
+        // Pending here even though ServiceStore already exposed the occurrence.
+        let ready = crate::deadline::bounded(2000, dependent.ready()).await;
+
+        resume.wait();
+        provider.join().unwrap();
+
+        assert_eq!(
+            ready
+                .expect("ready drives the already-committed recheck")
+                .unwrap(),
+            FiberState::Active
+        );
+        assert_eq!(applies.load(Ordering::SeqCst), 1);
+        root.try_service::<AtomicVisibility>()
+            .expect("dropping the publication capability is inert");
     }
 }
