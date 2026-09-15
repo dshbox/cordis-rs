@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.2.6](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.2.5...cordis-core-v0.2.6) - 2026-09-15
+
+### Other
+
+- *(core)* pin inertia notify contracts ([#111](https://github.com/dshbox/cordis-rs/pull/111))
+
 ## [0.2.5](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.2.4...cordis-core-v0.2.5) - 2026-09-15
 
 ### Other
