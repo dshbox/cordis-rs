@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+## [0.2.3](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.2.2...cordis-core-v0.2.3) - 2026-09-15
+
+### Fixed
+
+- *(core)* commit service drift with visibility ([#102](https://github.com/dshbox/cordis-rs/pull/102))
+
+### Other
+
+- *(core)* model releasing kick authority ([#106](https://github.com/dshbox/cordis-rs/pull/106))
+- *(core)* model convergence invariants with loom ([#104](https://github.com/dshbox/cordis-rs/pull/104))
+
 ## [0.2.2](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.2.1...cordis-core-v0.2.2) - 2026-09-15
 
 ### Fixed
