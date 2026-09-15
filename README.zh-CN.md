@@ -47,7 +47,9 @@ v3 使用 Rust 2024 Edition，MSRV 为 **Rust 1.88**。
 - generation 拥有 cleanup；Runtime/Registry 拥有 Fiber residency。
 - update 保持 Fiber identity；era swap 会终止旧 Fiber 并创建新的 identity。
 
-完整模型请阅读英文 [`README.md`](README.md) 和 [`docs/v3-architecture.md`](docs/v3-architecture.md)。
+完整模型请阅读英文 [`README.md`](README.md) 和
+[`docs/v3-architecture.md`](docs/v3-architecture.md)；1.0 readiness 与 exit criteria
+见 [`ROADMAP.md`](ROADMAP.md)。
 
 ## 从 0.6.x 迁移
 

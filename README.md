@@ -354,7 +354,8 @@ independent instead of letting one hidden tree control all three.
 The v3 semantic crates began at `0.1.0` and now publish on the `0.2.x` line; the
 historical application package entered v3 at `cordis-rs 0.7.0` and now publishes
 on `0.8.x`. The workspace uses Rust 2024 Edition with MSRV 1.88.
-As a pre-1.0 project, the public API may still evolve.
+As a pre-1.0 project, the public API may still evolve. See [`ROADMAP.md`](ROADMAP.md)
+for the explicit 1.0 readiness and exit criteria.
 
 Cordis is a Rust port and redesign in the lineage of
 [`cordiverse/cordis`](https://github.com/cordiverse/cordis).
