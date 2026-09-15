@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.2.1](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.2.0...cordis-core-v0.2.1) - 2026-09-15
+
+### Other
+
+- update readmes for 0.8 release line ([#92](https://github.com/dshbox/cordis-rs/pull/92))
+
 ## [0.2.0](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.1.3...cordis-core-v0.2.0) - 2026-09-15
 
 ### Other
