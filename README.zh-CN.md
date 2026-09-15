@@ -25,14 +25,14 @@ use cordis::Context;
 `cordis-rs` 在 v3 中是很薄的 facade，真正的 runtime contract 位于：
 
 ```toml
-cordis-core = "0.2"
+cordis-core = "0.3"
 ```
 
 框架和第三方 Plugin 作者可以直接依赖 `cordis-core`。时间与声明式加载能力保持独立：
 
 ```toml
-cordis-timer = "0.2"
-cordis-loader = "0.2"
+cordis-timer = "0.3"
+cordis-loader = "0.3"
 ```
 
 v3 使用 Rust 2024 Edition，MSRV 为 **Rust 1.88**。

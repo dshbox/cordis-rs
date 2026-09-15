@@ -32,14 +32,14 @@ Framework and plugin authors may depend on that contract directly:
 
 ```toml
 [dependencies]
-cordis-core = "0.2"
+cordis-core = "0.3"
 ```
 
 Optional capabilities stay explicit semantic dependencies:
 
 ```toml
-cordis-timer = "0.2"
-cordis-loader = "0.2"
+cordis-timer = "0.3"
+cordis-loader = "0.3"
 ```
 
 Cordis v3 requires Rust **1.88** or newer and uses Rust 2024 Edition.
@@ -351,7 +351,7 @@ independent instead of letting one hidden tree control all three.
 
 ## Project status
 
-The v3 semantic crates began at `0.1.0` and now publish on the `0.2.x` line; the
+The v3 semantic crates began at `0.1.0` and now publish on the `0.3.x` line; the
 historical application package entered v3 at `cordis-rs 0.7.0` and now publishes
 on `0.8.x`. The workspace uses Rust 2024 Edition with MSRV 1.88.
 As a pre-1.0 project, the public API may still evolve. See [`ROADMAP.md`](ROADMAP.md)

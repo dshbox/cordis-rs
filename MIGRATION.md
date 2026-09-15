@@ -17,13 +17,13 @@ cordis-rs = "0.8"
 use cordis::Context;
 ```
 
-The `cordis-rs` package is a thin facade over `cordis-core = "0.2"`. Framework
+The `cordis-rs` package is a thin facade over `cordis-core = "0.3"`. Framework
 and plugin crates should normally depend on `cordis-core` directly. Timer and
 loader capabilities are explicit optional crates rather than facade features:
 
 ```toml
-cordis-timer = "0.2"
-cordis-loader = "0.2"
+cordis-timer = "0.3"
+cordis-loader = "0.3"
 ```
 
 ## From 0.7.x to 0.8.x
