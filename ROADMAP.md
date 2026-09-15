@@ -94,20 +94,21 @@ settled architecture merely to create more pre-1.0 work.
 
 ### Performance regression evidence
 
-- [ ] **Establish a representative benchmark baseline.** The first baseline must
-  measure Cordis overhead separately from arbitrary Plugin or consumer callback work
-  and cover, at minimum, these public paths: spawn plus initial settle;
-  already-quiescent `ready()`; Event emit/query with 0, 1, and N listeners; Service
-  publication/visibility mutation affecting 0, 1, and N Fibers; `restart`;
-  `update`; and `era_swap`. The exact benchmark harness is an implementation choice,
-  not part of this contract.
-- [ ] **Document how regressions are reviewed.** Record the benchmark environment,
-  sampling/variance method, and a review threshold derived from observed noise.
-  A threshold crossing must trigger human review and an explanation, not
-  automatically claim a correctness defect or block every CI run.
-- [ ] **Record an initial baseline suitable for future comparison.** Benchmark
-  numbers are regression evidence, not proof that Cordis is "production ready" and
-  not a marketing performance target.
+- [x] **Establish a representative benchmark baseline.** The public-path suite and
+  measured/reset boundaries are recorded in
+  [`docs/performance-benchmarking.md`](docs/performance-benchmarking.md). It measures
+  Cordis overhead separately from arbitrary Plugin or consumer callback work and
+  covers spawn plus initial settle; already-quiescent `ready()`; Event emit/query
+  with 0, 1, and N listeners; Service publication/visibility mutation affecting 0,
+  1, and N Fibers; `restart`; `update`; and `era_swap`.
+- [x] **Document how regressions are reviewed.** The benchmark evidence document
+  records the environment, sampling/variance method, observed noise, and a 15%
+  review trigger with same-machine confirmation. A threshold crossing triggers
+  human review and explanation, not an automatic correctness or CI failure.
+- [x] **Record an initial baseline suitable for future comparison.** The benchmark
+  evidence document records the first local reference and its three-run noise span.
+  The numbers are regression evidence, not proof that Cordis is "production ready"
+  and not a marketing performance target.
 
 ### Operational and failure maturity
 

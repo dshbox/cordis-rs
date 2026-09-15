@@ -27,6 +27,11 @@ futures = { workspace = true }
 trybuild = { workspace = true }
 serde = { workspace = true }
 loom = { workspace = true }
+criterion = { workspace = true }
+
+[[bench]]
+name = "runtime_paths"
+harness = false
 
 [lints]
 workspace = true

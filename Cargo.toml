@@ -37,6 +37,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 trybuild = "1"
 loom = "0.7.2"
+criterion = { version = "0.8.2", default-features = false, features = ["async_tokio", "cargo_bench_support"] }
 
 [workspace.lints.rust]
 missing_docs = { level = "warn" }
