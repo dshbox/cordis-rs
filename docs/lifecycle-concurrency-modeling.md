@@ -428,22 +428,85 @@ Phase 2 is complete when all of the following are true:
 Model Era arbitration independently first, then add a small number of
 cross-protocol tests.
 
-Core Era properties:
+### Phase 3 invariants
 
-- a live source grants at most one successful replacement claim;
-- losing swaps return `Closed` before allocating a successor;
-- one successful claim creates at most one successor candidate under the current
-  no-retry contract;
-- source disposal completes before successor handoff;
-- closing/dead sources cannot authorize a new swap, while an already-valid claim
-  may continue using the recipe it acquired before closure;
-- unpublished failed candidates retain exactly one cleanup responsibility and
-  cannot remain resident at the operation's promised failure boundary;
-- caller cancellation cannot reclaim an already published successor or orphan a
-  committed cleanup obligation.
+- **ER-01 — unique live-source terminal claim.** A live source grants at most one
+  successful replacement claim. Era swap and ordinary disposal share this same
+  Open-to-Closing authority.
+- **ER-02 — losers allocate nothing.** A swap that loses to another swap or to
+  ordinary disposal returns `Closed` before attempting a successor.
+- **ER-03 — one claim, one candidate.** One successful Era claim creates at most
+  one successor candidate under the current no-retry contract.
+- **ER-04 — death before birth.** The source's full terminal barrier completes
+  before successor creation is attempted; therefore successor visibility and
+  handoff also occur strictly after old-Fiber death.
+- **ER-05 — closure cannot mint new authority.** Closing/dead sources cannot
+  authorize a new swap, while an already-valid committed Era owner may continue
+  using the recipe captured before it closed the source.
+- **ER-06 — failed candidates keep one cleanup responsibility.** An unpublished
+  failed candidate cannot remain resident at the operation's promised failure
+  boundary and its terminal cleanup is owned exactly once.
+- **ER-07 — cancellation transfers no ownership back to the caller.** Preclaim
+  cancellation is no-effect; postclaim cancellation cannot orphan source death,
+  candidate success-or-cleanup, final convergence, or an undelivered handoff.
+- **ER-08 — handoff follows final current-target convergence.** Success and every
+  incomplete result finish affected-dependent convergence before the operation's
+  externally observable handoff/failure boundary.
 
-Later combination scenarios should include Era competing with unfinished
-convergence and old-Fiber ready waiters around successor handoff.
+### Phase 3 arbitration findings
+
+The first reduced Loom layer deliberately treats the already-modeled lifecycle
+slot as a mutex: Phase 1 proves unique slot authority and Phase 2 pins its Tokio
+wait/wake choreography, so the Era model should not pretend to re-verify either.
+The mutex covers only the production `disposing`-style terminal claim decision.
+After that guard is released, successor-attempt accounting proceeds independently,
+matching production's separation between source lifecycle ownership and later
+candidate work. Death-before-birth ordering is modeled separately below.
+
+The model now establishes:
+
+- two racing swaps choose exactly one source owner and exactly one successor
+  attempt;
+- a swap racing ordinary disposal attempts a successor iff the swap owns the
+  unique source terminal claim;
+- a synthetic allocation-before-claim variant lets two racers allocate against
+  one eventual source claim and is detected;
+- a synthetic successor-retry variant creates two candidates from one source
+  claim and is detected;
+- publishing successor creation only after source terminal completion preserves
+  death-before-birth; reversing that order exposes the forbidden middle state.
+
+All six first-layer tests use `max_threads = 3` and `max_branches = 64`, with
+no permutation or duration cap. They therefore complete the declared finite
+range rather than treating a search budget ending as success.
+
+This is ER-01 through ER-04 evidence only. It does not model candidate cleanup,
+caller cancellation, final dependent convergence, or Tokio notification.
+Existing real Tokio Era regressions remain the authority for those concrete
+runtime behaviors until later Phase 3 slices map them explicitly.
+
+### Phase 3 completion criteria
+
+- [x] ER-01 unique source ownership is modeled for swap-vs-swap and
+      swap-vs-dispose.
+- [x] ER-02 loser-before-allocation is executable and has an allocation-before-
+      claim negative control.
+- [x] ER-03 no-retry candidate ownership is executable and has a retry negative
+      control.
+- [x] ER-04 death-before-birth ordering is executable and has an inverted-order
+      negative control.
+- [ ] ER-05 closing/dead-source admission and captured-recipe continuation have
+      explicit evidence or a documented structural argument.
+- [ ] ER-06 failed/unpublished candidate cleanup and no-residency are mapped to
+      systematic evidence.
+- [ ] ER-07 preclaim/postclaim cancellation ownership is mapped to systematic
+      evidence.
+- [ ] ER-08 final dependent convergence and handoff/failure ordering are mapped
+      to systematic evidence.
+- [ ] Cross-protocol Era/convergence scenarios cover unfinished convergence and
+      old-Fiber `ready()` around successor handoff.
+- [ ] The final Phase-3 contract set passes the repository's required PR CI
+      matrix on the merge candidate.
 
 ## CI policy target
 
@@ -616,3 +679,12 @@ Those can proceed separately after the concurrency evidence has a credible core.
   latest stable, Linux, macOS, and Windows. With that external execution
   evidence recorded, every Phase-2 completion item is now satisfied; Era
   replacement remains Phase 3.
+
+- Phase 3 begins with a reduced Era arbitration model rather than reusing the
+  convergence model. The production lifecycle slot is abstracted as one mutex
+  because Phases 1/2 already carry authority/wakeup evidence; the Era layer keeps
+  only terminal-source ownership plus successor-attempt state. Racing swaps and
+  swap-vs-dispose admit exactly one terminal owner, losers allocate nothing, and
+  the winner attempts one candidate under the no-retry contract. Three negative
+  controls prove the model can detect allocation before claim, a second candidate
+  attempt after one claim, and successor birth before complete old-Fiber death.
