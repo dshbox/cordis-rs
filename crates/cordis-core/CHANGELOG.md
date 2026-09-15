@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.3.0](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.2.12...cordis-core-v0.3.0) - 2026-09-15
+
+### Fixed
+
+- *(core)* remove unreachable lifecycle errors ([#127](https://github.com/dshbox/cordis-rs/pull/127))
+
 ## [0.2.12](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.2.11...cordis-core-v0.2.12) - 2026-09-15
 
 ### Fixed
