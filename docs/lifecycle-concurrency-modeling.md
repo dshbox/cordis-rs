@@ -420,7 +420,7 @@ Phase 2 is complete when all of the following are true:
 - [x] Cancelling a `ready()` caller after it drives convergence does not cancel
       framework-owned progress.
 - [x] Tokio `Notify` internals are not falsely claimed as Loom-verified.
-- [ ] The final Phase-2 contract set passes the repository's required PR CI
+- [x] The final Phase-2 contract set passes the repository's required PR CI
       matrix on the merge candidate.
 
 ## Phase 3 — Era replacement model
@@ -611,5 +611,8 @@ Those can proceed separately after the concurrency evidence has a credible core.
   commit cannot return stale `Pending`; `ready()` drives the durable obligation,
   waits again, and framework-owned convergence survives caller cancellation.
   Separate two-waiter tests show cancellation of one `ready()` or `claim()`
-  waiter cannot consume the survivor's release progress. The only remaining
-  Phase-2 completion item is required PR CI on the merge candidate.
+  waiter cannot consume the survivor's release progress.
+- #113 completed the final Phase-2 contract set in required PR CI on Rust 1.88,
+  latest stable, Linux, macOS, and Windows. With that external execution
+  evidence recorded, every Phase-2 completion item is now satisfied; Era
+  replacement remains Phase 3.
