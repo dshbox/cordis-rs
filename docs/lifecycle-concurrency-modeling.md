@@ -368,18 +368,18 @@ MSRV gate must be verified, not assumed.
 Phase 1 is not complete because a `loom` dependency or tests exist. It is
 complete when all of the following are true:
 
-- [ ] The production/spec terminology distinguishes arbitration idle from
+- [x] The production/spec terminology distinguishes arbitration idle from
       semantic quiescence.
 - [ ] LC-01 through LC-06 have explicit executable evidence or an explicit
       documented reason a property remains outside the model.
-- [ ] The model includes revision-to-inspection coverage, not only revision
+- [x] The model includes revision-to-inspection coverage, not only revision
       counters.
 - [ ] The model includes a ready observer capable of detecting stale quiescence
       decisions.
 - [ ] At least the smallest core scenarios complete their declared Loom
       exploration range in PR CI.
-- [ ] The historical release-window negative control fails under the model.
-- [ ] Premature revision acknowledgement fails under the model.
+- [x] The historical release-window negative control fails under the model.
+- [x] Premature revision acknowledgement fails under the model.
 - [ ] Duplicate-holder mutation fails under the model.
 - [ ] Production/model transition mapping is documented and reviewable.
 - [ ] Real Tokio tests remain the authority for behaviors the model does not
@@ -431,3 +431,22 @@ Those can proceed separately after the concurrency evidence has a credible core.
   to `Active`. A temporary mutation that removed the durable commit made this
   exact test fail with `Pending`, confirming the regression discriminates the
   historical bug rather than merely exercising the fixed code.
+
+- After #102 merged #101, the Phase 1 branch was rebased onto `main` and Loom
+  0.7.2 was added as a dev-only workspace dependency. Cargo resolved a Rust
+  1.88-compatible dependency set.
+- The first reduced Loom suite now has six two-thread tests. Positive models cover
+  revision-before-visibility semantic commit, revision-to-inspection coverage,
+  and guarded `ACTIVE -> RELEASING -> IDLE` release. Negative controls restore
+  the pre-#101 visibility-before-revision ordering, acknowledge a new revision
+  without re-inspecting target state, and restore the historical
+  `ACTIVE -> IDLE -> recheck` release window; Loom finds all three counterexamples.
+- The guarded-release oracle originally used two independent booleans and produced
+  a false positive when the recheck completed between the observer's reads. It
+  was corrected to bracket the observation with one `NOT_STARTED / RECHECKING /
+  COMPLETE` phase word. This is retained as a reminder that model assertions
+  themselves require concurrency review.
+- Current PoC gaps remain explicit: no production-shared synchronization seam,
+  no duplicate-holder/`RELEASING -> ACTIVE` kick model yet, no ready linearization
+  observer, no Notify/lost-wakeup model, no multi-mutator history, and no Era
+  model. The current suite is reference-model evidence, not formal verification.

@@ -47,10 +47,13 @@ const INERTIA_RELEASING: u64 = 2;
 /// Three pieces of state, every rule for using them:
 ///
 /// - `inertia: AtomicU64` (`SeqCst` throughout) — IDLE / ACTIVE /
-///   RELEASING. `IDLE` is the *only* quiescent value: [`FiberHandle::ready`](crate::FiberHandle::ready)
-///   and [`Self::claim`] treat it as "no pass in flight or pending", so a
-///   holder may only store it once it has verified no follow-up pass will
-///   start. `RELEASING` is the recheck state that makes that verifiable:
+///   RELEASING. `IDLE` means **arbitration idle**: no convergence holder owns
+///   the slot. It is not sufficient by itself for semantic quiescence because
+///   an off-runtime visibility commit may leave `recheck_committed !=
+///   recheck_settled` while the slot remains IDLE. [`FiberHandle::ready`](crate::FiberHandle::ready)
+///   therefore requires both arbitration IDLE and no outstanding durable
+///   recheck. `RELEASING` prevents a holder from publishing arbitration IDLE
+///   before its final recheck is complete:
 ///   the holder finished its settle pass but has not yet confirmed the
 ///   semantic target stayed put. Releasing *through* `IDLE` (store 0,
 ///   re-check, CAS back to 1) left a window where `ready()` observed
@@ -237,9 +240,9 @@ impl InertiaSlot {
     /// Wait for quiescence: the observe side behind
     /// [`FiberHandle::ready`](crate::FiberHandle::ready). Enable-before-check, same
     /// lost-wakeup discipline as [`Self::claim`]; returns only once the
-    /// slot reads IDLE, which a holder may store only after a clean drift
-    /// recheck — so returning implies the fiber converged for the current
-    /// service snapshot.
+    /// slot reads arbitration IDLE. This says only that no pass owns the
+    /// convergence slot; callers that require semantic quiescence must also
+    /// check that no durable recheck obligation remains.
     pub(crate) async fn wait_idle(&self) {
         loop {
             let notified = self.done.notified();
@@ -262,9 +265,9 @@ impl InertiaSlot {
         self.done.notify_waiters();
     }
 
-    /// Whether the slot currently reads IDLE — the quiescence probe
-    /// [`FiberHandle::ready`](crate::FiberHandle::ready) uses to reject states observed
-    /// after a pass snuck between its wake and its state read.
+    /// Whether the slot currently reads arbitration IDLE — one half of the
+    /// semantic-quiescence probe [`FiberHandle::ready`](crate::FiberHandle::ready)
+    /// uses together with the durable recheck counters.
     pub(crate) fn is_idle(&self) -> bool {
         self.inertia.load(Ordering::SeqCst) == INERTIA_IDLE
     }
