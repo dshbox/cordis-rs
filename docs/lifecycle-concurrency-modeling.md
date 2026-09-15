@@ -480,10 +480,52 @@ All six first-layer tests use `max_threads = 3` and `max_branches = 64`, with
 no permutation or duration cap. They therefore complete the declared finite
 range rather than treating a search budget ending as success.
 
-This is ER-01 through ER-04 evidence only. It does not model candidate cleanup,
-caller cancellation, final dependent convergence, or Tokio notification.
-Existing real Tokio Era regressions remain the authority for those concrete
-runtime behaviors until later Phase 3 slices map them explicitly.
+### Phase 3 ownership findings
+
+The second reduced layer adds only the ownership transitions that remain useful
+outside Tokio itself:
+
+- a source that was already closing cannot grant a new Era claim or candidate;
+- after a swap commits the terminal claim, its own `disposing = true` is not a
+  reason to invalidate the recipe captured before admission; a negative control
+  reproduces that self-refusal bug;
+- an undelivered successful candidate remains framework-owned through the
+  `EraHandoffGuard`/oneshot boundary: cancellation-first assigns exactly one
+  cleanup responsibility, while handoff-first disarms framework cleanup and a
+  later caller cancellation cannot reclaim the published successor;
+- negative controls detect both an orphaned cancellation-first cleanup and an
+  illegal post-handoff reclaim.
+
+Real Tokio coverage anchors ER-05 to the concrete implementation:
+`closed_source_refuses_without_respawn`,
+`replacement_losing_to_committed_dispose_refuses_before_successor_allocation`,
+and `old_terminal_cleanup_precedes_successor_apply` cover refusal before new
+authority plus continuation of the already-committed owner beyond source death.
+
+ER-06 deliberately remains split across model and production evidence rather
+than pretending Loom executes candidate teardown. `CreationGuard` owns every
+committed spawn until complete handoff/error; `InitialApply` returns only after
+teardown/unlink, while `EraHandoffGuard` stores the undelivered successor in one
+`Option` that is consumed either by `accept()` or by `Drop`, never both. Real
+Tokio contracts then pin the concrete boundaries:
+
+- `successor_apply_failure_keeps_primary_cause_cleans_successor_and_waits_final_dependents`;
+- `successor_apply_panic_remains_the_primary_incomplete_cause_after_cleanup`;
+- `cancellation_during_failed_successor_cleanup_cannot_interrupt_terminal_unlink`;
+- `fiber::era::tests::unconsumed_success_offer_cleans_the_offered_successor`.
+
+ER-07 likewise keeps Tokio cancellation as the runtime authority. The reduced
+handoff model covers the final ownership transfer, while deterministic tests
+cover cancellation before the source claim, during old cleanup, during successor
+settle, during failed-successor cleanup, and during final dependent recheck.
+Those tests establish that preclaim cancellation is no-effect and every
+postclaim await belongs to framework-owned completion rather than caller
+liveness.
+
+All twelve Era Loom tests use `max_threads = 3` and `max_branches = 64`, with no
+permutation or duration cap, so the declared finite range completes rather than
+ending on a search budget. Tokio notification, actual cleanup execution, and
+final dependent convergence remain real-runtime evidence.
 
 ### Phase 3 completion criteria
 
@@ -495,12 +537,12 @@ runtime behaviors until later Phase 3 slices map them explicitly.
       control.
 - [x] ER-04 death-before-birth ordering is executable and has an inverted-order
       negative control.
-- [ ] ER-05 closing/dead-source admission and captured-recipe continuation have
-      explicit evidence or a documented structural argument.
-- [ ] ER-06 failed/unpublished candidate cleanup and no-residency are mapped to
-      systematic evidence.
-- [ ] ER-07 preclaim/postclaim cancellation ownership is mapped to systematic
-      evidence.
+- [x] ER-05 closing/dead-source admission and captured-recipe continuation have
+      explicit evidence and a self-refusal negative control.
+- [x] ER-06 failed/unpublished candidate cleanup and no-residency are mapped to
+      structural ownership plus real Tokio cleanup contracts.
+- [x] ER-07 preclaim/postclaim cancellation ownership is mapped to reduced
+      handoff ownership plus deterministic real Tokio cancellation contracts.
 - [ ] ER-08 final dependent convergence and handoff/failure ordering are mapped
       to systematic evidence.
 - [ ] Cross-protocol Era/convergence scenarios cover unfinished convergence and
@@ -688,3 +730,15 @@ Those can proceed separately after the concurrency evidence has a credible core.
   the winner attempts one candidate under the no-retry contract. Three negative
   controls prove the model can detect allocation before claim, a second candidate
   attempt after one claim, and successor birth before complete old-Fiber death.
+
+- Phase 3 ownership evidence extends the Era model through ER-05 and the handoff
+  half of ER-07. A preclosed source cannot mint a new claim; a committed owner
+  continues with its captured recipe even though its own claim closed the source.
+  The handoff model gives cancellation-first exactly one framework cleanup and
+  handoff-first no cleanup authority, with negative controls for both orphaned
+  cleanup and post-handoff reclamation. ER-06 uses the production
+  `CreationGuard`/`EraHandoffGuard` single-owner structure plus real Tokio failure
+  regressions instead of claiming Loom executes terminal cleanup. The full
+  `era_replacement` integration suite remains the runtime authority for
+  cancellation during old cleanup, successor settle, failed cleanup, and final
+  dependent recheck.

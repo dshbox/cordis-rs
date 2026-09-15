@@ -289,3 +289,245 @@ fn successor_attempt_before_source_disposal_is_detected() {
         observer.join().unwrap();
     });
 }
+
+/// ER-05 positive path: once the swap owns the terminal source claim, the fact
+/// that `disposing` is now true is the *result of that claim*, not a reason to
+/// invalidate the already-captured Era recipe. Production captures the recipe
+/// before admission, then lets the detached committed owner use it after source
+/// closure and complete old-Fiber death.
+#[test]
+fn committed_swap_continues_with_its_captured_recipe_after_closure() {
+    era_model(|| {
+        let era = Arc::new(EraArbitration::new());
+        let recipe_captured = Arc::new(AtomicBool::new(false));
+
+        let owner = {
+            let era = era.clone();
+            let recipe_captured = recipe_captured.clone();
+            thread::spawn(move || {
+                recipe_captured.store(true, Ordering::SeqCst);
+                assert!(era.claim_source(&era.swap_claims));
+                assert!(era.disposing.load(Ordering::SeqCst));
+                assert!(recipe_captured.load(Ordering::SeqCst));
+                era.successor_attempts.fetch_add(1, Ordering::SeqCst);
+            })
+        };
+
+        owner.join().unwrap();
+        assert_eq!(era.swap_claims.load(Ordering::SeqCst), 1);
+        assert_eq!(era.successor_attempts.load(Ordering::SeqCst), 1);
+    });
+}
+
+/// ER-05: a source that was already closing before Era admission cannot mint a
+/// new replacement owner or candidate.
+#[test]
+fn preclosed_source_cannot_authorize_a_new_swap() {
+    era_model(|| {
+        let era = Arc::new(EraArbitration::new());
+        era.disposing.store(true, Ordering::SeqCst);
+
+        assert!(!era.swap());
+        assert_eq!(era.swap_claims.load(Ordering::SeqCst), 0);
+        assert_eq!(era.successor_attempts.load(Ordering::SeqCst), 0);
+    });
+}
+
+/// ER-05 negative control. Re-checking `disposing` as though it were external
+/// closure *after* this swap has successfully set it would cause the committed
+/// owner to reject its own captured recipe and strand an already-ended source.
+#[test]
+#[should_panic]
+fn postclaim_closed_recheck_that_abandons_the_captured_recipe_is_detected() {
+    era_model(|| {
+        let era = Arc::new(EraArbitration::new());
+        let recipe_captured = true;
+        assert!(era.claim_source(&era.swap_claims));
+
+        if recipe_captured && !era.disposing.load(Ordering::SeqCst) {
+            era.successor_attempts.fetch_add(1, Ordering::SeqCst);
+        }
+
+        assert_eq!(
+            era.successor_attempts.load(Ordering::SeqCst),
+            1,
+            "committed Era owner abandoned the recipe because its own claim closed the source"
+        );
+    });
+}
+
+const HANDOFF_WAITING: usize = 0;
+const HANDOFF_CANCELLED: usize = 1;
+const HANDOFF_DELIVERED: usize = 2;
+
+/// Reduced ownership model for the `EraHandoffGuard`/oneshot seam. A prepared
+/// successor starts framework-owned. The caller and framework race only over who
+/// crosses the handoff boundary first; after either linearization, ownership is
+/// no longer shared.
+struct HandoffOwnership {
+    state: AtomicUsize,
+    cleanup_claims: AtomicUsize,
+    resident: AtomicBool,
+}
+
+impl HandoffOwnership {
+    fn new() -> Self {
+        Self {
+            state: AtomicUsize::new(HANDOFF_WAITING),
+            cleanup_claims: AtomicUsize::new(0),
+            resident: AtomicBool::new(true),
+        }
+    }
+
+    /// Framework completes the offer. If the receiver already disappeared, the
+    /// guard owns exactly one terminal cleanup; otherwise the successor is
+    /// handed off and the guard is disarmed synchronously.
+    fn offer(&self) {
+        match self.state.compare_exchange(
+            HANDOFF_WAITING,
+            HANDOFF_DELIVERED,
+            Ordering::SeqCst,
+            Ordering::SeqCst,
+        ) {
+            Ok(_) => {}
+            Err(HANDOFF_CANCELLED) => {
+                self.cleanup_claims.fetch_add(1, Ordering::SeqCst);
+                self.resident.store(false, Ordering::SeqCst);
+            }
+            Err(other) => panic!("invalid handoff state {other}"),
+        }
+    }
+
+    /// Caller cancellation before delivery closes only the receive side. If
+    /// delivery already committed, the successor has escaped framework cleanup
+    /// ownership and cannot be reclaimed by cancellation.
+    fn cancel(&self) {
+        match self.state.compare_exchange(
+            HANDOFF_WAITING,
+            HANDOFF_CANCELLED,
+            Ordering::SeqCst,
+            Ordering::SeqCst,
+        ) {
+            Ok(_) | Err(HANDOFF_DELIVERED) => {}
+            Err(other) => panic!("invalid handoff state {other}"),
+        }
+    }
+
+    /// Negative variant: receiver cancellation wins, but the framework drops
+    /// its cleanup responsibility instead of running the handoff guard.
+    fn offer_without_cancelled_cleanup(&self) {
+        let _ = self.state.compare_exchange(
+            HANDOFF_WAITING,
+            HANDOFF_DELIVERED,
+            Ordering::SeqCst,
+            Ordering::SeqCst,
+        );
+    }
+
+    /// Negative variant: cancellation after committed delivery incorrectly
+    /// reclaims a successor that already belongs to the caller.
+    fn cancel_and_reclaim_delivered(&self) {
+        if self.state.load(Ordering::SeqCst) == HANDOFF_DELIVERED {
+            self.cleanup_claims.fetch_add(1, Ordering::SeqCst);
+            self.resident.store(false, Ordering::SeqCst);
+        } else {
+            self.cancel();
+        }
+    }
+}
+
+fn assert_resolved_handoff(handoff: &HandoffOwnership) {
+    match handoff.state.load(Ordering::SeqCst) {
+        HANDOFF_DELIVERED => {
+            assert_eq!(
+                handoff.cleanup_claims.load(Ordering::SeqCst),
+                0,
+                "delivered successor cannot retain framework cleanup ownership"
+            );
+            assert!(
+                handoff.resident.load(Ordering::SeqCst),
+                "delivered successor was reclaimed after handoff"
+            );
+        }
+        HANDOFF_CANCELLED => {
+            assert_eq!(
+                handoff.cleanup_claims.load(Ordering::SeqCst),
+                1,
+                "cancelled handoff must assign exactly one cleanup owner"
+            );
+            assert!(
+                !handoff.resident.load(Ordering::SeqCst),
+                "cancelled handoff left an undelivered successor resident"
+            );
+        }
+        other => panic!("handoff stayed unresolved in state {other}"),
+    }
+}
+
+/// ER-07: caller cancellation and framework handoff race to one linearized
+/// ownership result. Cancellation-first leaves exactly one cleanup obligation;
+/// handoff-first leaves the successor resident and no framework cleanup claim.
+#[test]
+fn caller_cancellation_and_handoff_assign_one_successor_owner() {
+    era_model(|| {
+        let handoff = Arc::new(HandoffOwnership::new());
+        let offering = {
+            let handoff = handoff.clone();
+            thread::spawn(move || handoff.offer())
+        };
+        let cancelling = {
+            let handoff = handoff.clone();
+            thread::spawn(move || handoff.cancel())
+        };
+
+        offering.join().unwrap();
+        cancelling.join().unwrap();
+        assert_resolved_handoff(&handoff);
+    });
+}
+
+/// ER-07 negative control: cancellation-first without guard cleanup leaves an
+/// undelivered successor resident and loses the committed cleanup obligation.
+/// Loom must find the schedule where cancellation wins before the bad offer.
+#[test]
+#[should_panic]
+fn cancelled_handoff_without_framework_cleanup_is_detected() {
+    era_model(|| {
+        let handoff = Arc::new(HandoffOwnership::new());
+        let offering = {
+            let handoff = handoff.clone();
+            thread::spawn(move || handoff.offer_without_cancelled_cleanup())
+        };
+        let cancelling = {
+            let handoff = handoff.clone();
+            thread::spawn(move || handoff.cancel())
+        };
+
+        offering.join().unwrap();
+        cancelling.join().unwrap();
+        assert_resolved_handoff(&handoff);
+    });
+}
+
+/// ER-07 negative control: once delivery commits, caller cancellation cannot
+/// regain cleanup authority over the published successor. Loom must find the
+/// schedule where delivery wins before the bad cancellation path.
+#[test]
+#[should_panic]
+fn cancellation_reclaiming_an_already_handed_off_successor_is_detected() {
+    era_model(|| {
+        let handoff = Arc::new(HandoffOwnership::new());
+        let offering = {
+            let handoff = handoff.clone();
+            thread::spawn(move || handoff.offer())
+        };
+        let cancelling = {
+            let handoff = handoff.clone();
+            thread::spawn(move || handoff.cancel_and_reclaim_delivered())
+        };
+
+        offering.join().unwrap();
+        cancelling.join().unwrap();
+        assert_resolved_handoff(&handoff);
+    });
+}
