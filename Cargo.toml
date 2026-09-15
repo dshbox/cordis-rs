@@ -25,7 +25,7 @@ repository = "https://github.com/dshbox/cordis-rs"
 cordis-core = { path = "crates/cordis-core", version = "0.3.0" }
 cordis-timer = { path = "crates/cordis-timer", version = "0.3.0" }
 cordis-loader = { path = "crates/cordis-loader", version = "0.3.0" }
-cordis-rs = { path = "crates/cordis", version = "0.8.14" }
+cordis-rs = { path = "crates/cordis", version = "0.8.15" }
 examples-common = { path = "examples/common" }
 # Core intentionally omits Tokio's `time` feature; time operations belong to
 # cordis-timer, while serde-backed loading belongs to cordis-loader (ADR 0036).
