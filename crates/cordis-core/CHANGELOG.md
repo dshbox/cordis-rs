@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.2.2](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.2.1...cordis-core-v0.2.2) - 2026-09-15
+
+### Fixed
+
+- *(core)* report detached framework panics ([#97](https://github.com/dshbox/cordis-rs/pull/97))
+
 ## [0.2.1](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.2.0...cordis-core-v0.2.1) - 2026-09-15
 
 ### Other
