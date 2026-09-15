@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.2.0](https://github.com/dshbox/cordis-rs/compare/cordis-timer-v0.1.3...cordis-timer-v0.2.0) - 2026-09-15
+
+### Other
+
+- [**breaking**] rename Fork to FiberHandle ([#90](https://github.com/dshbox/cordis-rs/pull/90))
+
 ## [0.1.2](https://github.com/dshbox/cordis-rs/compare/cordis-timer-v0.1.1...cordis-timer-v0.1.2) - 2026-09-14
 
 ### Fixed

@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.2.0](https://github.com/dshbox/cordis-rs/compare/cordis-loader-v0.1.3...cordis-loader-v0.2.0) - 2026-09-15
+
+### Other
+
+- [**breaking**] rename Fork to FiberHandle ([#90](https://github.com/dshbox/cordis-rs/pull/90))
+
 ### Changed
 
 - [**breaking**] align Loader outcomes with `FiberHandle`: `Spawned::fiber_handle` replaces `fork` and `LoadOutcome::fiber_handles()` replaces `forks()`
