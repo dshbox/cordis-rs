@@ -190,6 +190,11 @@ impl StatePublication {
         baseline_revision: u64,
         timeout: Duration,
     ) -> std::result::Result<(), WaitStateError> {
+        let (current, revision) = self.snapshot(target);
+        if current == target || revision != baseline_revision {
+            return Ok(());
+        }
+
         let deadline = crate::deadline::watchdog(timeout);
         tokio::pin!(deadline);
         loop {
@@ -213,6 +218,7 @@ impl StatePublication {
 #[cfg(test)]
 mod state_publication_tests {
     use super::{FiberState, StatePublication};
+    use std::sync::Arc;
     use std::time::Duration;
 
     #[tokio::test]
@@ -234,6 +240,58 @@ mod state_publication_tests {
             .await
             .expect("the durable Loading revision survives a superseding Active publication");
         assert_eq!(state.current(), FiberState::Active);
+    }
+
+    #[tokio::test]
+    async fn completed_waits_do_not_hold_watchdogs_until_timeout() {
+        let timeout = crate::deadline::tracked_watchdog_timeout();
+        let before = crate::deadline::live_watchdog_threads();
+        let immediate = StatePublication::new(FiberState::Active);
+
+        for _ in 0..20 {
+            immediate
+                .wait_for(FiberState::Active, timeout)
+                .await
+                .expect("the already-published target resolves immediately");
+        }
+        assert_eq!(
+            crate::deadline::live_watchdog_threads(),
+            before,
+            "immediately-satisfied waits must not leave watchdog threads",
+        );
+
+        let state = Arc::new(StatePublication::new(FiberState::Pending));
+        let waiter = {
+            let state = state.clone();
+            tokio::spawn(async move { state.wait_for(FiberState::Active, timeout).await })
+        };
+
+        for _ in 0..100 {
+            if crate::deadline::live_watchdog_threads() == before + 1 {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(crate::deadline::live_watchdog_threads(), before + 1);
+
+        state.publish(FiberState::Active);
+        state.notify();
+        waiter
+            .await
+            .expect("waiter task stays alive")
+            .expect("the publication satisfies the wait");
+
+        for _ in 0..25 {
+            if crate::deadline::live_watchdog_threads() == before {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(
+            crate::deadline::live_watchdog_threads(),
+            before,
+            "an armed watchdog must exit when the wait resolves early",
+        );
     }
 }
 
