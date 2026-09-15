@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.2.7](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.2.6...cordis-core-v0.2.7) - 2026-09-15
+
+### Other
+
+- *(core)* close notify retry contracts ([#113](https://github.com/dshbox/cordis-rs/pull/113))
+
 ## [0.2.6](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.2.5...cordis-core-v0.2.6) - 2026-09-15
 
 ### Other
