@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# gates: the deterministic local checks plus the floating-stable compatibility
-# check, in the same contract used by .github/workflows/ci.yml.
+# gates: the eight local pre-commit checks, including the floating-stable
+# compatibility check. CI separately provisions the explicit MSRV compile,
+# dependency audit/policy, and release-package lanes; this runner does not
+# install their extra tools or duplicate those jobs.
 # Run it before committing; ask follow-up questions of a gate's log
 # instead of re-running the gate.
 #

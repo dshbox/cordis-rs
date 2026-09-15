@@ -31,8 +31,24 @@ setup_default="$(awk '
 grep -Fq 'RUSTUP_TOOLCHAIN=${{ inputs.toolchain }}' .github/actions/setup-rust/action.yml \
   || fail 'setup-rust must export RUSTUP_TOOLCHAIN so lane selection beats directory overrides'
 
-grep -Fq 'toolchain: 1.88.0' .github/workflows/ci.yml \
-  || fail 'CI must keep an explicit Rust 1.88.0 MSRV lane'
+workspace_msrv="$(sed -n 's/^rust-version = "\([^"]*\)"$/\1/p' Cargo.toml)"
+[ -n "$workspace_msrv" ] || fail 'Cargo.toml has no workspace rust-version'
+printf '%s\n' "$workspace_msrv" | grep -Eq '^[0-9]+\.[0-9]+(\.[0-9]+)?$' \
+  || fail "workspace rust-version must be major.minor[.patch], got: $workspace_msrv"
+case "$workspace_msrv" in
+  *.*.*) msrv_toolchain="$workspace_msrv" ;;
+  *.*) msrv_toolchain="$workspace_msrv.0" ;;
+  *) fail "workspace rust-version must be major.minor[.patch], got: $workspace_msrv" ;;
+esac
+
+grep -Fq "toolchain: $msrv_toolchain" .github/workflows/ci.yml \
+  || fail "CI MSRV lane ($msrv_toolchain) must match workspace rust-version ($workspace_msrv)"
+grep -Fq "name: MSRV (Rust $workspace_msrv)" .github/workflows/ci.yml \
+  || fail "CI MSRV job label must match workspace rust-version ($workspace_msrv)"
+grep -Fq "Rust **$workspace_msrv** or newer" README.md \
+  || fail "README Rust requirement must match workspace rust-version ($workspace_msrv)"
+grep -Fq "MSRV $workspace_msrv." README.md \
+  || fail "README MSRV note must match workspace rust-version ($workspace_msrv)"
 grep -Fq 'toolchain: stable' .github/workflows/ci.yml \
   || fail 'CI must keep a floating latest-stable compatibility lane'
 grep -Fq 'components: rust-src' .github/workflows/ci.yml \
@@ -49,4 +65,4 @@ fi
 grep -Fq 'uses: ./.github/actions/setup-rust' .github/workflows/release-plz.yml \
   || fail 'release workflow must use the canonical setup-rust action'
 
-printf 'toolchain-contract: canonical=%s, msrv=1.88.0, latest=stable\n' "$canonical"
+printf 'toolchain-contract: canonical=%s, msrv=%s, latest=stable\n' "$canonical" "$msrv_toolchain"
