@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.2.11](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.2.10...cordis-core-v0.2.11) - 2026-09-15
+
+### Fixed
+
+- *(core)* release wait-state watchdog threads ([#123](https://github.com/dshbox/cordis-rs/pull/123))
+
 ## [0.2.10](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.2.9...cordis-core-v0.2.10) - 2026-09-15
 
 ### Other
