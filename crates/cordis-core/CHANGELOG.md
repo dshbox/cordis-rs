@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.2.5](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.2.4...cordis-core-v0.2.5) - 2026-09-15
+
+### Other
+
+- *(core)* close phase one convergence models ([#109](https://github.com/dshbox/cordis-rs/pull/109))
+
 ## [0.2.4](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.2.3...cordis-core-v0.2.4) - 2026-09-15
 
 ### Other
