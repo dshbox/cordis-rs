@@ -14,6 +14,19 @@ const IDLE: usize = 0;
 const ACTIVE: usize = 1;
 const RELEASING: usize = 2;
 
+fn lc06_model<F>(f: F)
+where
+    F: Fn() + Sync + Send + 'static,
+{
+    let mut builder = loom::model::Builder::new();
+    builder.max_threads = 3; // main + mutation + ready
+    builder.max_branches = 64;
+    // No permutation or duration cap: exhaust the declared finite range.
+    builder.max_permutations = None;
+    builder.max_duration = None;
+    builder.check(f);
+}
+
 /// ADR 0031 / #101 production mapping:
 ///
 /// `ServiceStore` semantic commit:
@@ -461,5 +474,206 @@ fn releasing_kick_that_creates_second_holder_is_detected() {
 
         holder.join().unwrap();
         kick.join().unwrap();
+    });
+}
+
+/// Reduced LC-06 state shared by the ready-history tests.
+///
+/// `published_epoch` is oracle-only history: it marks the semantic publication
+/// point after the target write in the ServiceStore critical section. The
+/// production decision never reads it. All protocol decisions use only the same
+/// ingredients as production: arbitration state, committed/settled revisions,
+/// and the published Fiber state version.
+struct ReadyHistoryModel {
+    slot: AtomicUsize,
+    committed: AtomicUsize,
+    settled: AtomicUsize,
+    state_version: AtomicUsize,
+    published_epoch: AtomicUsize,
+}
+
+impl ReadyHistoryModel {
+    fn new() -> Self {
+        Self {
+            slot: AtomicUsize::new(IDLE),
+            committed: AtomicUsize::new(0),
+            settled: AtomicUsize::new(0),
+            state_version: AtomicUsize::new(0),
+            published_epoch: AtomicUsize::new(0),
+        }
+    }
+
+    fn has_committed_recheck(&self) -> bool {
+        self.committed.load(Ordering::SeqCst) != self.settled.load(Ordering::SeqCst)
+    }
+
+    /// One already-proved Service semantic commit. LC-03 separately models the
+    /// target-inspection coverage behind this abstraction; LC-06 only needs to
+    /// know that version 1 is durably committed before executor-dependent kick.
+    fn commit_one_mutation(&self) {
+        self.committed.store(1, Ordering::SeqCst);
+        // Oracle-only history marker. Production ready never reads it.
+        self.published_epoch.store(1, Ordering::SeqCst);
+    }
+
+    /// One finite successful holder pass for the single modeled mutation. LC-05
+    /// separately proves release/kick authority races; here a winner publishes
+    /// state before acknowledging the revision and releasing arbitration.
+    fn settle_claimed_mutation(&self) {
+        self.state_version.store(1, Ordering::SeqCst);
+        self.slot.store(RELEASING, Ordering::SeqCst);
+        self.settled.store(1, Ordering::SeqCst);
+        self.slot
+            .compare_exchange(RELEASING, IDLE, Ordering::SeqCst, Ordering::SeqCst)
+            .expect("the finite LC-06 model has no second release claimant");
+    }
+
+    /// Best-effort acceleration for the one modeled obligation. `false` means
+    /// another modeled holder already owns/release-tests the slot, so a real
+    /// ready call would wait and retry rather than make an acceptance decision.
+    fn kick_once(&self) -> bool {
+        if !self.has_committed_recheck() {
+            return true;
+        }
+        if self
+            .slot
+            .compare_exchange(IDLE, ACTIVE, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
+        {
+            self.settle_claimed_mutation();
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Phase-1 model of production ready's non-blocking acceptance decision.
+    /// Busy/releasing schedules return `None`; full waiting and lost-wakeup
+    /// progress are intentionally deferred to Phase 2.
+    fn try_ready_acceptance(&self) -> Option<usize> {
+        if self.has_committed_recheck() && !self.kick_once() {
+            return None;
+        }
+        if self.slot.load(Ordering::SeqCst) != IDLE {
+            return None;
+        }
+
+        let observed_state = self.state_version.load(Ordering::SeqCst);
+        (self.slot.load(Ordering::SeqCst) == IDLE && !self.has_committed_recheck())
+            .then_some(observed_state)
+    }
+
+    fn mutation_kick_once(&self) {
+        if !self.has_committed_recheck() {
+            return;
+        }
+        if self
+            .slot
+            .compare_exchange(IDLE, ACTIVE, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
+        {
+            self.settle_claimed_mutation();
+        }
+    }
+}
+
+/// LC-06 history model. A returned old state is legal only when the mutation had
+/// not reached its semantic publication point before this ready invocation: the
+/// call may then linearize before the racing mutation even if it physically
+/// returns later. If publication already preceded invocation, `ready()` must
+/// drive/await the obligation and return the converged state instead.
+#[test]
+fn ready_return_has_a_quiescent_linearization_point() {
+    lc06_model(|| {
+        let model = Arc::new(ReadyHistoryModel::new());
+
+        let mutation = {
+            let model = model.clone();
+            thread::spawn(move || {
+                model.commit_one_mutation();
+                // Preserve the real commit-to-kick window: revision/visibility
+                // are durable truth before executor-dependent acceleration.
+                thread::yield_now();
+                model.mutation_kick_once();
+            })
+        };
+
+        let ready = {
+            let model = model.clone();
+            thread::spawn(move || {
+                // Oracle-only invocation history. Version 0 means there was a
+                // valid version-0 quiescent point at invocation; version 1 means
+                // the mutation's semantic publication already preceded it.
+                let published_at_invocation = model.published_epoch.load(Ordering::SeqCst);
+                let Some(returned) = model.try_ready_acceptance() else {
+                    // This schedule reached a busy/releasing point. Production
+                    // ready would wait/retry; Phase 2 models that progress.
+                    return;
+                };
+
+                match returned {
+                    0 => assert_eq!(
+                        published_at_invocation, 0,
+                        "ready returned pre-mutation state although publication preceded invocation"
+                    ),
+                    1 => {
+                        // `try_ready_acceptance` accepted version 1 only after its own
+                        // IDLE + no-pending checks. Do not inspect current state
+                        // again here: a later mutation may legally start after
+                        // that decision and before this oracle assertion runs.
+                    }
+                    other => panic!("invalid modeled Fiber state version {other}"),
+                }
+            })
+        };
+
+        mutation.join().unwrap();
+        ready.join().unwrap();
+    });
+}
+
+/// LC-06 negative control. This deliberately reduces ready to `wait until IDLE;
+/// read state; return`, omitting both durable-obligation driving and the final
+/// committed-vs-settled recheck. The mutation is forced to publish before the
+/// invocation while its kick is still delayed. Loom must then expose the stale
+/// version-0 return with no valid quiescence point inside the invocation.
+#[test]
+#[should_panic]
+fn ready_that_treats_idle_as_quiescent_is_detected() {
+    lc06_model(|| {
+        let model = Arc::new(ReadyHistoryModel::new());
+
+        let mutation = {
+            let model = model.clone();
+            thread::spawn(move || {
+                model.commit_one_mutation();
+                thread::yield_now();
+                model.mutation_kick_once();
+            })
+        };
+
+        let ready = {
+            let model = model.clone();
+            thread::spawn(move || {
+                // Force the bad case: semantic publication has committed, but
+                // the executor-dependent kick may not have run yet.
+                while model.published_epoch.load(Ordering::SeqCst) == 0 {
+                    thread::yield_now();
+                }
+                let published_at_invocation = model.published_epoch.load(Ordering::SeqCst);
+
+                while model.slot.load(Ordering::SeqCst) != IDLE {
+                    thread::yield_now();
+                }
+                let returned = model.state_version.load(Ordering::SeqCst);
+
+                if returned == 0 && published_at_invocation == 1 {
+                    panic!("stale ready return has no quiescent linearization point");
+                }
+            })
+        };
+
+        mutation.join().unwrap();
+        ready.join().unwrap();
     });
 }

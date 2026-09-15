@@ -303,7 +303,9 @@ evidence. Phase 1 must include deterministic negative controls, at least:
 
 - restore the historical `ACTIVE -> IDLE -> recheck -> ACTIVE` release window;
 - allow revision acknowledgement before the inspection covering that revision;
-- allow a racing `RELEASING` kick to create a second logical holder.
+- allow a racing `RELEASING` kick to create a second logical holder;
+- let `ready()` treat arbitration `IDLE` as semantic quiescence after a
+  pre-invocation Service commit.
 
 Each mutation must cause the corresponding model invariant to fail. Where a
 counterexample can be expressed through the public/runtime API, preserve it as a
@@ -374,17 +376,17 @@ complete when all of the following are true:
       documented reason a property remains outside the model.
 - [x] The model includes revision-to-inspection coverage, not only revision
       counters.
-- [ ] The model includes a ready observer capable of detecting stale quiescence
+- [x] The model includes a ready observer capable of detecting stale quiescence
       decisions.
 - [ ] At least the smallest core scenarios complete their declared Loom
       exploration range in PR CI.
 - [x] The historical release-window negative control fails under the model.
 - [x] Premature revision acknowledgement fails under the model.
 - [x] Duplicate-holder mutation fails under the model.
-- [ ] Production/model transition mapping is documented and reviewable.
-- [ ] Real Tokio tests remain the authority for behaviors the model does not
+- [x] Production/model transition mapping is documented and reviewable.
+- [x] Real Tokio tests remain the authority for behaviors the model does not
       execute.
-- [ ] Known coverage gaps and progress assumptions are documented.
+- [x] Known coverage gaps and progress assumptions are documented.
 
 ## Non-goals
 
@@ -446,16 +448,32 @@ Those can proceed separately after the concurrency evidence has a credible core.
   was corrected to bracket the observation with one `NOT_STARTED / RECHECKING /
   COMPLETE` phase word. This is retained as a reminder that model assertions
   themselves require concurrency review.
-- Current PoC gaps remain explicit: no production-shared synchronization seam,
-  no duplicate-holder/`RELEASING -> ACTIVE` kick model yet, no ready linearization
-  observer, no Notify/lost-wakeup model, no multi-mutator history, and no Era
-  model. The current suite is reference-model evidence, not formal verification.
+- At the #104 checkpoint, the remaining gaps were a production-shared
+  synchronization seam, LC-05 authority identity, LC-06 ready history,
+  Notify/lost-wakeup behavior, multi-mutator histories, and Era. This was
+  reference-model evidence, not formal verification.
 
 - LC-05 now has a packed authority-state model for a kick overlapping release.
   Legal schedules end either with owner A reactivated by `RELEASING -> ACTIVE`
   or with owner B claiming only after A has published `IDLE`. A negative control
   that transfers `RELEASING` directly to B is detected as duplicate logical
   authority. This models authority identity rather than counting live futures.
-- LC-06 remains intentionally unmodeled in this change. A useful ready model must
-  represent invocation/linearization history; merely asserting a final snapshot
-  would either reject legal overlap histories or prove its own instrumentation.
+- The #106 LC-05 change intentionally left LC-06 for a separate history model:
+  a final-state snapshot would either reject legal overlap histories or prove
+  its own instrumentation.
+
+- LC-06 now has an invocation-history model for the non-blocking `ready()`
+  decision. The oracle records only whether the single modeled Service mutation
+  had reached its semantic publication point before invocation; it does not
+  participate in protocol decisions. Returning the old state is accepted when
+  publication races after invocation (a legal pre-mutation linearization point)
+  and rejected when publication already preceded invocation. A negative control
+  that treats arbitration `IDLE` as semantic quiescence reproduces the stale
+  off-runtime commit-to-kick window. Full Notify/lost-wakeup behavior remains
+  Phase 2.
+
+- The LC-06 positive history model declares `max_threads = 3` and
+  `max_branches = 64`, with no permutation or duration cap. Its state space is
+  intentionally finite: one semantic mutation, one ready actor, and the main
+  test thread. CI therefore exhausts that declared range instead of stopping on
+  a time/permutation budget. The full Notify wait/retry protocol remains Phase 2.

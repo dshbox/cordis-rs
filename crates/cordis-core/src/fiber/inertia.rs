@@ -35,7 +35,7 @@ impl SemanticTarget {
     }
 }
 
-/// No pass in flight or pending — the only quiescent value.
+/// No convergence holder owns the slot; durable recheck obligations may still be pending.
 const INERTIA_IDLE: u64 = 0;
 /// A settle/converge pass holds the slot.
 const INERTIA_ACTIVE: u64 = 1;
