@@ -405,8 +405,9 @@ complete when all of the following are true:
       counters.
 - [x] The model includes a ready observer capable of detecting stale quiescence
       decisions.
-- [ ] At least the smallest core scenarios complete their declared Loom
-      exploration range in PR CI.
+- [x] At least the smallest core scenarios complete their declared Loom
+      exploration range in PR CI; #109 completed that declared range across the
+      repository's required CI matrix.
 - [x] The historical release-window negative control fails under the model.
 - [x] Premature revision acknowledgement fails under the model.
 - [x] Duplicate-holder mutation fails under the model.
@@ -523,3 +524,7 @@ Those can proceed separately after the concurrency evidence has a credible core.
   `parking_lot`, Tokio notification, runtime discovery, and task dispatch. The
   reduced-model + transition-map + Tokio-contract approach remains the smaller,
   clearer evidence architecture for the current protocol.
+- #109 completed the declared Phase-1 model range in required PR CI on Rust
+  1.88, latest stable, Linux, macOS, and Windows. With that external execution
+  evidence recorded, every Phase-1 completion item is now satisfied; Notify
+  waiting remains explicitly Phase 2 and Era replacement remains Phase 3.
