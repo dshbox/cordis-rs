@@ -272,16 +272,6 @@ async fn run_committed_replacement(
 
 fn map_spawn_failure(error: SpawnError) -> EraSwapFailure {
     match error {
-        SpawnError::DependencyContractMismatch { service } => {
-            EraSwapFailure::SuccessorDependencyContractMismatch { service }
-        }
-        SpawnError::DependencyConfiguration {
-            service,
-            diagnostic,
-        } => EraSwapFailure::SuccessorDependencyConfiguration {
-            service,
-            diagnostic,
-        },
         SpawnError::InitialApply(failure) => EraSwapFailure::SuccessorApply(failure),
         SpawnError::Interrupted => EraSwapFailure::SuccessorLost,
         SpawnError::InactiveContext => {
@@ -397,30 +387,6 @@ mod tests {
             .await
             .unwrap();
         source.dispose().await.unwrap();
-    }
-
-    #[test]
-    fn dependency_admission_failures_keep_exact_incomplete_causes() {
-        let contract = map_spawn_failure(SpawnError::DependencyContractMismatch {
-            service: "svc-a".to_owned(),
-        });
-        assert!(matches!(
-            contract,
-            EraSwapFailure::SuccessorDependencyContractMismatch { ref service }
-                if service == "svc-a"
-        ));
-
-        let configuration = map_spawn_failure(SpawnError::DependencyConfiguration {
-            service: "svc-b".to_owned(),
-            diagnostic: "bad layer".to_owned(),
-        });
-        assert!(matches!(
-            configuration,
-            EraSwapFailure::SuccessorDependencyConfiguration {
-                ref service,
-                ref diagnostic,
-            } if service == "svc-b" && diagnostic == "bad layer"
-        ));
     }
 
     #[test]

@@ -299,20 +299,6 @@ mod state_publication_tests {
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum EraSwapFailure {
-    /// A successor dependency contract could not be admitted.
-    #[error("successor dependency `{service}` has a contract mismatch")]
-    SuccessorDependencyContractMismatch {
-        /// The dependency Service name.
-        service: String,
-    },
-    /// A successor dependency configuration could not be prepared.
-    #[error("successor dependency `{service}` configuration is invalid: {diagnostic}")]
-    SuccessorDependencyConfiguration {
-        /// The dependency Service name.
-        service: String,
-        /// The normalized preparation diagnostic.
-        diagnostic: String,
-    },
     /// The fresh successor's initial apply failed after allocation.
     #[error("successor apply failed: {0}")]
     SuccessorApply(PluginFailure),

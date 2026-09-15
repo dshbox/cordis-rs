@@ -15,12 +15,12 @@ fn effect_registration(e: EffectRegistrationError) { match e { EffectRegistratio
 fn task_registration(e: TaskRegistrationError) { match e { TaskRegistrationError::InactiveContext | TaskRegistrationError::ExecutorUnavailable => {}, _ => {} } }
 fn listener_registration(e: ListenerRegistrationError) { match e { ListenerRegistrationError::InactiveContext | ListenerRegistrationError::EventContractMismatch { .. } => {}, _ => {} } }
 fn dispatch(e: DispatchError) { match e { DispatchError::EventContractMismatch { .. } | DispatchError::ForeignScope | DispatchError::IncompatibleRole { .. } | DispatchError::Invocation(_) | DispatchError::Parallel(_) => {}, _ => {} } }
-fn spawn(e: SpawnError) { match e { SpawnError::InactiveContext | SpawnError::DependencyContractMismatch { .. } | SpawnError::DependencyConfiguration { .. } | SpawnError::InitialApply(_) | SpawnError::Interrupted => {}, _ => {} } }
+fn spawn(e: SpawnError) { match e { SpawnError::InactiveContext | SpawnError::InitialApply(_) | SpawnError::Interrupted => {}, _ => {} } }
 fn ready(e: ReadyError) { match e { ReadyError::Recursion(_) | ReadyError::Apply(_) => {}, _ => {} } }
 fn restart(e: RestartError) { match e { RestartError::Closed | RestartError::Recursion(_) | RestartError::Apply(_) => {}, _ => {} } }
 fn wait(e: WaitStateError) { match e { WaitStateError::Elapsed | WaitStateError::Recursion(_) => {}, _ => {} } }
 fn update(e: UpdateError) { match e { UpdateError::PluginContractMismatch | UpdateError::Closed | UpdateError::Recursion(_) | UpdateError::Control(_) | UpdateError::AdmissionLost | UpdateError::Apply(_) => {}, _ => {} } }
-fn era_failure(e: EraSwapFailure) { match e { EraSwapFailure::SuccessorDependencyContractMismatch { .. } | EraSwapFailure::SuccessorDependencyConfiguration { .. } | EraSwapFailure::SuccessorApply(_) | EraSwapFailure::SuccessorLost => {}, _ => {} } }
+fn era_failure(e: EraSwapFailure) { match e { EraSwapFailure::SuccessorApply(_) | EraSwapFailure::SuccessorLost => {}, _ => {} } }
 fn era(e: EraSwapError) { match e { EraSwapError::PluginContractMismatch | EraSwapError::Closed | EraSwapError::Recursion(_) | EraSwapError::Incomplete(_) => {}, _ => {} } }
 fn plugin_failure(e: &PluginFailure) { let _: PluginFailureKind = e.kind(); let _: &str = e.diagnostic(); }
 fn effect_failure(e: &EffectFailure) { let _: EffectFailureKind = e.kind(); let _: &str = e.diagnostic(); }

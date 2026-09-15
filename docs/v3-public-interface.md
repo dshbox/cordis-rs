@@ -1013,11 +1013,6 @@ pub enum LifecycleOperation {
 #[non_exhaustive]
 pub enum SpawnError {
     InactiveContext,
-    DependencyContractMismatch { service: String },
-    DependencyConfiguration {
-        service: String,
-        diagnostic: String,
-    },
     InitialApply(PluginFailure),
     Interrupted,
 }
@@ -1053,11 +1048,6 @@ pub enum UpdateError {
 
 #[non_exhaustive]
 pub enum EraSwapFailure {
-    SuccessorDependencyContractMismatch { service: String },
-    SuccessorDependencyConfiguration {
-        service: String,
-        diagnostic: String,
-    },
     SuccessorApply(PluginFailure),
     SuccessorLost,
 }

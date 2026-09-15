@@ -172,26 +172,6 @@ pub enum SpawnError {
     /// Pre-commit: nothing was allocated.
     #[error("the spawning context's fiber generation is closed to new fibers")]
     InactiveContext,
-    /// A declared required Service cannot match its provider's contract.
-    /// Pre-commit: nothing was allocated. Produced by the dependency
-    /// admission-validation phase (the typed declaration surface cannot
-    /// mismatch today; the seam arrives with its owning ticket).
-    #[error("the declared dependency on `{service}` does not match its provider's contract")]
-    DependencyContractMismatch {
-        /// The mismatched Service's name.
-        service: String,
-    },
-    /// A declared dependency's configuration failed to prepare.
-    /// Pre-commit: nothing was allocated. Produced by the dependency
-    /// admission-validation phase (the seam arrives with its owning
-    /// ticket).
-    #[error("the configuration for dependency `{service}` is invalid: {diagnostic}")]
-    DependencyConfiguration {
-        /// The Service whose configuration failed.
-        service: String,
-        /// The preparation failure's diagnostic text.
-        diagnostic: String,
-    },
     /// The first apply returned an error or panicked. The failed
     /// generation's complete LIFO rollback ran, and the attempted Fiber
     /// was disposed and unlinked before this error returned.

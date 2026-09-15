@@ -1,4 +1,17 @@
-// typed update control
+//! Typed same-Fiber update control.
+//!
+//! `Context::on_update` registers generation-owned Mapper/Around policy
+//! occurrences. The framework alone invokes the scoped precommit chain for a
+//! `FiberHandle::update`: matching layers may transform, veto, or fail the
+//! request-local `PreparedChange`, and the private tail only records provisional
+//! acceptance. Lifecycle admission and commit happen afterward.
+//!
+//! Registration reuses Event listener adapters, options, occurrence identities,
+//! and the gated publication seam, but update control is not Event dispatch. In
+//! particular, update-policy registrations and invocations are not
+//! `RuntimeObservation::ListenerRegistration` / `DispatchCompleted` records;
+//! ADRs 0034 and 0035 keep precommit policy separate from postcommit Runtime
+//! observation.
 use crate::Plugin;
 use crate::context::{Context, ScopeNode};
 use crate::events::{
