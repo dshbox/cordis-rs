@@ -380,7 +380,7 @@ complete when all of the following are true:
       exploration range in PR CI.
 - [x] The historical release-window negative control fails under the model.
 - [x] Premature revision acknowledgement fails under the model.
-- [ ] Duplicate-holder mutation fails under the model.
+- [x] Duplicate-holder mutation fails under the model.
 - [ ] Production/model transition mapping is documented and reviewable.
 - [ ] Real Tokio tests remain the authority for behaviors the model does not
       execute.
@@ -450,3 +450,12 @@ Those can proceed separately after the concurrency evidence has a credible core.
   no duplicate-holder/`RELEASING -> ACTIVE` kick model yet, no ready linearization
   observer, no Notify/lost-wakeup model, no multi-mutator history, and no Era
   model. The current suite is reference-model evidence, not formal verification.
+
+- LC-05 now has a packed authority-state model for a kick overlapping release.
+  Legal schedules end either with owner A reactivated by `RELEASING -> ACTIVE`
+  or with owner B claiming only after A has published `IDLE`. A negative control
+  that transfers `RELEASING` directly to B is detected as duplicate logical
+  authority. This models authority identity rather than counting live futures.
+- LC-06 remains intentionally unmodeled in this change. A useful ready model must
+  represent invocation/linearization history; merely asserting a final snapshot
+  would either reject legal overlap histories or prove its own instrumentation.

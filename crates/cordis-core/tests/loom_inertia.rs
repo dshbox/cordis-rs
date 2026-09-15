@@ -286,3 +286,180 @@ fn historical_idle_before_recheck_is_detected() {
         observer.join().unwrap();
     });
 }
+
+/// LC-05 reduced authority model for a mutation whose kick overlaps the release
+/// boundary. Owner A is the current convergence holder. If the kick wins while
+/// A is RELEASING it must reactivate **A**, not create owner B. If A publishes
+/// IDLE first, only then may the kick claim a new owner B.
+#[test]
+fn racing_releasing_kick_preserves_single_authority() {
+    loom::model(|| {
+        const IDLE_NONE: usize = 0;
+        const ACTIVE_A: usize = 1;
+        const RELEASING_A: usize = 2;
+        const ACTIVE_B: usize = 3;
+        const RELEASE_STARTED: usize = 1;
+
+        let authority = Arc::new(AtomicUsize::new(ACTIVE_A));
+        let phase = Arc::new(AtomicUsize::new(0));
+
+        let holder = {
+            let authority = authority.clone();
+            let phase = phase.clone();
+            thread::spawn(move || {
+                authority.store(RELEASING_A, Ordering::SeqCst);
+                phase.store(RELEASE_STARTED, Ordering::SeqCst);
+                thread::yield_now();
+
+                match authority.compare_exchange(
+                    RELEASING_A,
+                    IDLE_NONE,
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                ) {
+                    Ok(_) => {}
+                    Err(ACTIVE_A) => {
+                        // The racing kick reactivated the same logical holder.
+                    }
+                    Err(other) => {
+                        panic!("release transferred authority to unexpected owner {other}")
+                    }
+                }
+            })
+        };
+
+        let kick = {
+            let authority = authority.clone();
+            let phase = phase.clone();
+            thread::spawn(move || {
+                while phase.load(Ordering::SeqCst) != RELEASE_STARTED {
+                    thread::yield_now();
+                }
+
+                loop {
+                    match authority.load(Ordering::SeqCst) {
+                        RELEASING_A => {
+                            if authority
+                                .compare_exchange(
+                                    RELEASING_A,
+                                    ACTIVE_A,
+                                    Ordering::SeqCst,
+                                    Ordering::SeqCst,
+                                )
+                                .is_ok()
+                            {
+                                break;
+                            }
+                        }
+                        IDLE_NONE => {
+                            if authority
+                                .compare_exchange(
+                                    IDLE_NONE,
+                                    ACTIVE_B,
+                                    Ordering::SeqCst,
+                                    Ordering::SeqCst,
+                                )
+                                .is_ok()
+                            {
+                                break;
+                            }
+                        }
+                        ACTIVE_A | ACTIVE_B => break,
+                        other => panic!("invalid modeled authority state {other}"),
+                    }
+                }
+            })
+        };
+
+        holder.join().unwrap();
+        kick.join().unwrap();
+        assert!(matches!(
+            authority.load(Ordering::SeqCst),
+            ACTIVE_A | ACTIVE_B
+        ));
+    });
+}
+
+/// LC-05 negative control. This deliberately treats a kick that wins against
+/// RELEASING as authority transfer to a newly dispatched owner B. The old holder
+/// still owns the release attempt, so Loom must find the duplicate-authority
+/// interleaving where A observes B instead of its own reactivation.
+#[test]
+#[should_panic]
+fn releasing_kick_that_creates_second_holder_is_detected() {
+    loom::model(|| {
+        const IDLE_NONE: usize = 0;
+        const ACTIVE_A: usize = 1;
+        const RELEASING_A: usize = 2;
+        const ACTIVE_B: usize = 3;
+        const RELEASE_STARTED: usize = 1;
+
+        let authority = Arc::new(AtomicUsize::new(ACTIVE_A));
+        let phase = Arc::new(AtomicUsize::new(0));
+
+        let holder = {
+            let authority = authority.clone();
+            let phase = phase.clone();
+            thread::spawn(move || {
+                authority.store(RELEASING_A, Ordering::SeqCst);
+                phase.store(RELEASE_STARTED, Ordering::SeqCst);
+                thread::yield_now();
+                match authority.compare_exchange(
+                    RELEASING_A,
+                    IDLE_NONE,
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                ) {
+                    Ok(_) | Err(ACTIVE_A) => {}
+                    Err(ACTIVE_B) => panic!("racing kick created a second logical holder"),
+                    Err(other) => panic!("invalid modeled authority state {other}"),
+                }
+            })
+        };
+
+        let kick = {
+            let authority = authority.clone();
+            let phase = phase.clone();
+            thread::spawn(move || {
+                while phase.load(Ordering::SeqCst) != RELEASE_STARTED {
+                    thread::yield_now();
+                }
+                loop {
+                    match authority.load(Ordering::SeqCst) {
+                        RELEASING_A => {
+                            if authority
+                                .compare_exchange(
+                                    RELEASING_A,
+                                    ACTIVE_B,
+                                    Ordering::SeqCst,
+                                    Ordering::SeqCst,
+                                )
+                                .is_ok()
+                            {
+                                break;
+                            }
+                        }
+                        IDLE_NONE => {
+                            if authority
+                                .compare_exchange(
+                                    IDLE_NONE,
+                                    ACTIVE_B,
+                                    Ordering::SeqCst,
+                                    Ordering::SeqCst,
+                                )
+                                .is_ok()
+                            {
+                                break;
+                            }
+                        }
+                        ACTIVE_A | ACTIVE_B => break,
+                        other => panic!("invalid modeled authority state {other}"),
+                    }
+                }
+            })
+        };
+
+        holder.join().unwrap();
+        kick.join().unwrap();
+    });
+}
