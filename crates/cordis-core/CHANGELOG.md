@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.2.8](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.2.7...cordis-core-v0.2.8) - 2026-09-15
+
+### Other
+
+- *(core)* model era source arbitration ([#115](https://github.com/dshbox/cordis-rs/pull/115))
+
 ## [0.2.7](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.2.6...cordis-core-v0.2.7) - 2026-09-15
 
 ### Other
