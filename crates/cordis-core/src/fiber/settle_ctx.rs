@@ -7,8 +7,8 @@
 
 use std::cell::RefCell;
 use std::future::Future;
-use std::sync::Arc;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Weak};
 
 use super::{Fiber, LifecycleOperation, LifecycleRecursion};
 
@@ -16,17 +16,41 @@ tokio::task_local! {
     static SETTLE_CTX: RefCell<SettleCtx>;
 }
 
-/// Exact allocation facts carried by one task. Strong references pin every
-/// named Fiber for the whole attribution scope, so address identity cannot be
-/// recycled while a refusal decision may still observe it.
-#[derive(Clone, Default)]
-pub(crate) struct SettleCtx {
-    settling: Vec<Arc<Fiber>>,
-    run_owner: Option<Arc<Fiber>>,
+/// One exact-allocation attribution frame shared across task boundaries.
+/// The source scope deactivates the frame when it exits, so a transferred
+/// snapshot cannot keep a stale recursion refusal alive after the dependency
+/// that made the wait unsafe has ended.
+#[derive(Clone)]
+struct AttributionFrame {
+    fiber: Weak<Fiber>,
+    active: Arc<AtomicBool>,
 }
 
-fn same_allocation(candidate: &Arc<Fiber>, target: &Fiber) -> bool {
-    std::ptr::eq(candidate.as_ref(), target)
+impl AttributionFrame {
+    fn new(fiber: &Arc<Fiber>) -> Self {
+        Self {
+            fiber: Arc::downgrade(fiber),
+            active: Arc::new(AtomicBool::new(true)),
+        }
+    }
+
+    fn is_active_for(&self, target: &Fiber) -> bool {
+        self.active.load(Ordering::SeqCst)
+            && std::ptr::eq(self.fiber.as_ptr(), target as *const Fiber)
+    }
+
+    fn deactivate(&self) {
+        self.active.store(false, Ordering::SeqCst);
+    }
+}
+
+/// Exact allocation facts carried by one task. The source scope guard pins each
+/// named Fiber while its frame is live; transferred snapshots keep only weak
+/// identity so they do not extend allocation lifetime after that scope ends.
+#[derive(Clone, Default)]
+pub(crate) struct SettleCtx {
+    settling: Vec<AttributionFrame>,
+    run_owner: Option<AttributionFrame>,
 }
 
 fn run_task_wait_is_doomed(fiber: &Fiber, operation: LifecycleOperation) -> bool {
@@ -48,10 +72,10 @@ fn is_doomed(fiber: &Fiber, operation: LifecycleOperation) -> bool {
         (
             cell.settling
                 .iter()
-                .any(|candidate| same_allocation(candidate, fiber)),
+                .any(|candidate| candidate.is_active_for(fiber)),
             cell.run_owner
                 .as_ref()
-                .is_some_and(|candidate| same_allocation(candidate, fiber)),
+                .is_some_and(|candidate| candidate.is_active_for(fiber)),
         )
     }) {
         Ok(facts) => facts,
@@ -71,16 +95,17 @@ pub(crate) fn refuse_recursion(
     }
 }
 
-/// Capture the caller's exact allocation attribution before committed work
-/// changes task. Era replacement transfers this snapshot to its detached owner.
+/// Capture the caller's exact allocation attribution before work changes task.
+/// Framework continuations and `Context::spawn_attributed` transfer this
+/// snapshot across task boundaries.
 pub(crate) fn capture_attribution() -> SettleCtx {
     SETTLE_CTX
         .try_with(|cell| cell.borrow().clone())
         .unwrap_or_default()
 }
 
-/// Scope framework-owned continuation work to previously captured attribution.
-/// Tokio task-locals are otherwise intentionally not inherited by spawned tasks.
+/// Scope work to previously captured attribution. Tokio task-locals are
+/// otherwise intentionally not inherited by spawned tasks.
 pub(crate) async fn with_attribution<R>(
     attribution: SettleCtx,
     work: impl Future<Output = R>,
@@ -88,33 +113,54 @@ pub(crate) async fn with_attribution<R>(
     SETTLE_CTX.scope(RefCell::new(attribution), work).await
 }
 
-/// Cancellation/unwind guard for a bracket nested inside an existing task-local
-/// scope. The outermost bracket relies on `task_local::scope` cleanup itself.
-struct NestedBracketGuard;
+/// Cancellation/unwind guard for one live settle-attribution frame. Nested
+/// scopes also pop their frame from the current task-local stack; transferred
+/// copies observe the shared liveness bit instead.
+struct SettleFrameGuard {
+    frame: AttributionFrame,
+    _allocation_pin: Arc<Fiber>,
+    pop_nested: bool,
+}
 
-impl Drop for NestedBracketGuard {
+impl Drop for SettleFrameGuard {
     fn drop(&mut self) {
-        let _ = SETTLE_CTX.try_with(|cell| cell.borrow_mut().settling.pop());
+        self.frame.deactivate();
+        if self.pop_nested {
+            let _ = SETTLE_CTX.try_with(|cell| cell.borrow_mut().settling.pop());
+        }
     }
 }
 
 /// Attribute one apply/settle or teardown body to `fiber` for exactly `pass`.
 /// Nested bodies form a stack so an inner Fiber cannot hide an outer allocation.
 pub(crate) async fn bracket<R>(fiber: Arc<Fiber>, pass: impl Future<Output = R>) -> R {
+    let frame = AttributionFrame::new(&fiber);
     if SETTLE_CTX
-        .try_with(|cell| cell.borrow_mut().settling.push(fiber.clone()))
+        .try_with(|cell| cell.borrow_mut().settling.push(frame.clone()))
         .is_ok()
     {
-        let _guard = NestedBracketGuard;
+        let _guard = SettleFrameGuard {
+            frame,
+            _allocation_pin: fiber,
+            pop_nested: true,
+        };
         pass.await
     } else {
+        let guard_frame = frame.clone();
         SETTLE_CTX
             .scope(
                 RefCell::new(SettleCtx {
-                    settling: vec![fiber],
+                    settling: vec![frame],
                     run_owner: None,
                 }),
-                pass,
+                async move {
+                    let _guard = SettleFrameGuard {
+                        frame: guard_frame,
+                        _allocation_pin: fiber,
+                        pop_nested: false,
+                    };
+                    pass.await
+                },
             )
             .await
     }
@@ -128,13 +174,22 @@ pub(crate) async fn run_task<F>(fiber: Arc<Fiber>, task: F)
 where
     F: Future,
 {
+    let frame = AttributionFrame::new(&fiber);
+    let guard_frame = frame.clone();
     let _ = SETTLE_CTX
         .scope(
             RefCell::new(SettleCtx {
                 settling: Vec::new(),
-                run_owner: Some(fiber),
+                run_owner: Some(frame),
             }),
-            task,
+            async move {
+                let _guard = SettleFrameGuard {
+                    frame: guard_frame,
+                    _allocation_pin: fiber,
+                    pop_nested: false,
+                };
+                task.await
+            },
         )
         .await;
 }
@@ -240,13 +295,40 @@ mod tests {
     async fn captured_attribution_transfers_exactly_without_leaking() {
         let a = fiber();
         let b = fiber();
-        let captured = super::bracket(a.clone(), async { super::capture_attribution() }).await;
-        super::with_attribution(captured, async {
-            refused(&a, LifecycleOperation::EraSwap);
-            super::refuse_recursion(&b, LifecycleOperation::EraSwap).unwrap();
+        let probe = a.clone();
+        super::bracket(a.clone(), async {
+            let captured = super::capture_attribution();
+            tokio::spawn(super::with_attribution(captured, async move {
+                refused(&probe, LifecycleOperation::EraSwap);
+                super::refuse_recursion(&b, LifecycleOperation::EraSwap).unwrap();
+            }))
+            .await
+            .unwrap();
         })
         .await;
         super::refuse_recursion(&a, LifecycleOperation::EraSwap).unwrap();
+    }
+
+    #[tokio::test]
+    async fn transferred_attribution_expires_with_its_source_scope() {
+        let a = fiber();
+        let probe = a.clone();
+        let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+        let (child_tx, child_rx) = tokio::sync::oneshot::channel();
+        super::bracket(a.clone(), async {
+            let captured = super::capture_attribution();
+            let child = tokio::spawn(super::with_attribution(captured, async move {
+                release_rx.await.unwrap();
+                super::refuse_recursion(&probe, LifecycleOperation::Ready).unwrap();
+            }));
+            child_tx.send(child).unwrap();
+        })
+        .await;
+
+        let child = child_rx.await.unwrap();
+        release_tx.send(()).unwrap();
+        child.await.unwrap();
+        super::refuse_recursion(&a, LifecycleOperation::Ready).unwrap();
     }
 
     #[tokio::test]
@@ -270,7 +352,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn scopes_start_clean_and_spawned_tasks_do_not_inherit_attribution() {
+    async fn scopes_start_clean_and_raw_tokio_spawn_does_not_inherit_attribution() {
         let a = fiber();
         super::bracket(a.clone(), async {
             super::SETTLE_CTX.with(|cell: &RefCell<SettleCtx>| {
@@ -296,9 +378,10 @@ mod tests {
                 let cell = cell.borrow();
                 assert!(cell.settling.is_empty());
                 assert!(
-                    cell.run_owner
-                        .as_ref()
-                        .is_some_and(|owner| Arc::ptr_eq(owner, &probe))
+                    cell.run_owner.as_ref().is_some_and(|owner| std::ptr::eq(
+                        owner.fiber.as_ptr(),
+                        Arc::as_ptr(&probe)
+                    ))
                 );
             });
         })

@@ -165,6 +165,14 @@ Service-specific configuration; it exposes no raw layer storage and
 prepares no source configuration during derivation. The raw intercept
 getter is private.
 
+`Context::spawn_attributed(future)` is the user-owned Tokio task seam for
+apply/cleanup work that crosses a task boundary but remains part of the current
+settle dependency graph. It carries exact-allocation lifecycle-recursion
+attribution into the spawned task and returns the ordinary Tokio `JoinHandle`;
+it does not make the task generation-owned. Raw `tokio::spawn` carries no such
+attribution. Inherited frames expire with their source settle scope, so a task
+that outlives that scope does not retain a stale recursion refusal.
+
 ## Plugin preparation, sealing, and creation
 
 The base Plugin contract is:
@@ -628,7 +636,9 @@ Effects do not grow acquire, producer, iterator, or nested-lifecycle
 APIs. `Context::run` is a generation-owned cooperative task/join
 operation; its wrapper consumes any task output and returns framework
 `()`, so user output has no universal `Send` bound. Registration fails
-before the task starts.
+before the task starts. `Context::spawn_attributed` is deliberately different:
+it only carries current settle attribution into user-owned spawned work and
+returns its `JoinHandle`; it registers no generation cleanup or join.
 
 ## Logger
 

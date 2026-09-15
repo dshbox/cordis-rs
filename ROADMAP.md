@@ -113,8 +113,9 @@ settled architecture merely to create more pre-1.0 work.
 
 - [ ] **Close a 1.0 failure-boundary audit.** Map the supported critical paths to
   existing docs/tests for returned failure, contained panic, caller cancellation,
-  executor-unavailable/off-runtime behavior where applicable, deterministic cleanup,
-  and application teardown. Close any material undefined boundary or explicitly
+  executor-unavailable/off-runtime behavior where applicable, cross-task
+  lifecycle-recursion attribution, deterministic cleanup, and application teardown.
+  Close any material undefined boundary or explicitly
   classify it as unsupported in the owning authority.
 - [ ] **Verify teardown guidance against demonstrated consumers.** The project must
   show a documented, tested way for applications to terminate their admitted work

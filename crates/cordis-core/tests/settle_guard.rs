@@ -169,6 +169,88 @@ impl Plugin for ApplyProbe {
     }
 }
 
+struct SpawnedApplyProbe {
+    fiber_handle: Arc<Mutex<Option<FiberHandle>>>,
+    seen: Arc<Mutex<Vec<(LifecycleOperation, Observation)>>>,
+}
+
+impl Plugin for SpawnedApplyProbe {
+    type Config = LifecycleOperation;
+    type Input = LifecycleOperation;
+    type PrepareError = Infallible;
+    type ApplyError = Infallible;
+
+    fn prepare(&self, operation: LifecycleOperation) -> Result<LifecycleOperation, Infallible> {
+        Ok(operation)
+    }
+
+    fn apply(
+        &self,
+        ctx: Context,
+        operation: &LifecycleOperation,
+    ) -> impl Future<Output = Result<(), Infallible>> + Send {
+        let fiber_handle = self.fiber_handle.lock().clone();
+        let seen = self.seen.clone();
+        let operation = *operation;
+        async move {
+            if let Some(fiber_handle) = fiber_handle {
+                let task_ctx = ctx.clone();
+                let observation = ctx
+                    .spawn_attributed(async move {
+                        observe::<SpawnedApplyProbe, _>(&task_ctx, &fiber_handle, operation, || {
+                            operation
+                        })
+                        .await
+                    })
+                    .await
+                    .expect("spawned self-wait task stays alive");
+                seen.lock().push((operation, observation));
+            }
+            Ok(())
+        }
+    }
+}
+
+#[tokio::test]
+async fn attributed_spawn_from_apply_refuses_every_lifecycle_self_wait() {
+    for operation in OPERATIONS {
+        let ctx = Context::new();
+        let fiber_handle_cell = Arc::new(Mutex::new(None));
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let fiber_handle = ctx
+            .spawn(PreparedPlugin::from_input(
+                SpawnedApplyProbe {
+                    fiber_handle: fiber_handle_cell.clone(),
+                    seen: seen.clone(),
+                },
+                operation,
+            ))
+            .await
+            .unwrap();
+        *fiber_handle_cell.lock() = Some(fiber_handle.clone());
+        let id = fiber_handle.id();
+
+        bounded(2_000, fiber_handle.restart())
+            .await
+            .expect("attributed spawned self-wait must refuse instead of deadlocking")
+            .unwrap_or_else(|error| panic!("host restart for {operation:?} failed: {error:?}"));
+
+        let (reported_operation, observation) = {
+            let mut outcomes = seen.lock();
+            assert_eq!(
+                outcomes.len(),
+                1,
+                "one second-apply probe for {operation:?}"
+            );
+            outcomes.pop().unwrap()
+        };
+        assert_eq!(reported_operation, operation);
+        assert_recursion(observation, operation, &id);
+        assert_eq!(fiber_handle.state(), FiberState::Active);
+        fiber_handle.dispose().await.unwrap();
+    }
+}
+
 #[tokio::test]
 async fn own_apply_refuses_every_lifecycle_self_wait_by_exact_allocation() {
     for operation in OPERATIONS {

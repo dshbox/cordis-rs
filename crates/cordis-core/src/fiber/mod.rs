@@ -13,7 +13,7 @@
 //!
 //! | file | contents |
 //! |---|---|
-//! | `mod` | `Fiber` (private), [`FiberState`], [`FiberHandle`], [`Context::run`] |
+//! | `mod` | `Fiber` (private), [`FiberState`], [`FiberHandle`], [`Context::spawn_attributed`], [`Context::run`] |
 //! | `spawn` | the spawn transaction — [`Context::spawn`], [`SpawnError`], [`PluginFailure`], and the creation-cancellation guard |
 //! | `spawn_state` | `SpawnState` — the installed spawn record, lock discipline, and purpose-specific snapshots |
 //! | `inertia` | `InertiaSlot` — the settle protocol's single home: the ops, the `SemanticTarget` cell, and the three lifecycle passes (initial spawn, convergence, restart) |
@@ -1102,6 +1102,33 @@ pub(crate) fn refuse_group_removal_recursion(
 }
 
 impl Context {
+    /// Spawn a user-owned task carrying the caller's current settle-context
+    /// attribution across the Tokio task boundary.
+    ///
+    /// Raw [`tokio::spawn`] starts with a fresh Tokio task-local scope, so code
+    /// spawned from a Plugin apply/cleanup body would otherwise lose the
+    /// allocation facts used to refuse a lifecycle self-wait. Use this when a
+    /// spawned task remains part of the current settle dependency graph, such
+    /// as fan-out work that the apply/cleanup body awaits before returning.
+    ///
+    /// Transferred attribution follows the source scope's lifetime: if the
+    /// spawned task outlives that scope, the expired frames stop refusing
+    /// lifecycle calls. The spawned task itself is user-owned; unlike
+    /// [`Context::run`], it is not registered for generation drain/join.
+    ///
+    /// # Panics
+    ///
+    /// Panics when called without a current Tokio runtime, matching
+    /// [`tokio::spawn`].
+    pub fn spawn_attributed<F>(&self, task: F) -> tokio::task::JoinHandle<F::Output>
+    where
+        F: Future + Send + 'static,
+        F::Output: Send + 'static,
+    {
+        let attribution = settle_ctx::capture_attribution();
+        tokio::spawn(settle_ctx::with_attribution(attribution, task))
+    }
+
     /// Run a task bound to this context's fiber generation — the
     /// task-specific cleanup composition (ADR 0009 decision 5's W6
     /// home): a cooperative task the generation owns, drains, and
@@ -1246,6 +1273,9 @@ enum RunSlot {
 ///
 /// Cheap to clone; lifecycle operations go through the shared private Fiber
 /// body. Correlation identity is exposed separately as an opaque [`FiberId`].
+/// Lifecycle-recursion attribution is task-local by default; apply/cleanup code
+/// that spawns and awaits user work should use [`Context::spawn_attributed`]
+/// when that work may re-enter lifecycle operations on an attributed Fiber.
 #[derive(Clone)]
 pub struct FiberHandle {
     pub(crate) fiber: Arc<Fiber>,
@@ -1282,7 +1312,10 @@ pub enum LifecycleOperation {
 /// A lifecycle self-wait that would deadlock on one concrete Fiber allocation.
 ///
 /// The value exposes semantic operation plus opaque correlation identity only;
-/// allocation-address attribution remains private to the runtime.
+/// allocation-address attribution remains private to the runtime. Tokio task
+/// locals do not propagate through raw [`tokio::spawn`]; Plugin code that
+/// spawns and awaits subtask work which may enter lifecycle operations should use
+/// [`Context::spawn_attributed`] so the typed refusal crosses that task boundary.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("{operation:?} cannot wait on {fiber_id:?} from that Fiber's settle context")]
 pub struct LifecycleRecursion {

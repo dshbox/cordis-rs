@@ -465,7 +465,10 @@ The typed recursion refusal names the operation and the FiberId and
 covers ready, wait_state, restart, update, era swap, dispose, and typed
 group removal — the last refused before any Registry detach — while
 legal unrelated-Fiber waits and the dynamic era-swap backstops are
-preserved.
+preserved. Raw Tokio spawns intentionally start without task-local settle
+attribution; `Context::spawn_attributed` is the explicit user-task seam for
+subtasks that remain inside the settle dependency graph, with transferred
+frames expiring when the source scope exits.
 
 ## Module and crate seams
 

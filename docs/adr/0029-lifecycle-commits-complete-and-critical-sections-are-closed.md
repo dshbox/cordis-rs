@@ -109,8 +109,13 @@ claim, or allocation effect, by attribution to the concrete Fiber
 allocation rather than to any public id or state. The typed
 `LifecycleRecursion` refusal names the operation and the FiberId and
 covers ready, wait_state, restart, update, era swap, dispose, and typed
-group removal — the last refused before any Registry detach. Legal
-unrelated-Fiber waits and the dynamic era-swap backstops are preserved.
+group removal — the last refused before any Registry detach. Raw
+`tokio::spawn` does not inherit Tokio task-local attribution; user subtasks
+that remain in the current settle dependency graph cross that task boundary
+through `Context::spawn_attributed`. Transferred frames share source liveness
+and stop refusing once the source settle scope ends, so detached subtasks cannot
+retain stale recursion state. Legal unrelated-Fiber waits and the dynamic
+era-swap backstops are preserved.
 
 **Registry detach and exact-allocation prune.** Bulk removal commits at
 detaching one current PluginGroup allocation. Attach-before-detach joins

@@ -191,8 +191,12 @@ _Avoid_: settle loop, reload cycle, settle choreography
 Code running inside a Fiber's own settle pass or teardown: apply bodies,
 disposers, and the Fiber's generation-owned tasks during a drain. The
 Fiber's lifecycle operations refuse a synchronous self-wait from its settle
-context with typed `LifecycleRecursion` instead of deadlocking; detached
-Runtime-observation delivery is outside the source Fiber's settle context.
+context with typed `LifecycleRecursion` instead of deadlocking. Raw
+`tokio::spawn` starts outside that task-local context; user subtasks that
+remain in the settle dependency graph carry it explicitly through
+`Context::spawn_attributed`, and inherited frames expire when their source
+settle scope ends. Detached Runtime-observation delivery is outside the source
+Fiber's settle context.
 _Avoid_: re-entrancy guard, settle callback
 
 ### Loader and consumer language
