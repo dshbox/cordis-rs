@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.2.10](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.2.9...cordis-core-v0.2.10) - 2026-09-15
+
+### Other
+
+- *(core)* close era convergence contracts ([#119](https://github.com/dshbox/cordis-rs/pull/119))
+
 ## [0.2.9](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.2.8...cordis-core-v0.2.9) - 2026-09-15
 
 ### Other
