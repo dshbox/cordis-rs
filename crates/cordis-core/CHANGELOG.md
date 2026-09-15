@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.2.12](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.2.11...cordis-core-v0.2.12) - 2026-09-15
+
+### Fixed
+
+- *(core)* carry lifecycle attribution across task spawn ([#125](https://github.com/dshbox/cordis-rs/pull/125))
+
 ## [0.2.11](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.2.10...cordis-core-v0.2.11) - 2026-09-15
 
 ### Fixed
