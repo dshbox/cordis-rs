@@ -1137,6 +1137,87 @@ impl Plugin for RestartGateEra {
     }
 }
 
+#[derive(Debug)]
+struct ConvergenceGateValue;
+impl Service for ConvergenceGateValue {
+    const NAME: &'static str = "phase3/convergence-gate-value";
+}
+
+struct ConvergenceGateEra {
+    applies: Arc<AtomicUsize>,
+    second_apply_entered: Arc<tokio::sync::Notify>,
+    second_apply_release: Arc<tokio::sync::Notify>,
+}
+impl Plugin for ConvergenceGateEra {
+    type Config = ();
+    type Input = ();
+    type PrepareError = Infallible;
+    type ApplyError = Infallible;
+    fn inject(&self) -> InjectSpec {
+        InjectSpec::none().require(ConvergenceGateValue::NAME)
+    }
+    fn prepare(&self, _: ()) -> Result<(), Infallible> {
+        Ok(())
+    }
+    async fn apply(&self, _: Context, _: &()) -> Result<(), Infallible> {
+        let round = self.applies.fetch_add(1, Ordering::SeqCst) + 1;
+        if round == 2 {
+            self.second_apply_entered.notify_one();
+            self.second_apply_release.notified().await;
+        }
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn era_waits_for_inflight_dependency_convergence_before_source_claim() {
+    let root = Context::new();
+    let publication = root.provide(Arc::new(ConvergenceGateValue)).unwrap();
+    let applies = Arc::new(AtomicUsize::new(0));
+    let second_apply_entered = Arc::new(tokio::sync::Notify::new());
+    let second_apply_release = Arc::new(tokio::sync::Notify::new());
+    let source = root
+        .spawn(PreparedPlugin::from_input(
+            ConvergenceGateEra {
+                applies: applies.clone(),
+                second_apply_entered: second_apply_entered.clone(),
+                second_apply_release: second_apply_release.clone(),
+            },
+            (),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(applies.load(Ordering::SeqCst), 1);
+
+    publication.remove().unwrap();
+    assert_eq!(source.ready().await.unwrap(), FiberState::Pending);
+    let _replacement = root.provide(Arc::new(ConvergenceGateValue)).unwrap();
+    second_apply_entered.notified().await;
+    assert_eq!(source.state(), FiberState::Loading);
+
+    let mut swap = Box::pin(source.era_swap(PreparedChange::from_input::<ConvergenceGateEra>(())));
+    assert!(matches!(
+        futures::poll!(&mut swap),
+        std::task::Poll::Pending
+    ));
+    assert_eq!(
+        applies.load(Ordering::SeqCst),
+        2,
+        "waiting for source claim cannot allocate or apply a successor"
+    );
+    assert_eq!(source.state(), FiberState::Loading);
+
+    second_apply_release.notify_one();
+    let successor = common::bounded(2_000, swap)
+        .await
+        .expect("Era continues after dependency convergence releases the source slot")
+        .unwrap();
+    assert_eq!(source.state(), FiberState::Disposed);
+    assert_eq!(successor.state(), FiberState::Active);
+    assert_eq!(applies.load(Ordering::SeqCst), 3);
+    successor.dispose().await.unwrap();
+}
+
 #[tokio::test]
 async fn cancellation_while_waiting_for_source_claim_is_no_effect() {
     let root = Context::new();
@@ -1304,6 +1385,58 @@ async fn cancelable_source() -> (
         successor_cleaned,
         applies,
     )
+}
+
+#[tokio::test]
+async fn old_ready_waiter_completes_at_source_barrier_before_successor_handoff() {
+    let (
+        _root,
+        source,
+        old_started,
+        old_release,
+        successor_started,
+        successor_release,
+        _successor_cleaned,
+        _applies,
+    ) = cancelable_source().await;
+    let swap = tokio::spawn({
+        let source = source.clone();
+        async move {
+            source
+                .era_swap(PreparedChange::from_input::<CancelableEra>(2))
+                .await
+        }
+    });
+    old_started.notified().await;
+
+    let mut ready = Box::pin(source.ready());
+    assert!(matches!(
+        futures::poll!(&mut ready),
+        std::task::Poll::Pending
+    ));
+
+    old_release.notify_one();
+    successor_started.notified().await;
+    assert_eq!(source.state(), FiberState::Disposed);
+    assert_eq!(
+        common::bounded(1_000, ready)
+            .await
+            .expect("old ready waiter completes at the old terminal barrier")
+            .unwrap(),
+        FiberState::Disposed
+    );
+    assert!(
+        !swap.is_finished(),
+        "old ready must not follow or wait for successor handoff progress"
+    );
+
+    successor_release.notify_one();
+    let successor = common::bounded(2_000, swap)
+        .await
+        .expect("successor handoff completes after its own apply is released")
+        .unwrap()
+        .unwrap();
+    successor.dispose().await.unwrap();
 }
 
 #[tokio::test]
@@ -1485,8 +1618,14 @@ impl Plugin for BlockingFinalDependent {
     }
 }
 
-#[tokio::test]
-async fn cancellation_during_final_dependent_recheck_finishes_no_handoff_convergence() {
+async fn blocking_final_convergence_fixture() -> (
+    FiberHandle,
+    FiberHandle,
+    Arc<tokio::sync::Notify>,
+    Arc<tokio::sync::Notify>,
+    Arc<Mutex<Vec<u8>>>,
+    Arc<AtomicUsize>,
+) {
     let root = Context::new();
     let cleanups = Arc::new(AtomicUsize::new(0));
     let source = root
@@ -1518,6 +1657,45 @@ async fn cancellation_during_final_dependent_recheck_finishes_no_handoff_converg
         .await
         .unwrap();
     assert_eq!(*seen.lock(), vec![1]);
+    (source, dependent, entered, release, seen, cleanups)
+}
+
+#[tokio::test]
+async fn successful_handoff_waits_for_blocked_final_dependent_recheck() {
+    let (source, dependent, entered, release, seen, _cleanups) =
+        blocking_final_convergence_fixture().await;
+
+    let swap = tokio::spawn({
+        let source = source.clone();
+        async move {
+            source
+                .era_swap(PreparedChange::from_input::<EraProbe>(2))
+                .await
+        }
+    });
+    entered.notified().await;
+    assert_eq!(source.state(), FiberState::Disposed);
+    assert!(
+        !swap.is_finished(),
+        "successful handoff cannot outrun final current-target convergence"
+    );
+
+    release.notify_one();
+    let successor = common::bounded(2_000, swap)
+        .await
+        .expect("handoff completes after the final dependent recheck")
+        .unwrap()
+        .unwrap();
+    assert_eq!(successor.state(), FiberState::Active);
+    assert_eq!(dependent.state(), FiberState::Active);
+    assert_eq!(seen.lock().last().copied(), Some(2));
+    successor.dispose().await.unwrap();
+}
+
+#[tokio::test]
+async fn cancellation_during_final_dependent_recheck_finishes_no_handoff_convergence() {
+    let (source, dependent, entered, release, seen, cleanups) =
+        blocking_final_convergence_fixture().await;
 
     let swap = tokio::spawn({
         let source = source.clone();

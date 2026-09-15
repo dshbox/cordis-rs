@@ -524,8 +524,43 @@ liveness.
 
 All twelve Era Loom tests use `max_threads = 3` and `max_branches = 64`, with no
 permutation or duration cap, so the declared finite range completes rather than
-ending on a search budget. Tokio notification, actual cleanup execution, and
-final dependent convergence remain real-runtime evidence.
+ending on a search budget. Tokio notification and actual cleanup execution remain
+real-runtime evidence.
+
+### Phase 3 convergence findings
+
+The final layer stays on real Tokio because the remaining properties are about
+actual `ready()`/Service convergence and await ordering rather than a smaller
+atomic ownership state machine.
+
+ER-08 now has explicit success and incomplete-result barriers. On success,
+`successful_handoff_waits_for_blocked_final_dependent_recheck` parks one affected
+dependent while it applies the successor's current publication and proves the Era
+future cannot hand the successor out until that recheck completes. On failure,
+`successor_apply_failure_keeps_primary_cause_cleans_successor_and_waits_final_dependents`
+already parks the final replacement target and proves `Incomplete` cannot return
+before current-target convergence. The cancellation contract
+`cancellation_during_final_dependent_recheck_finishes_no_handoff_convergence`
+keeps the same final-convergence responsibility under framework ownership when no
+caller remains to receive the successor.
+
+The requested cross-protocol coverage is also explicit:
+
+- `era_waits_for_inflight_dependency_convergence_before_source_claim` drives a
+  real Service dependency mutation into a blocked second apply. Era admission
+  cannot claim or allocate while that convergence pass owns the source lifecycle
+  slot; after release, the swap claims the source and creates exactly one fresh
+  successor.
+- `old_ready_waiter_completes_at_source_barrier_before_successor_handoff` starts
+  `ready()` while source terminal cleanup still owns the slot. The old waiter
+  returns `Disposed` once the source barrier completes even though successor
+  apply remains blocked and Era handoff has not happened. Old-Fiber readiness
+  therefore neither follows nor owns successor progress.
+
+These tests are deterministic protocol gates: `Notify` establishes the exact
+blocked phase, explicit `Poll::Pending` or `JoinHandle::is_finished()` checks pin
+the forbidden early completion, and bounded waits are only hang guards after the
+relevant owner is released.
 
 ### Phase 3 completion criteria
 
@@ -543,10 +578,10 @@ final dependent convergence remain real-runtime evidence.
       structural ownership plus real Tokio cleanup contracts.
 - [x] ER-07 preclaim/postclaim cancellation ownership is mapped to reduced
       handoff ownership plus deterministic real Tokio cancellation contracts.
-- [ ] ER-08 final dependent convergence and handoff/failure ordering are mapped
-      to systematic evidence.
-- [ ] Cross-protocol Era/convergence scenarios cover unfinished convergence and
-      old-Fiber `ready()` around successor handoff.
+- [x] ER-08 final dependent convergence and handoff/failure ordering are mapped
+      to deterministic real Tokio barriers for success, incomplete, and cancellation.
+- [x] Cross-protocol Era/convergence scenarios cover unfinished Service-driven
+      convergence and old-Fiber `ready()` around successor handoff.
 - [ ] The final Phase-3 contract set passes the repository's required PR CI
       matrix on the merge candidate.
 
@@ -742,3 +777,13 @@ Those can proceed separately after the concurrency evidence has a credible core.
   `era_replacement` integration suite remains the runtime authority for
   cancellation during old cleanup, successor settle, failed cleanup, and final
   dependent recheck.
+
+- Phase 3 final-convergence evidence stays on real Tokio. A successful Era handoff
+  is held behind a blocked final dependent recheck; the existing incomplete path
+  is likewise held behind its final current target, and caller cancellation does
+  not release that framework-owned convergence responsibility. Cross-protocol
+  tests additionally show Era admission waiting behind an in-flight
+  Service-driven convergence pass and an old-Fiber `ready()` waiter completing
+  at the source terminal barrier while successor handoff is still blocked. ER-08
+  and the declared cross-protocol scenarios are complete; only required PR CI
+  remains before Phase 3 can be closed.
