@@ -391,7 +391,7 @@ impl InertiaSlot {
                         let settled = self.target.lock().clone();
                         if let Some(settled) = settled {
                             if self.exit_recheck(fiber, root, &settled, revision) {
-                                Self::spawn_convergence_pass(&handle, fiber, root);
+                                drop(Self::spawn_convergence_pass(&handle, fiber, root));
                             }
                         } else {
                             // Before the creation pass records its first target,
@@ -399,7 +399,7 @@ impl InertiaSlot {
                             // convergence winner owns the slot, but settle_once
                             // still leaves the first apply to creation.
                             self.record_target(fiber.compute_target(root));
-                            Self::spawn_convergence_pass(&handle, fiber, root);
+                            drop(Self::spawn_convergence_pass(&handle, fiber, root));
                         }
                         return;
                     }
@@ -426,10 +426,14 @@ impl InertiaSlot {
         handle: &tokio::runtime::Handle,
         fiber: &Arc<Fiber>,
         root: &Arc<Root>,
-    ) {
+    ) -> tokio::task::JoinHandle<()> {
+        let logger = root.logger.logger_for_fiber(&fiber.name);
+        let context = format!("fiber={:?}", fiber.name);
         let fiber = fiber.clone();
         let root = root.clone();
-        handle.spawn(async move { fiber.slot.convergence_pass(&fiber, &root).await });
+        crate::framework_task::spawn(handle, logger, "fiber convergence", context, async move {
+            fiber.slot.convergence_pass(&fiber, &root).await
+        })
     }
 
     /// Drive the initial settle pass of a freshly spawned fiber: claim the
@@ -730,6 +734,7 @@ mod tests {
     use crate::context::RealmKey;
     use crate::deadline::bounded;
     use crate::fiber::{Fiber, FiberState};
+    use crate::logger::{BufferExporter, Level};
     use std::sync::Arc;
 
     /// The direct test tier for the settle protocol — each invariant below
@@ -895,6 +900,58 @@ mod tests {
             "no second apply ran"
         );
         assert!(!fiber.is_alive(), "the attempted fiber was torn down");
+    }
+
+    #[tokio::test]
+    async fn detached_convergence_invariant_panic_is_reported_and_remains_panicked() {
+        let ctx = Context::new();
+        let buffer = Arc::new(BufferExporter::new(8, Level::Debug).unwrap());
+        let _registration = ctx.add_exporter(buffer.clone()).unwrap();
+        let fiber = fiber_requiring(&ctx, &[]);
+
+        // Manufacture the framework-only impossible shape: an ACTIVE
+        // convergence slot without the SemanticTarget every real claimant
+        // records before spawning the pass. The task must fail loudly; the
+        // reporting boundary may add diagnostics but must not repair the slot.
+        assert!(fiber.slot.try_claim());
+        let join = super::InertiaSlot::spawn_convergence_pass(
+            &tokio::runtime::Handle::current(),
+            &fiber,
+            &ctx.root,
+        );
+
+        let error = join
+            .await
+            .expect_err("the invariant panic still ends the task");
+        assert!(error.is_panic());
+        assert!(
+            !fiber.slot.is_idle(),
+            "framework panic reporting must not synthesize a recovery transition"
+        );
+
+        let records = buffer.snapshot();
+        assert_eq!(
+            records.len(),
+            1,
+            "one structured report per framework panic"
+        );
+        assert_eq!(records[0].level(), Level::Error);
+        assert_eq!(records[0].channel(), "test");
+        assert!(
+            records[0]
+                .text()
+                .contains("framework task fiber convergence panicked")
+        );
+        assert!(records[0].text().contains("fiber=\"test\""));
+        assert!(
+            records[0]
+                .text()
+                .contains("an active convergence pass has a recorded SemanticTarget")
+        );
+
+        // Test-only cleanup after proving that production reporting did not
+        // recover the corrupt protocol state.
+        fiber.slot.abandon();
     }
 
     #[tokio::test]

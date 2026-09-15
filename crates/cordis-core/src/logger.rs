@@ -288,6 +288,13 @@ impl LoggerService {
         Self::default()
     }
 
+    pub(crate) fn logger_for_fiber(self: &Arc<Self>, fiber_name: &str) -> Logger {
+        Logger {
+            name: hyphenate(fiber_name),
+            service: self.clone(),
+        }
+    }
+
     fn next_sequence(&self) -> u64 {
         self.sequence
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
@@ -367,10 +374,7 @@ impl LoggerService {
 impl Context {
     /// Obtain the current Fiber's default hyphenated Logger channel.
     pub fn logger(&self) -> Logger {
-        Logger {
-            name: hyphenate(&self.fiber.name),
-            service: self.root.logger.clone(),
-        }
+        self.root.logger.logger_for_fiber(&self.fiber.name)
     }
 
     /// Atomically publish one exact exporter occurrence and generation cleanup.

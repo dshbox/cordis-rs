@@ -37,6 +37,7 @@ pub mod service;
 mod contained;
 mod deadline;
 mod deps;
+mod framework_task;
 mod gated;
 mod update;
 
