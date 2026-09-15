@@ -582,7 +582,7 @@ relevant owner is released.
       to deterministic real Tokio barriers for success, incomplete, and cancellation.
 - [x] Cross-protocol Era/convergence scenarios cover unfinished Service-driven
       convergence and old-Fiber `ready()` around successor handoff.
-- [ ] The final Phase-3 contract set passes the repository's required PR CI
+- [x] The final Phase-3 contract set passes the repository's required PR CI
       matrix on the merge candidate.
 
 ## CI policy target
@@ -785,5 +785,8 @@ Those can proceed separately after the concurrency evidence has a credible core.
   tests additionally show Era admission waiting behind an in-flight
   Service-driven convergence pass and an old-Fiber `ready()` waiter completing
   at the source terminal barrier while successor handoff is still blocked. ER-08
-  and the declared cross-protocol scenarios are complete; only required PR CI
-  remains before Phase 3 can be closed.
+  and the declared cross-protocol scenarios are complete.
+
+- #119 completed the final Phase-3 contract set in required PR CI on Rust 1.88,
+  latest stable, Linux, macOS, and Windows. With that external execution evidence
+  recorded, every Phase-3 completion item is now satisfied.
