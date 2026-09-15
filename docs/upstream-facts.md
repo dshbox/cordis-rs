@@ -558,7 +558,7 @@ Upstream timer is a separate package (`packages/timer/src/index.ts`), a
 
 Upstream loader is a full **service** (`Loader extends EntryTree`, provides
 `'loader'`) — `packages/loader/src/index.ts:47-72`. v1's core deliberately
-keeps only `load(ctx, resolver)` + caller-held fork table and pushes
+keeps only `load(ctx, resolver)` + caller-held lifecycle-handle table and pushes
 file/patch/preset composition out (ADR 0003): for this doc that makes most
 loader rows carried-with-rework or omitted; the semantic anchors:
 
