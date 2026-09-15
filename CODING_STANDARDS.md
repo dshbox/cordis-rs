@@ -1,7 +1,7 @@
 # Coding standards
 
-Standing rules for the review pass (the code-review skill's Standards
-axis). Domain rules live in `CONTEXT.md` and `docs/adr/` — this file
+Standing cross-cutting rules for code review. Domain rules live in
+`CONTEXT.md` and `docs/adr/` — this file
 carries only the cross-cutting checks that reviews kept finding the
 hard way, one precedent each. Documented rules here are citable as
 hard violations; tooling-enforced checks stay in CI (`ci/gates.sh`).

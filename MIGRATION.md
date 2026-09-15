@@ -1,29 +1,53 @@
-# Migrating from cordis-rs 0.6.x to v3
+# Migrating to Cordis v3
 
-`cordis-rs 0.7` is an architectural replacement, not a source-compatible update of
+Cordis v3 first shipped on the `cordis-rs 0.7.x` line and currently publishes on
+`0.8.x`. It is an architectural replacement, not a source-compatible update of
 `0.6.x`. The old implementation remains maintained on `legacy/0.6` for critical
 bug and security fixes.
 
-## Dependency identity
+## Current dependency identity
 
-Applications may keep the historical package and Rust import names:
+Applications keep the historical package and Rust import names:
 
 ```toml
-cordis-rs = "0.7"
+cordis-rs = "0.8"
 ```
 
 ```rust
 use cordis::Context;
 ```
 
-The `cordis-rs` package is now a thin facade over `cordis-core = "0.1"`. Framework
+The `cordis-rs` package is a thin facade over `cordis-core = "0.2"`. Framework
 and plugin crates should normally depend on `cordis-core` directly. Timer and
-loader capabilities are explicit optional crates rather than facade features.
+loader capabilities are explicit optional crates rather than facade features:
 
-## Architectural changes
+```toml
+cordis-timer = "0.2"
+cordis-loader = "0.2"
+```
+
+## From 0.7.x to 0.8.x
+
+`0.8.x` removes the old `Fork` spelling in favor of `FiberHandle`. There is no
+compatibility alias. Update the public type paths and Loader outcome spellings:
+
+```text
+cordis::Fork                         -> cordis::FiberHandle
+cordis::lifecycle::Fork              -> cordis::lifecycle::FiberHandle
+EntryOutcome::Spawned { fork, .. }   -> EntryOutcome::Spawned { fiber_handle, .. }
+LoadOutcome::forks()                 -> LoadOutcome::fiber_handles()
+```
+
+This is a naming break, not a lifecycle-ownership change: dropping a
+`FiberHandle`, including the last clone, still does not dispose the Fiber. See
+[ADR 0039](docs/adr/0039-consumer-fiber-control-is-a-fiber-handle.md) for the
+naming decision and [`docs/v3-migration.md`](docs/v3-migration.md) for the full
+lifecycle migration inventory.
+
+## From 0.6.x to v3
 
 The migration is governed by the accepted v3 ADRs in `docs/adr/0028` through
-`0038`. The most visible changes are:
+`0039`. The most visible architectural changes are:
 
 - Context no longer implies one hidden hierarchy: Service isolation, Event Scope,
   and intercept are orthogonal axes.
@@ -44,5 +68,6 @@ The legacy `cordis-include`, `cordis-group`, and `cordis-cli` crates are not
 mechanically carried into v3. They remain part of the `0.6.x` ecosystem until a
 v3-native design is justified by the new semantic architecture.
 
-For the exhaustive migration inventory, see `docs/v3-migration.md`. For the exact
-v3 public surface, see `docs/v3-public-interface.md`.
+For the exhaustive migration inventory, see [`docs/v3-migration.md`](docs/v3-migration.md).
+For the exact v3 public surface, see
+[`docs/v3-public-interface.md`](docs/v3-public-interface.md).
