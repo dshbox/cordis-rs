@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.3.3](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.3.2...cordis-core-v0.3.3) - 2026-09-16
+
+### Other
+
+- tighten release docs and ci policy ([#136](https://github.com/dshbox/cordis-rs/pull/136))
+
 ## [0.3.2](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.3.1...cordis-core-v0.3.2) - 2026-09-16
 
 ### Fixed
