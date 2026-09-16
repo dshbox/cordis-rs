@@ -47,7 +47,8 @@ grep -Fq "name: MSRV (Rust $workspace_msrv)" .github/workflows/ci.yml \
   || fail "CI MSRV job label must match workspace rust-version ($workspace_msrv)"
 grep -Fq "Rust **$workspace_msrv** or newer" README.md \
   || fail "README Rust requirement must match workspace rust-version ($workspace_msrv)"
-grep -Fq "MSRV $workspace_msrv." README.md \
+escaped_workspace_msrv="${workspace_msrv//./\.}"
+grep -Eq "MSRV ${escaped_workspace_msrv}\.$" README.md \
   || fail "README MSRV note must match workspace rust-version ($workspace_msrv)"
 grep -Fq 'toolchain: stable' .github/workflows/ci.yml \
   || fail 'CI must keep a floating latest-stable compatibility lane'
