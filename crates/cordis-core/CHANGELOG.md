@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.3.6](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.3.5...cordis-core-v0.3.6) - 2026-09-16
+
+### Other
+
+- *(core)* replace watchdog polling with wakeup ([#143](https://github.com/dshbox/cordis-rs/pull/143))
+
 ## [0.3.5](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.3.4...cordis-core-v0.3.5) - 2026-09-16
 
 ### Fixed
