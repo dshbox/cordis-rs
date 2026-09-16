@@ -110,7 +110,7 @@ async fn detach_commits_removal_and_caller_cancellation_cannot_stop_the_frozen_d
         .await
         .unwrap();
     remover.abort();
-    release.notify_waiters();
+    release.notify_one();
 
     old.wait_state(FiberState::Disposed, Duration::from_secs(2))
         .await
