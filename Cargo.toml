@@ -41,3 +41,7 @@ criterion = { version = "0.8.2", default-features = false, features = ["async_to
 
 [workspace.lints.rust]
 missing_docs = { level = "warn" }
+
+[workspace.lints.clippy]
+dbg_macro = { level = "deny" }
+todo = { level = "deny" }

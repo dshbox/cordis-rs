@@ -12,7 +12,7 @@ than the application-facing compatibility facade.
 
 ```toml
 [dependencies]
-cordis-core = "0.2"
+cordis-core = "0.3"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 
@@ -109,12 +109,12 @@ build on the same semantic contract.
 | Crate | Role |
 |---|---|
 | `cordis-rs` `0.8.x` | application-facing facade; Rust crate name remains `cordis` |
-| `cordis-timer` `0.2.x` | generation-owned sleep, interval, and timeout operations |
-| `cordis-loader` `0.2.x` | immutable declarative load plans and typed resolution |
+| `cordis-timer` `0.3.x` | generation-owned sleep, interval, and timeout operations |
+| `cordis-loader` `0.3.x` | immutable declarative load plans and typed resolution |
 
 ## Compatibility and MSRV
 
-The v3 semantic crates began at `0.1.x` and now publish on `0.2.x`. The
+The v3 semantic crates began at `0.1.x` and now publish on `0.3.x`. The
 application-facing `cordis-rs` line entered v3 at `0.7.x` and now publishes on
 `0.8.x`. Cordis v3 requires **Rust 1.88 or newer** and uses
 Rust edition 2024.

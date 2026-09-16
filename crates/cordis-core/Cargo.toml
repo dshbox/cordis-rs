@@ -14,6 +14,8 @@ readme = "README.md"
 default = []
 # Workspace leaf crates use this non-default, unsupported implementation seam.
 internal-api = []
+# Exhaustive concurrency models run in a dedicated CI lane, not the default test matrix.
+loom-tests = []
 
 [dependencies]
 # Core stays dependency-clean at the semantic crate seam (ADR 0036): no serde,
@@ -29,6 +31,16 @@ trybuild = { workspace = true }
 serde = { workspace = true }
 loom = { workspace = true }
 criterion = { workspace = true }
+
+[[test]]
+name = "loom_era"
+path = "tests/loom_era.rs"
+required-features = ["loom-tests"]
+
+[[test]]
+name = "loom_inertia"
+path = "tests/loom_inertia.rs"
+required-features = ["loom-tests"]
 
 [[bench]]
 name = "runtime_paths"

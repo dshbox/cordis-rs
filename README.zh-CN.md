@@ -2,6 +2,8 @@
 
 [English](README.md) | **简体中文**
 
+> **文档状态：** 当前中文 README 仅提供简要概览，内容可能滞后于英文版。pre-1.0 阶段请以 [English README](README.md) 为准；接近 1.0 时会再进行一次完整同步。
+
 Cordis v3 是面向长期运行、插件化 Rust 应用的类型化 runtime。它把 Plugin/FiberHandle 生命周期、Service 依赖、类型化 Event、资源清理，以及显式隔离边界放进同一套模型中。
 
 ## 当前状态

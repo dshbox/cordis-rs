@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # gates: the eight local pre-commit checks, including the floating-stable
 # compatibility check. CI separately provisions the explicit MSRV compile,
-# dependency audit/policy, and release-package lanes; this runner does not
-# install their extra tools or duplicate those jobs.
+# dependency audit/policy, dedicated Loom model, and release-package lanes;
+# this runner does not install their extra tools or duplicate those jobs.
 # Run it before committing; ask follow-up questions of a gate's log
 # instead of re-running the gate.
 #
@@ -71,7 +71,7 @@ gate_vocab()  { ci/harness-vocab-scan.sh; }
 
 gate_test()   { timeout --kill-after=5s "${GATES_TEST_TIMEOUT:-300}" cargo test --locked --workspace; }
 
-gate_doc()    { RUSTDOCFLAGS='-D warnings' cargo doc --locked --workspace --no-deps; }
+gate_doc()    { ci/readme-version-contract.sh && RUSTDOCFLAGS='-D warnings' cargo doc --locked --workspace --no-deps; }
 
 gate_latest() { RUSTUP_TOOLCHAIN=stable cargo check --locked --workspace --all-targets; }
 

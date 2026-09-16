@@ -22,8 +22,8 @@ Before committing, run `ci/gates.sh` — the repository's eight local
 pre-commit gates (toolchain contract, fmt, clippy, vocabulary, tests, docs,
 examples, and floating-latest compatibility), once each, with a PASS/FAIL
 summary. CI additionally owns the explicit MSRV compile, dependency audit/policy,
-and release-package lanes; those lanes are not duplicated by the default local
-runner, and the audit lane relies on CI-provisioned tools. Pass a run-id unique
+dedicated Loom model, and release-package lanes; those lanes are not duplicated
+by the default local runner, and the audit lane relies on CI-provisioned tools. Pass a run-id unique
 to your session — ticket
 number or feature slug, e.g. `ci/gates.sh t19 fmt` — so all your
 invocations share one log directory (`target/gates/<run-id>/`) and never
