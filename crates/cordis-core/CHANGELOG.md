@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.3.5](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.3.4...cordis-core-v0.3.5) - 2026-09-16
+
+### Fixed
+
+- *(core)* assert event hook order invariant ([#141](https://github.com/dshbox/cordis-rs/pull/141))
+
 ## [0.3.4](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.3.3...cordis-core-v0.3.4) - 2026-09-16
 
 ### Fixed
