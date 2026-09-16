@@ -127,6 +127,7 @@ impl EventHooks {
     }
 
     fn compact_if_sparse(&mut self) {
+        debug_assert!(self.order.len() >= self.entries.len());
         let stale = self.order.len() - self.entries.len();
         if stale < 32 || stale < self.entries.len() {
             return;
