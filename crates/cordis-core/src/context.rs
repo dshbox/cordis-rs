@@ -94,21 +94,34 @@ pub(crate) struct Root {
 
 impl Root {
     pub(crate) fn dependents_for_edges(&self, edges: &[(String, RealmKey)]) -> Vec<Arc<Fiber>> {
+        self.dependents_for_edges_with_retention(edges).0
+    }
+
+    pub(crate) fn dependents_for_edges_with_retention(
+        &self,
+        edges: &[(String, RealmKey)],
+    ) -> (Vec<Arc<Fiber>>, Vec<Arc<Fiber>>) {
         if let Some(indexed) = self.deps.dependents_of(edges) {
-            return indexed;
+            return (indexed, Vec::new());
         }
-        let requested = edges.iter().cloned().collect::<HashSet<_>>();
-        self.registry
-            .snapshot_fibers()
-            .into_iter()
+
+        let retained_snapshot = self.registry.snapshot_fibers();
+        let requested = edges
+            .iter()
+            .map(|(service, realm)| (service.as_str(), *realm))
+            .collect::<HashSet<_>>();
+        let affected = retained_snapshot
+            .iter()
             .filter(|fiber| {
                 fiber.is_alive()
                     && fiber
                         .dependency_edges()
                         .iter()
-                        .any(|edge| requested.contains(&(edge.service.clone(), edge.realm)))
+                        .any(|edge| requested.contains(&(edge.service.as_str(), edge.realm)))
             })
-            .collect()
+            .cloned()
+            .collect();
+        (affected, retained_snapshot)
     }
 }
 

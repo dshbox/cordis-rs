@@ -34,16 +34,21 @@ export RUSTUP_TOOLCHAIN="$canonical_rust"
 logdir=target/gates
 mkdir -p "$logdir"
 
-gates=("$@")
+all_gates=(toolchain fmt clippy vocab test doc examples latest)
+is_gate() {
+  local candidate=$1 gate
+  for gate in "${all_gates[@]}"; do
+    [ "$candidate" = "$gate" ] && return 0
+  done
+  return 1
+}
+
 run_id=
 # First arg names the run unless it is itself a gate.
-if [ $# -gt 0 ]; then
-  case $1 in
-    toolchain|fmt|clippy|vocab|test|doc|examples|latest) ;;
-    *) run_id=$1; shift; gates=("$@") ;;
-  esac
+if [ $# -gt 0 ] && ! is_gate "$1"; then
+  run_id=$1
+  shift
 fi
-[ $# -eq 0 ] && gates=(toolchain fmt clippy vocab test doc examples latest)
 [ -n "$run_id" ] || run_id="$(date +%Y%m%d-%H%M%S).$$"
 # The run-id is a path component under target/gates/ — keep it one.
 case $run_id in
@@ -113,7 +118,7 @@ run() {
 }
 
 gates=("$@")
-[ $# -eq 0 ] && gates=(toolchain fmt clippy vocab test doc examples latest)
+[ $# -eq 0 ] && gates=("${all_gates[@]}")
 
 for g in "${gates[@]}"; do
   case $g in
@@ -127,7 +132,7 @@ for g in "${gates[@]}"; do
     latest)   run latest   gate_latest ;;
     *)
       printf 'gates: unknown gate: %s\n' "$g" >&2
-      printf 'usage: ci/gates.sh [run-id] [gate ...]  # gates: toolchain fmt clippy vocab test doc examples latest\n' >&2
+      printf 'usage: ci/gates.sh [run-id] [gate ...]  # gates: %s\n' "${all_gates[*]}" >&2
       exit 2
       ;;
   esac

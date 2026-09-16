@@ -174,7 +174,8 @@ async fn outcomes_are_complete_depth_first_and_pruning_names_the_disabling_plugi
     for (row, id) in outcome.entries().iter().zip(expected) {
         assert_eq!(row.id(), id);
     }
-    assert!(format!("{outcome:?}").starts_with("LoadOutcome"));
+    fn assert_debug<T: fmt::Debug>() {}
+    assert_debug::<cordis_loader::LoadOutcome>();
 
     assert!(matches!(
         outcome.entry(&root),

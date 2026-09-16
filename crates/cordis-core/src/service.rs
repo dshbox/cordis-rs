@@ -17,7 +17,7 @@ use crate::context::{Context, RealmKey, Root};
 use crate::fiber::Fiber;
 use parking_lot::Mutex;
 use std::any::Any;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Weak};
 
@@ -296,25 +296,7 @@ impl CommittedServiceDrift {
     /// explicitly retains every resident Arc until [`Self::kick`] runs outside
     /// ServiceStore synchronization.
     fn commit(root: &Root, edges: &[(String, RealmKey)]) -> Self {
-        let (affected, retained_snapshot) = match root.deps.dependents_of(edges) {
-            Some(indexed) => (indexed, Vec::new()),
-            None => {
-                let retained_snapshot = root.registry.snapshot_fibers();
-                let requested = edges.iter().cloned().collect::<HashSet<_>>();
-                let affected = retained_snapshot
-                    .iter()
-                    .filter(|fiber| {
-                        fiber.is_alive()
-                            && fiber
-                                .dependency_edges()
-                                .iter()
-                                .any(|edge| requested.contains(&(edge.service.clone(), edge.realm)))
-                    })
-                    .cloned()
-                    .collect();
-                (affected, retained_snapshot)
-            }
-        };
+        let (affected, retained_snapshot) = root.dependents_for_edges_with_retention(edges);
         for fiber in &affected {
             fiber.slot.commit_recheck();
         }

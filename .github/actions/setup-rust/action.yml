@@ -25,4 +25,6 @@ runs:
     # jobs cannot silently run the canonical compiler instead.
     - name: Select Rust ${{ inputs.toolchain }}
       shell: bash
-      run: echo "RUSTUP_TOOLCHAIN=${{ inputs.toolchain }}" >> "$GITHUB_ENV"
+      env:
+        TOOLCHAIN: ${{ inputs.toolchain }}
+      run: echo "RUSTUP_TOOLCHAIN=$TOOLCHAIN" >> "$GITHUB_ENV"

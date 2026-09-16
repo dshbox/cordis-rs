@@ -28,8 +28,10 @@ setup_default="$(awk '
 [ "$setup_default" = "$canonical" ] \
   || fail "setup-rust default ($setup_default) != rust-toolchain.toml ($canonical)"
 
-grep -Fq 'RUSTUP_TOOLCHAIN=${{ inputs.toolchain }}' .github/actions/setup-rust/action.yml \
-  || fail 'setup-rust must export RUSTUP_TOOLCHAIN so lane selection beats directory overrides'
+grep -Fq 'TOOLCHAIN: ${{ inputs.toolchain }}' .github/actions/setup-rust/action.yml \
+  || fail 'setup-rust must pass the toolchain input through an environment variable'
+grep -Fq 'RUSTUP_TOOLCHAIN=$TOOLCHAIN' .github/actions/setup-rust/action.yml \
+  || fail 'setup-rust must export the environment-selected RUSTUP_TOOLCHAIN so lane selection beats directory overrides'
 
 workspace_msrv="$(sed -n 's/^rust-version = "\([^"]*\)"$/\1/p' Cargo.toml)"
 [ -n "$workspace_msrv" ] || fail 'Cargo.toml has no workspace rust-version'

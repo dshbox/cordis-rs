@@ -1,8 +1,10 @@
 //! Application-facade compile smoke test.
 
+#[allow(unused_imports)]
 use cordis::{
-    Context, Event, FiberHandle, Plugin, PreparedPlugin, Routing, effect, event, lifecycle, logger,
-    observation, plugin, service,
+    BoxError, ConfigurableService, Context, Event, FiberHandle, FiberId, FiberState, InjectSpec,
+    Level, Logger, Plugin, PreparedChange, PreparedPlugin, QueryOutcome, Routing, Scope, Service,
+    ServiceRealm, UpdateOutcome, effect, event, lifecycle, logger, observation, plugin, service,
 };
 
 struct Ping;
