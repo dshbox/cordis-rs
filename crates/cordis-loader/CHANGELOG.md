@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.3.2](https://github.com/dshbox/cordis-rs/compare/cordis-loader-v0.3.1...cordis-loader-v0.3.2) - 2026-09-16
+
+### Fixed
+
+- harden shutdown and timer contracts ([#133](https://github.com/dshbox/cordis-rs/pull/133))
+
 ## [0.2.1](https://github.com/dshbox/cordis-rs/compare/cordis-loader-v0.2.0...cordis-loader-v0.2.1) - 2026-09-15
 
 ### Other
