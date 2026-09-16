@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+cd "$(dirname "$0")/.."
+
 # release-plz bumps workspace package versions together before any of them exist
 # in crates.io. Verify leaf packages against the exact workspace core that will
 # be published first. The packaged manifests still carry their semver

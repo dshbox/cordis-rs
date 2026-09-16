@@ -84,7 +84,7 @@ gate_examples() {
   # here keeps one source of truth. Deriving zero
   # names is an error — an empty list would pass the gate vacuously.
   local examples
-  examples="$(sed -n 's/.*cargo run \(--locked \)\?-p \([a-z_]*\) *$/\2/p' .github/workflows/ci.yml)"
+  examples="$(sed -nE 's/.*cargo run (--locked )?-p ([a-z_]*) *$/\2/p' .github/workflows/ci.yml)"
   if [ -z "$examples" ]; then
     echo 'gates: no examples found in .github/workflows/ci.yml' >&2
     return 1

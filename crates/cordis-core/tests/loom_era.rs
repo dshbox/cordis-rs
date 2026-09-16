@@ -136,7 +136,7 @@ fn racing_swaps_grant_one_source_claim_and_one_successor_attempt() {
 /// must find that schedule; otherwise the model cannot discriminate the
 /// allocation-before-claim defect ADR 0030 forbids.
 #[test]
-#[should_panic]
+#[should_panic(expected = "a loser allocated a successor before owning the source")]
 fn preclaim_successor_allocation_is_detected() {
     era_model(|| {
         let era = Arc::new(EraArbitration::new());
@@ -164,7 +164,7 @@ fn preclaim_successor_allocation_is_detected() {
 /// retries candidate creation must be rejected even though terminal ownership
 /// itself remains unique.
 #[test]
-#[should_panic]
+#[should_panic(expected = "one source claim retried successor allocation")]
 fn successor_retry_after_one_source_claim_is_detected() {
     era_model(|| {
         let era = Arc::new(EraArbitration::new());
@@ -257,7 +257,7 @@ fn successor_attempt_observes_completed_source_disposal() {
 /// successor creation is published, the owner yields, and only later completes
 /// source disposal. Loom must expose an observer in that forbidden middle state.
 #[test]
-#[should_panic]
+#[should_panic(expected = "birth-before-death window reproduced")]
 fn successor_attempt_before_source_disposal_is_detected() {
     era_model(|| {
         let source_complete = Arc::new(AtomicBool::new(false));
@@ -337,7 +337,9 @@ fn preclosed_source_cannot_authorize_a_new_swap() {
 /// closure *after* this swap has successfully set it would cause the committed
 /// owner to reject its own captured recipe and strand an already-ended source.
 #[test]
-#[should_panic]
+#[should_panic(
+    expected = "committed Era owner abandoned the recipe because its own claim closed the source"
+)]
 fn postclaim_closed_recheck_that_abandons_the_captured_recipe_is_detected() {
     era_model(|| {
         let era = Arc::new(EraArbitration::new());
@@ -490,7 +492,7 @@ fn caller_cancellation_and_handoff_assign_one_successor_owner() {
 /// undelivered successor resident and loses the committed cleanup obligation.
 /// Loom must find the schedule where cancellation wins before the bad offer.
 #[test]
-#[should_panic]
+#[should_panic(expected = "cancelled handoff must assign exactly one cleanup owner")]
 fn cancelled_handoff_without_framework_cleanup_is_detected() {
     era_model(|| {
         let handoff = Arc::new(HandoffOwnership::new());
@@ -513,7 +515,7 @@ fn cancelled_handoff_without_framework_cleanup_is_detected() {
 /// regain cleanup authority over the published successor. Loom must find the
 /// schedule where delivery wins before the bad cancellation path.
 #[test]
-#[should_panic]
+#[should_panic(expected = "delivered successor cannot retain framework cleanup ownership")]
 fn cancellation_reclaiming_an_already_handed_off_successor_is_detected() {
     era_model(|| {
         let handoff = Arc::new(HandoffOwnership::new());

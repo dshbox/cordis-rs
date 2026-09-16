@@ -80,7 +80,7 @@ fn semantic_commit_publishes_revision_before_visibility() {
 /// observer sees target version 1 while revision 0 is still visible. If this
 /// starts passing, the model no longer discriminates the historical defect.
 #[test]
-#[should_panic]
+#[should_panic(expected = "historical publication-to-revision window reproduced")]
 fn historical_visibility_before_revision_is_detected() {
     loom::model(|| {
         let revision = Arc::new(AtomicUsize::new(0));
@@ -171,7 +171,7 @@ fn revision_acknowledgement_has_covering_target_inspection() {
 /// observes the newer durable revision, and incorrectly treats that old read as
 /// coverage for the new revision. Loom must find that interleaving.
 #[test]
-#[should_panic]
+#[should_panic(expected = "premature acknowledgement reproduced")]
 fn premature_revision_acknowledgement_without_reinspection_is_detected() {
     loom::model(|| {
         let revision = Arc::new(AtomicUsize::new(0));
@@ -257,7 +257,7 @@ fn guarded_release_never_publishes_idle_during_recheck() {
 /// `InertiaSlot`: ACTIVE -> IDLE -> recheck -> attempt to become ACTIVE again.
 /// Loom must find the exposed-IDLE schedule.
 #[test]
-#[should_panic]
+#[should_panic(expected = "historical release window exposed arbitration IDLE")]
 fn historical_idle_before_recheck_is_detected() {
     loom::model(|| {
         const NOT_STARTED: usize = 0;
@@ -398,7 +398,7 @@ fn racing_releasing_kick_preserves_single_authority() {
 /// still owns the release attempt, so Loom must find the duplicate-authority
 /// interleaving where A observes B instead of its own reactivation.
 #[test]
-#[should_panic]
+#[should_panic(expected = "racing kick created a second logical holder")]
 fn releasing_kick_that_creates_second_holder_is_detected() {
     loom::model(|| {
         const IDLE_NONE: usize = 0;
@@ -638,7 +638,7 @@ fn ready_return_has_a_quiescent_linearization_point() {
 /// invocation while its kick is still delayed. Loom must then expose the stale
 /// version-0 return with no valid quiescence point inside the invocation.
 #[test]
-#[should_panic]
+#[should_panic(expected = "stale ready return has no quiescent linearization point")]
 fn ready_that_treats_idle_as_quiescent_is_detected() {
     lc06_model(|| {
         let model = Arc::new(ReadyHistoryModel::new());
@@ -716,7 +716,7 @@ fn two_idle_kickers_have_one_claim_winner() {
 /// load -> yield -> store lets both actors decide they won from the same IDLE
 /// observation. Loom must find that duplicate-authority history.
 #[test]
-#[should_panic]
+#[should_panic(expected = "load/store claim admitted two logical holders")]
 fn load_then_store_idle_claim_is_detected() {
     loom::model(|| {
         let slot = Arc::new(AtomicUsize::new(IDLE));
@@ -800,7 +800,7 @@ fn off_runtime_commit_is_preserved_for_later_drive() {
 /// recheck had already settled. The later driver then sees no obligation and the
 /// semantic state remains stale even though the committed revision advanced.
 #[test]
-#[should_panic]
+#[should_panic(expected = "executor absence erased a durable convergence obligation")]
 fn off_runtime_commit_must_not_be_consumed_without_drive() {
     loom::model(|| {
         let slot = Arc::new(AtomicUsize::new(IDLE));
