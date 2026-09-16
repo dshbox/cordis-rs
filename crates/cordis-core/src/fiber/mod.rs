@@ -23,6 +23,9 @@
 mod era;
 mod inertia;
 mod settle_ctx;
+pub(crate) use settle_ctx::{
+    capture_attribution as capture_settle_attribution, with_attribution as with_settle_attribution,
+};
 mod spawn;
 mod spawn_state;
 

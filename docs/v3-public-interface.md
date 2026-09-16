@@ -629,9 +629,14 @@ independent of caller polling. Async cleanup is first polled on a process-wide
 Cordis completion runtime, so Tokio runtime-bound resources created by the
 cleanup bind there rather than to the caller's runtime; synchronous cleanup
 keeps lifecycle-executor ordering. Resources captured earlier from another
-runtime retain that external runtime's lifetime. A returned failure or panic
-permanently consumes the occurrence. Generation drain closes admission, claims the
-remaining entries, and runs all cleanup in strict sequential LIFO order,
+runtime retain that external runtime's lifetime. A live settle attribution at
+manual-dispose claim time follows the detached cleanup task; ordinary external
+manual disposal carries none. Synchronous cleanup is for short non-blocking
+bookkeeping; blocking work should use async cleanup plus
+`tokio::task::spawn_blocking` so it cannot occupy a shared completion worker. A
+returned failure or panic permanently consumes the occurrence. Generation drain
+closes admission, claims the remaining entries, and runs all cleanup in strict
+sequential LIFO order,
 continuing after failure. Callbacks, awaits, and user-controlled
 destruction occur outside locks.
 

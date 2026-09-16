@@ -195,8 +195,10 @@ context with typed `LifecycleRecursion` instead of deadlocking. Raw
 `tokio::spawn` starts outside that task-local context; user subtasks that
 remain in the settle dependency graph carry it explicitly through
 `Context::spawn_attributed`, and inherited frames expire when their source
-settle scope ends. Detached Runtime-observation delivery is outside the source
-Fiber's settle context.
+settle scope ends. A manual `EffectRegistration::dispose` claimed from inside a
+live settle context carries that same attribution into its detached cleanup; an
+external manual dispose starts with no settle attribution. Detached
+Runtime-observation delivery is outside the source Fiber's settle context.
 _Avoid_: re-entrancy guard, settle callback
 
 ### Loader and consumer language

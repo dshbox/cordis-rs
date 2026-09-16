@@ -9,6 +9,7 @@
 mod common;
 
 use common::bounded;
+use cordis_core::effect::EffectRegistration;
 use cordis_core::lifecycle::{
     EraSwapError, LifecycleOperation, LifecycleRecursion, ReadyError, RestartError, UpdateError,
     WaitStateError,
@@ -249,6 +250,144 @@ async fn attributed_spawn_from_apply_refuses_every_lifecycle_self_wait() {
         assert_eq!(fiber_handle.state(), FiberState::Active);
         fiber_handle.dispose().await.unwrap();
     }
+}
+
+struct EarlyDisposeProbe {
+    seen: Arc<Mutex<Option<LifecycleRecursion>>>,
+}
+
+impl Plugin for EarlyDisposeProbe {
+    type Config = ();
+    type Input = ();
+    type PrepareError = Infallible;
+    type ApplyError = Infallible;
+
+    fn prepare(&self, (): ()) -> Result<(), Infallible> {
+        Ok(())
+    }
+
+    fn apply(
+        &self,
+        ctx: Context,
+        _prepared: &(),
+    ) -> impl Future<Output = Result<(), Infallible>> + Send {
+        let cleanup_ctx = ctx.clone();
+        let seen = self.seen.clone();
+        async move {
+            let registration = ctx
+                .effect(move || async move {
+                    let recursion = cleanup_ctx
+                        .remove_plugins::<EarlyDisposeProbe>()
+                        .await
+                        .expect_err("manual-dispose cleanup must retain apply attribution");
+                    *seen.lock() = Some(recursion);
+                })
+                .expect("apply generation is open to cleanup");
+
+            assert!(
+                registration
+                    .dispose()
+                    .await
+                    .expect("manual cleanup itself succeeds"),
+                "apply still owns the exact cleanup occurrence"
+            );
+            Ok(())
+        }
+    }
+}
+
+#[tokio::test]
+async fn manual_dispose_from_apply_keeps_settle_attribution_across_cleanup_task() {
+    let ctx = Context::new();
+    let seen = Arc::new(Mutex::new(None));
+
+    let fiber_handle = bounded(
+        1_000,
+        ctx.spawn(PreparedPlugin::from_input(
+            EarlyDisposeProbe { seen: seen.clone() },
+            (),
+        )),
+    )
+    .await
+    .expect("manual dispose must refuse recursive group removal instead of deadlocking")
+    .expect("probe spawn succeeds after typed recursion refusal");
+
+    let recursion = seen
+        .lock()
+        .take()
+        .expect("cleanup observed typed lifecycle recursion");
+    assert_eq!(recursion.operation(), LifecycleOperation::RemovePlugins);
+    let id = fiber_handle.id();
+    assert_eq!(recursion.fiber_id(), &id);
+    fiber_handle.dispose().await.unwrap();
+}
+
+struct ExternalManualDisposeProbe {
+    registration: Arc<Mutex<Option<EffectRegistration>>>,
+    removed: Arc<AtomicBool>,
+}
+
+impl Plugin for ExternalManualDisposeProbe {
+    type Config = ();
+    type Input = ();
+    type PrepareError = Infallible;
+    type ApplyError = Infallible;
+
+    fn prepare(&self, (): ()) -> Result<(), Infallible> {
+        Ok(())
+    }
+
+    fn apply(
+        &self,
+        ctx: Context,
+        _prepared: &(),
+    ) -> impl Future<Output = Result<(), Infallible>> + Send {
+        let cleanup_ctx = ctx.clone();
+        let registration = self.registration.clone();
+        let removed = self.removed.clone();
+        async move {
+            let effect = ctx
+                .effect(move || async move {
+                    cleanup_ctx
+                        .remove_plugins::<ExternalManualDisposeProbe>()
+                        .await
+                        .expect("external manual cleanup has no settle recursion");
+                    removed.store(true, Ordering::SeqCst);
+                })
+                .expect("apply generation is open to cleanup");
+            *registration.lock() = Some(effect);
+            Ok(())
+        }
+    }
+}
+
+#[tokio::test]
+async fn external_manual_dispose_does_not_invent_settle_attribution() {
+    let ctx = Context::new();
+    let registration = Arc::new(Mutex::new(None));
+    let removed = Arc::new(AtomicBool::new(false));
+    let fiber_handle = ctx
+        .spawn(PreparedPlugin::from_input(
+            ExternalManualDisposeProbe {
+                registration: registration.clone(),
+                removed: removed.clone(),
+            },
+            (),
+        ))
+        .await
+        .unwrap();
+
+    let effect = registration
+        .lock()
+        .take()
+        .expect("apply published its manual cleanup control");
+    let claimed = bounded(2_000, effect.dispose())
+        .await
+        .expect("external manual cleanup must not deadlock")
+        .expect("external manual cleanup succeeds");
+    assert!(claimed);
+    assert!(removed.load(Ordering::SeqCst));
+    assert_eq!(fiber_handle.state(), FiberState::Disposed);
 }
 
 #[tokio::test]

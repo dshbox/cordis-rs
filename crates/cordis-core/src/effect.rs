@@ -343,8 +343,12 @@ impl EffectRegistration {
     /// Once the claim wins, the cleanup's completion is framework-owned:
     /// dropping this future after the claim abandons only the wait, and a
     /// failure nobody is left to receive is reported through the fiber's
-    /// diagnostics instead. Dropping the future *before* its first poll
-    /// changes nothing — the occurrence stays generation-owned.
+    /// diagnostics instead. A live settle attribution at the claim site is
+    /// carried into the detached cleanup task, so an apply/disposer awaiting
+    /// this manual cleanup cannot lose same-Fiber recursion refusal across the
+    /// task boundary. An ordinary external caller carries no such attribution.
+    /// Dropping the future *before* its first poll changes nothing — the
+    /// occurrence stays generation-owned.
     pub async fn dispose(self) -> std::result::Result<bool, EffectFailure> {
         let Some(fiber) = self.owner.upgrade() else {
             return Ok(false);
@@ -359,11 +363,14 @@ impl EffectRegistration {
         // if executor shutdown drops its pending Cordis wrapper. The outcome
         // travels back through one-shot; caller cancellation abandons only the
         // wait. Runtime-bound resources captured earlier from an external
-        // runtime remain that runtime's responsibility.
+        // runtime remain that runtime's responsibility. Capture any live
+        // settle dependency before crossing the task boundary; an ordinary
+        // external manual-dispose call captures the empty attribution.
         let async_cleanup = cleanup.async_cleanup();
+        let attribution = crate::fiber::capture_settle_attribution();
         let logger = fiber.fiber_ctx().map(|ctx| ctx.logger());
         let (tx, rx) = tokio::sync::oneshot::channel();
-        let work = async move {
+        let work = crate::fiber::with_settle_attribution(attribution, async move {
             let outcome = execute_cleanup(cleanup).await;
             if let Err(outcome) = tx.send(outcome)
                 && let Some(failure) = outcome
@@ -372,7 +379,7 @@ impl EffectRegistration {
                 // its exactly-one diagnostic report
                 report_cleanup_failure(logger.as_ref(), &failure);
             }
-        };
+        });
         if async_cleanup {
             detach_cleanup(work);
         } else {
@@ -423,7 +430,12 @@ impl Context {
     /// context's current fiber generation — the spelling for cleanups
     /// with nothing to await, so no call site needs a `Box::pin(async {})`
     /// stub. Claim and failure semantics match [`Context::effect`], while
-    /// synchronous execution keeps lifecycle-executor ordering.
+    /// synchronous execution keeps lifecycle-executor ordering. The callback
+    /// must remain short and must not block indefinitely: off-runtime or
+    /// shutdown-resilient completion may run it on Cordis's shared completion
+    /// runtime, where blocking a worker can delay unrelated framework cleanup.
+    /// For blocking work, register an async [`Context::effect`] and offload the
+    /// blocking section with `tokio::task::spawn_blocking`.
     pub fn effect_sync<F, R>(
         &self,
         cleanup: F,

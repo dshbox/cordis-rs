@@ -86,7 +86,12 @@ thread/runtime per pending task or shutdown transfer. Runtime-bound resources
 created by async cleanup bind to this completion runtime. Resources captured
 earlier from an external runtime remain owned by that runtime; Cordis completion
 ownership cannot keep an unrelated runtime's timer/IO driver alive after it
-shuts down.
+shuts down. Synchronous effect cleanup must not block indefinitely: it can
+stall its lifecycle executor, or a shared completion worker when off-runtime or
+shutdown-resilient completion reaches it. Blocking work belongs behind an async
+cleanup and `tokio::task::spawn_blocking`. This guarantee covers executor loss while the
+process remains alive, not process termination: Cordis has no Runtime-wide
+shutdown API or process-exit drain.
 
 **Generation gate closure.** A generation admits cleanup and resource
 registrations only while its gate is open: Loading and Active admit,
@@ -128,10 +133,12 @@ covers ready, wait_state, restart, update, era swap, dispose, and typed
 group removal — the last refused before any Registry detach. Raw
 `tokio::spawn` does not inherit Tokio task-local attribution; user subtasks
 that remain in the current settle dependency graph cross that task boundary
-through `Context::spawn_attributed`. Transferred frames share source liveness
-and stop refusing once the source settle scope ends, so detached subtasks cannot
-retain stale recursion state. Legal unrelated-Fiber waits and the dynamic
-era-swap backstops are preserved.
+through `Context::spawn_attributed`. A manual cleanup claimed by
+`EffectRegistration::dispose` likewise carries any live caller attribution into
+its detached task; an external manual claim carries none. Transferred frames
+share source liveness and stop refusing once the source settle scope ends, so
+detached work cannot retain stale recursion state. Legal unrelated-Fiber waits
+and the dynamic era-swap backstops are preserved.
 
 **Registry detach and exact-allocation prune.** Bulk removal commits at
 detaching one current PluginGroup allocation. Attach-before-detach joins
