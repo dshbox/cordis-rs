@@ -653,16 +653,14 @@ impl Fiber {
     /// same logger an execution-time lookup would find — the root fiber
     /// has no spawn state and keeps the stderr fallback.
     pub(crate) async fn run_cleanup_contained(self: &Arc<Self>, cleanup: Cleanup) {
+        let async_cleanup = cleanup.async_cleanup();
         let logger = self.fiber_ctx().map(|ctx| ctx.logger());
-        // Once claimed, execution is framework-owned: the cleanup runs on
-        // a detached task — the current runtime's, or off-runtime one
-        // dedicated thread carrying its own Tokio runtime, so
-        // Tokio-touching cleanups run as written — and only the outcome
-        // channel is awaited. A cancelled drain (a spawn future dropped
-        // mid-rollback) abandons the wait, never the half-run cleanup
-        // (LF-07's attempt-and-complete law). The detached execution
-        // reinstalls the settle bracket, so lifecycle entries from inside
-        // the cleanup refuse exactly as inline execution did (ADR 0019).
+        // Once claimed, execution is framework-owned. Async cleanup starts on
+        // Cordis's completion runtime; sync cleanup keeps lifecycle-executor
+        // ordering. Only the outcome channel is awaited. A cancelled drain
+        // abandons the wait, never the half-run cleanup (LF-07). The detached
+        // execution reinstalls the settle bracket, so lifecycle entries from
+        // inside the cleanup refuse exactly as inline execution did (ADR 0019).
         let (tx, rx) = tokio::sync::oneshot::channel();
         let fiber = self.clone();
         let report_logger = logger.clone();
@@ -679,10 +677,13 @@ impl Fiber {
                 crate::effect::report_cleanup_failure(report_logger.as_ref(), &failure);
             }
         };
-        crate::effect::detach(work);
-        // `Err` means the send side died unsent: the driving executor
-        // itself was torn down mid-cleanup — the claim was still won and
-        // owned (same note as `EffectRegistration::dispose`)
+        if async_cleanup {
+            crate::effect::detach_cleanup(work);
+        } else {
+            crate::effect::detach(work);
+        }
+        // `Err` means the framework task ended before publishing an outcome;
+        // the exact cleanup claim remains consumed either way.
         if let Ok(Some(failure)) = rx.await {
             crate::effect::report_cleanup_failure(logger.as_ref(), &failure);
         }

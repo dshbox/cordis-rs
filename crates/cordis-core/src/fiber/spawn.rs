@@ -196,10 +196,9 @@ pub enum SpawnError {
 /// armed guard firing means the caller abandoned the creation mid-flight:
 /// the fiber must not be stranded (a resident allocation whose settle
 /// pass will never resume), so the teardown is detached through
-/// [`crate::effect::detach`] — onto the current executor, or off-runtime
-/// onto one dedicated std thread with its own current-thread Tokio
-/// runtime so Tokio-touching cleanups run as written — and completes
-/// independently of caller polling.
+/// [`crate::effect::detach`]. It stays on the current executor during normal
+/// progress and transfers to Cordis's shared completion runtime only if executor
+/// shutdown drops the still-pending framework task.
 struct CreationGuard {
     fiber: Option<Arc<Fiber>>,
 }

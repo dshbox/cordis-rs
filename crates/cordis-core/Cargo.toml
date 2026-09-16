@@ -24,6 +24,7 @@ thiserror = { workspace = true }
 futures = { workspace = true }
 
 [dev-dependencies]
+tokio = { workspace = true, features = ["time"] }
 trybuild = { workspace = true }
 serde = { workspace = true }
 loom = { workspace = true }

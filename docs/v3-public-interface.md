@@ -625,8 +625,12 @@ dispose(self).await -> Result<bool, EffectFailure>
 
 Manual control and the automatic generation drain compete for one exact
 claim. A winning dispose transfers completion to framework ownership,
-independent of caller polling. A returned failure or panic permanently
-consumes the occurrence. Generation drain closes admission, claims the
+independent of caller polling. Async cleanup is first polled on a process-wide
+Cordis completion runtime, so Tokio runtime-bound resources created by the
+cleanup bind there rather than to the caller's runtime; synchronous cleanup
+keeps lifecycle-executor ordering. Resources captured earlier from another
+runtime retain that external runtime's lifetime. A returned failure or panic
+permanently consumes the occurrence. Generation drain closes admission, claims the
 remaining entries, and runs all cleanup in strict sequential LIFO order,
 continuing after failure. Callbacks, awaits, and user-controlled
 destruction occur outside locks.

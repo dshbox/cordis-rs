@@ -418,10 +418,11 @@ Cancellation before that commit changes no framework state — no state,
 configuration, gate, claim, allocation, publication, or observation.
 Cancellation after it abandons only the caller's wait while
 framework-owned work continues independently of caller polling until it
-reaches the operation's documented barrier. Executor shutdown cannot silently
-discard normally pending framework-owned completion: the same pinned future
-transfers to the off-runtime completion driver, while a poll unwind is never
-retried. This uniform law and its supporting rules are the decision of
+reaches the operation's documented barrier. Runtime-agnostic lifecycle work
+normally stays on the current executor and transfers its same pinned future to
+Cordis's shared completion runtime only if executor shutdown drops it after a
+normal `Pending`; arbitrary async effect cleanup starts on that completion
+runtime from its first poll. This uniform law and its supporting rules are the decision of
 [ADR 0029](adr/0029-lifecycle-commits-complete-and-critical-sections-are-closed.md).
 
 | Operation | Irreversible commit | Required independent completion |

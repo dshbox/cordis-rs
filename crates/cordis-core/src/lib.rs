@@ -59,8 +59,9 @@ pub mod __internal {
         ctx.fiber().assert_can_register().is_ok()
     }
 
-    /// Transfer framework-owned completion work onto the current executor while
-    /// retaining an off-runtime fallback if that executor shuts down first.
+    /// Detach runtime-agnostic framework work from caller polling. Normal progress
+    /// stays on the current executor; shutdown transfers pending work to Cordis's
+    /// shared completion runtime.
     pub fn detach_completion(work: impl std::future::Future<Output = ()> + Send + 'static) {
         crate::effect::detach(work);
     }

@@ -1200,8 +1200,7 @@ fn dispose_off_runtime_completes_framework_owned() {
     let registration = ctx
         .effect_sync(move || {
             started_tx.send(()).unwrap();
-            // blocking the driving thread is safe: the fallback owns a
-            // dedicated thread per off-runtime dispose
+            // blocking here occupies a completion worker, not the caller thread
             release_rx.recv().unwrap();
             done_tx.send(()).unwrap();
         })
@@ -1240,6 +1239,38 @@ fn dispose_off_runtime_completes_framework_owned() {
 // the cleanup's failure through the fiber's diagnostics — delivered exactly
 // once: returned to a waiting caller, otherwise reported.
 // ---------------------------------------------------------------------------
+
+#[test]
+fn async_cleanup_timer_outlives_origin_runtime_shutdown() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    let ctx = Context::new();
+    let (started_tx, started_rx) = std::sync::mpsc::channel();
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+
+    let registration = ctx
+        .effect(move || async move {
+            started_tx.send(()).unwrap();
+            tokio::time::sleep(Duration::from_millis(25)).await;
+            done_tx.send(()).unwrap();
+        })
+        .unwrap();
+
+    runtime.spawn(async move {
+        registration.dispose().await.unwrap();
+    });
+    started_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("cleanup started on the Cordis completion runtime");
+
+    runtime.shutdown_background();
+    done_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("completion-runtime timer survives origin-runtime shutdown");
+}
 
 #[tokio::test]
 async fn abandoned_dispose_failure_is_reported() {

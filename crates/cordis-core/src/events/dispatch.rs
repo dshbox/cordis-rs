@@ -518,16 +518,13 @@ fn listener_cleanup(
     store: Arc<super::store::EventStore>,
     meta: ListenerObservationMeta,
 ) -> crate::effect::Cleanup {
-    Box::new(move || {
-        Box::pin(async move {
-            if store.remove(meta.event, &meta.id) {
-                publish_listener_change(
-                    &root,
-                    crate::observation::ListenerChange::Unregistered,
-                    &meta,
-                );
-            }
-            Ok(())
-        })
+    crate::effect::sync_cleanup(move || {
+        if store.remove(meta.event, &meta.id) {
+            publish_listener_change(
+                &root,
+                crate::observation::ListenerChange::Unregistered,
+                &meta,
+            );
+        }
     })
 }

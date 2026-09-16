@@ -7,11 +7,13 @@ Cancellation before that commit has no framework effect: no state,
 configuration, gate, claim, allocation, publication, or observation
 changes. Cancellation after that commit abandons only the caller's wait;
 framework-owned work continues independently of caller polling until it
-reaches the operation's documented barrier. Executor shutdown after a
-framework-owned future has begun cannot silently discard that committed work:
-a normally pending detached future transfers its same pinned state to the
-off-runtime completion driver. A future that unwinds while being polled is a
-failure, not a transfer signal, and is never retried. This uniform law covers
+reaches the operation's documented barrier. Runtime-agnostic Cordis lifecycle
+work normally stays on the current Tokio executor; if shutdown drops it after a
+normal `Pending`, the same pinned future transfers to a shared Cordis completion
+runtime. Arbitrary async effect cleanup is different: it is first polled on that
+completion runtime, so Tokio time/IO work created by the cleanup never migrates
+between runtime drivers. A poll unwind is a failure, never a transfer signal.
+This uniform law covers
 disposal, Registry removal, restart, update, era swap, new-Fiber
 creation, exact manual cleanup disposal, and Loader result handoff.
 
@@ -76,6 +78,15 @@ uses the same core completion seam, so abandoning a load during executor
 shutdown does not drop that rollback. Dropping a delivered outcome is inert.
 
 ## Consequences of the rule
+
+**Completion executor posture.** One lazily initialized process-wide Tokio
+runtime with two worker threads is shared by executor-shutdown transfers and by
+async effect cleanup. This is a fixed process-lifetime cost, not one OS
+thread/runtime per pending task or shutdown transfer. Runtime-bound resources
+created by async cleanup bind to this completion runtime. Resources captured
+earlier from an external runtime remain owned by that runtime; Cordis completion
+ownership cannot keep an unrelated runtime's timer/IO driver alive after it
+shuts down.
 
 **Generation gate closure.** A generation admits cleanup and resource
 registrations only while its gate is open: Loading and Active admit,

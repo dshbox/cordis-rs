@@ -41,9 +41,20 @@ use std::sync::{Arc, Weak};
 pub(crate) type BoxFuture<T> = Pin<Box<dyn Future<Output = T> + Send>>;
 
 /// One stored cleanup obligation: a one-shot closure whose execution
-/// resolves to its already-normalized failure, if any. Boxed `FnOnce`
-/// makes at-most-once a type-level fact instead of a protocol comment.
-pub(crate) type Cleanup = Box<dyn FnOnce() -> BoxFuture<Result<(), EffectFailure>> + Send>;
+/// resolves to its already-normalized failure, if any. Async cleanup starts
+/// on Cordis's completion runtime so runtime-bound futures are never first
+/// polled on an executor that may later disappear; synchronous bookkeeping
+/// stays on the owning lifecycle executor to preserve commit ordering.
+pub(crate) struct Cleanup {
+    run: Box<dyn FnOnce() -> BoxFuture<Result<(), EffectFailure>> + Send>,
+    async_cleanup: bool,
+}
+
+impl Cleanup {
+    pub(crate) fn async_cleanup(&self) -> bool {
+        self.async_cleanup
+    }
+}
 
 /// Adapt an infallible synchronous cleanup (resource bookkeeping: store
 /// withdrawal, hook removal) into the journal's shape.
@@ -51,12 +62,15 @@ pub(crate) fn sync_cleanup<F>(f: F) -> Cleanup
 where
     F: FnOnce() + Send + 'static,
 {
-    Box::new(move || {
-        Box::pin(async move {
-            f();
-            Ok(())
-        })
-    })
+    Cleanup {
+        run: Box::new(move || {
+            Box::pin(async move {
+                f();
+                Ok(())
+            })
+        }),
+        async_cleanup: false,
+    }
 }
 
 /// Adapt an infallible async cleanup into the journal's shape. The call
@@ -66,12 +80,15 @@ pub(crate) fn fut_cleanup<F>(f: F) -> Cleanup
 where
     F: FnOnce() -> BoxFuture<()> + Send + 'static,
 {
-    Box::new(move || {
-        Box::pin(async move {
-            f().await;
-            Ok(())
-        })
-    })
+    Cleanup {
+        run: Box::new(move || {
+            Box::pin(async move {
+                f().await;
+                Ok(())
+            })
+        }),
+        async_cleanup: true,
+    }
 }
 
 /// Run one claimed cleanup to completion: invoke, await, contain.
@@ -83,7 +100,8 @@ where
 /// panic is caught here and normalized into the same [`EffectFailure`].
 /// Either way the occurrence is consumed: nothing restores it.
 pub(crate) async fn execute_cleanup(cleanup: Cleanup) -> Option<EffectFailure> {
-    match crate::contained::catch_contained(async move { cleanup().await }).await {
+    let run = cleanup.run;
+    match crate::contained::catch_contained(async move { run().await }).await {
         Ok(Ok(())) => None,
         Ok(Err(failure)) => Some(failure),
         Err(payload) => Some(EffectFailure::panicked(crate::contained::payload_text(
@@ -334,20 +352,15 @@ impl EffectRegistration {
         let Some(cleanup) = fiber.remove_disposable(self.token) else {
             return Ok(false);
         };
-        // The claim is won: from here the cleanup completes under
-        // framework ownership. The work is detached onto the current
-        // executor and the outcome travels back through a one-shot
-        // channel, so the caller's cancellation abandons only the wait,
-        // never the cleanup.
-        //
-        // Off-runtime, [`detach`] drives the work on one dedicated std
-        // thread under its own current-thread Tokio runtime, so a cleanup
-        // that touches Tokio runs as written. The rejected alternatives:
-        // inline execution would let caller cancellation interrupt the
-        // cleanup mid-poll; refusal has no error channel after a won
-        // claim. The path is degenerate — every async framework surface
-        // requires a runtime — so thread count is bounded by off-runtime
-        // usage, and each thread exits when its cleanup completes.
+        // The claim is won: from here completion is framework-owned. Async
+        // cleanup starts on Cordis's completion runtime so runtime-bound work
+        // created by the callback never migrates between Tokio drivers. Sync
+        // cleanup preserves lifecycle-executor ordering and may transfer only
+        // if executor shutdown drops its pending Cordis wrapper. The outcome
+        // travels back through one-shot; caller cancellation abandons only the
+        // wait. Runtime-bound resources captured earlier from an external
+        // runtime remain that runtime's responsibility.
+        let async_cleanup = cleanup.async_cleanup();
         let logger = fiber.fiber_ctx().map(|ctx| ctx.logger());
         let (tx, rx) = tokio::sync::oneshot::channel();
         let work = async move {
@@ -360,13 +373,16 @@ impl EffectRegistration {
                 report_cleanup_failure(logger.as_ref(), &failure);
             }
         };
-        detach(work);
+        if async_cleanup {
+            detach_cleanup(work);
+        } else {
+            detach(work);
+        }
         match rx.await {
             Ok(None) => Ok(true),
             Ok(Some(failure)) => Err(failure),
-            // unreachable while the runtime lives: `work` always sends.
-            // A dead send side means the driving executor itself was torn
-            // down mid-cleanup — the claim was still won and owned.
+            // Only unexpected framework-task termination can close without
+            // publishing; the exact claim remains consumed either way.
             Err(_closed) => Ok(true),
         }
     }
@@ -378,7 +394,11 @@ impl Context {
     /// await. The closure runs at most once: claimed by the generation
     /// drain (LIFO) or early by the returned [`EffectRegistration`]. A
     /// cleanup with nothing to await belongs on
-    /// [`Context::effect_sync`] instead.
+    /// [`Context::effect_sync`] instead. Framework-owned execution starts on
+    /// Cordis's process-wide completion runtime, so Tokio time/IO primitives
+    /// created by the cleanup bind there and are independent of the caller's
+    /// runtime lifetime. Runtime-bound resources captured before cleanup
+    /// execution remain tied to the external runtime that created them.
     ///
     /// Fails with [`EffectRegistrationError::InactiveContext`] when the
     /// generation is closed (stable Pending or Failed, draining, or
@@ -393,15 +413,17 @@ impl Context {
         Fut: Future<Output = R> + Send,
         R: CleanupResult,
     {
-        self.register_cleanup(Box::new(move || {
-            Box::pin(async move { cleanup().await.into_outcome() })
-        }))
+        self.register_cleanup(Cleanup {
+            run: Box::new(move || Box::pin(async move { cleanup().await.into_outcome() })),
+            async_cleanup: true,
+        })
     }
 
     /// Register a **synchronous** cleanup as one obligation of this
     /// context's current fiber generation — the spelling for cleanups
     /// with nothing to await, so no call site needs a `Box::pin(async {})`
-    /// stub. Same semantics as [`Context::effect`].
+    /// stub. Claim and failure semantics match [`Context::effect`], while
+    /// synchronous execution keeps lifecycle-executor ordering.
     pub fn effect_sync<F, R>(
         &self,
         cleanup: F,
@@ -410,9 +432,10 @@ impl Context {
         F: FnOnce() -> R + Send + 'static,
         R: CleanupResult,
     {
-        self.register_cleanup(Box::new(move || {
-            Box::pin(async move { cleanup().into_outcome() })
-        }))
+        self.register_cleanup(Cleanup {
+            run: Box::new(move || Box::pin(async move { cleanup().into_outcome() })),
+            async_cleanup: false,
+        })
     }
 
     /// The one registration path both spellings share: the closure is
@@ -435,20 +458,24 @@ impl Context {
     }
 }
 
-/// Drive `work` to completion under framework ownership, independent of
-/// the caller: spawned onto the current runtime, or — off-runtime —
-/// driven by one dedicated std thread running its own current-thread
-/// Tokio runtime, so cleanups that legitimately touch Tokio (`spawn`,
-/// channel joins) run as written instead of panicking inside a
-/// runtime-less `block_on` (the postcommit-completion law, ADR 0029). Work
-/// first spawned on the caller's runtime remains pinned inside `DetachedWork`;
-/// if that executor drops a normally-pending task during shutdown, ownership
-/// transfers to the same off-runtime driver instead of dropping the work.
-/// A poll unwind is not a transfer signal and is never retried.
-/// Building that runtime can only fail on OS resource exhaustion; the
-/// last-resort fallback drives without one. Same thread posture as
-/// deadline.rs's watchdogs (bare spawn, panic on OS failure); each
-/// thread exits when its work completes.
+/// Process-wide executor for work that must outlive the caller's Tokio runtime.
+/// It is initialized lazily and has fixed worker-thread cost for Runtime lifetime.
+fn completion_runtime() -> &'static tokio::runtime::Runtime {
+    static RUNTIME: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
+    RUNTIME.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .thread_name("cordis-completion")
+            .enable_all()
+            .build()
+            .expect("Cordis completion runtime construction must succeed")
+    })
+}
+
+/// Wrapper used only for Cordis-owned lifecycle futures. These futures are
+/// runtime-agnostic after user async cleanup has been split onto
+/// [`detach_cleanup`]. A normal `Pending` authorizes transfer if the origin
+/// executor drops the task during shutdown; a poll unwind never does.
 struct DetachedWork<F>
 where
     F: Future<Output = ()> + Send + 'static,
@@ -465,8 +492,6 @@ where
 
     fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<()> {
         let this = self.get_mut();
-        // Unwind means the framework task itself failed; only a normal Pending
-        // return authorizes executor-shutdown transfer of this exact future.
         this.transfer_on_drop = false;
         let work = this
             .work
@@ -493,26 +518,15 @@ where
         if self.transfer_on_drop
             && let Some(work) = self.work.take()
         {
-            drive_off_runtime(work);
+            let _join = completion_runtime().spawn(work);
         }
     }
 }
 
-fn drive_off_runtime<F>(work: Pin<Box<F>>)
-where
-    F: Future<Output = ()> + Send + 'static,
-{
-    std::thread::spawn(move || {
-        match tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-        {
-            Ok(runtime) => runtime.block_on(work),
-            Err(_) => futures::executor::block_on(work),
-        }
-    });
-}
-
+/// Detach Cordis-owned runtime-agnostic lifecycle work. Normal execution stays
+/// on the current Tokio runtime to preserve scheduling semantics; if that
+/// runtime shuts down while the task is pending, the same pinned future moves
+/// to the shared completion runtime. Off-runtime callers start there directly.
 pub(crate) fn detach(work: impl Future<Output = ()> + Send + 'static) {
     match tokio::runtime::Handle::try_current() {
         Ok(handle) => {
@@ -521,8 +535,17 @@ pub(crate) fn detach(work: impl Future<Output = ()> + Send + 'static) {
                 transfer_on_drop: true,
             });
         }
-        Err(_) => drive_off_runtime(Box::pin(work)),
+        Err(_) => {
+            let _join = completion_runtime().spawn(work);
+        }
     }
+}
+
+/// Detach arbitrary async cleanup. It is first polled on the shared completion
+/// runtime, so Tokio time/IO primitives created by the cleanup never migrate
+/// between runtime drivers if the caller's runtime later shuts down.
+pub(crate) fn detach_cleanup(work: impl Future<Output = ()> + Send + 'static) {
+    let _join = completion_runtime().spawn(work);
 }
 
 #[cfg(test)]
