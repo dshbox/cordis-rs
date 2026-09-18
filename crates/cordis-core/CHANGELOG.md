@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.3.7](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.3.6...cordis-core-v0.3.7) - 2026-09-18
+
+### Other
+
+- define 1.0 compatibility policy ([#146](https://github.com/dshbox/cordis-rs/pull/146))
+
 ## [0.3.6](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.3.5...cordis-core-v0.3.6) - 2026-09-16
 
 ### Other
