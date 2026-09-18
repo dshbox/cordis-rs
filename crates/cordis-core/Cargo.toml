@@ -12,7 +12,8 @@ readme = "README.md"
 
 [features]
 default = []
-# Workspace leaf crates use this non-default, unsupported implementation seam.
+# Published sibling crates use this non-default implementation seam. Downstream
+# use is unsupported; sibling compatibility is governed by docs/compatibility-policy.md.
 internal-api = []
 # Exhaustive concurrency models run in a dedicated CI lane, not the default test matrix.
 loom-tests = []

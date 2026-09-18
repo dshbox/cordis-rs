@@ -56,11 +56,15 @@ semantic facade; the public modules are exactly the ones named here.
 ### cordis-core
 
 The supported downstream contract is the default-feature surface described
-below. The workspace-only, non-default `internal-api` Cargo feature exists only
-so semantic leaf crates can call doc-hidden implementation seams without adding
-them to `Context`; enabling it directly opts into unsupported implementation
-details with no compatibility promise. `cordis-rs` never re-exports those
-details, including when Cargo feature unification enables them in `cordis-core`.
+below. The non-default `internal-api` Cargo feature is a doc-hidden
+published-sibling implementation seam used by `cordis-timer` and
+`cordis-loader`; it is not supported downstream API. Cargo feature unification
+can nevertheless enable it for a consumer that also depends directly on
+`cordis-core`, making `cordis_core::__internal` reachable. Reachability does not
+grant a downstream compatibility promise, and `cordis-rs` never re-exports
+those details. The separate obligation to keep already-published sibling crates
+compiling across every core version admitted by their dependency requirements
+is defined by [the compatibility policy](compatibility-policy.md).
 
 `cordis-core` exposes exactly these supported public semantic modules:
 

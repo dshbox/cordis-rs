@@ -69,11 +69,12 @@ settled architecture merely to create more pre-1.0 work.
 
 ### Public API stability
 
-- [ ] **Publish the 1.0 compatibility policy.** Define the supported compatibility
-  surface, what counts as a breaking change, deprecation/removal policy, Cargo
-  feature compatibility expectations, package-version coordination, and MSRV-change
-  policy. The existing `internal-api` feature remains explicitly unsupported and
-  must not accidentally become part of the stable promise.
+- [x] **Publish the 1.0 compatibility policy.** The
+  [compatibility policy](docs/compatibility-policy.md) defines the supported
+  compatibility surface, breaking-change rules, deprecation/removal policy,
+  Cargo feature expectations, package-version coordination, and MSRV changes.
+  `internal-api` remains unsupported downstream while its use by already-published
+  sibling crates carries an explicit package-compatibility obligation.
 - [ ] **Declare an API freeze candidate.** Resolve every known planned breaking
   change before the freeze and record that the normative public-interface inventory
   is the candidate 1.0 surface.
