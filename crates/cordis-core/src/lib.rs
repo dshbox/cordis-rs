@@ -41,11 +41,14 @@ mod framework_task;
 mod gated;
 mod update;
 
-/// Workspace-only implementation seams for semantic leaf crates.
+/// Published-sibling implementation seams for semantic leaf crates.
 ///
 /// This module exists only when the non-default `internal-api` Cargo feature is
-/// enabled. It is not a supported downstream interface and is deliberately not
-/// re-exported by the application facade.
+/// enabled. Cargo feature unification can make it reachable to a downstream
+/// crate that also depends on a Cordis sibling which enables that feature.
+/// Reachability does not make it supported downstream API, and the application
+/// facade deliberately does not re-export it. Compatibility for already-published
+/// Cordis siblings is governed by `docs/compatibility-policy.md`.
 #[cfg(feature = "internal-api")]
 #[doc(hidden)]
 pub mod __internal {

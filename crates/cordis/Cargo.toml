@@ -21,9 +21,11 @@ default = []
 cordis-core.workspace = true
 
 [dev-dependencies]
-# Deliberately activates cordis-core/internal-api through feature unification so
-# facade compile-fail tests prove the workspace-only seam still cannot escape.
-cordis-core = { workspace = true, features = ["internal-api"] }
+# Reproduce a real downstream graph: published sibling crates activate
+# cordis-core/internal-api, which Cargo unifies onto this package's direct core
+# dependency. Tests then prove direct core reachability without facade re-export.
+cordis-timer.workspace = true
+cordis-loader.workspace = true
 trybuild.workspace = true
 
 [lints]
