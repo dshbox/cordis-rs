@@ -1,0 +1,14 @@
+[package]
+name = "cordis-wasm-runner"
+description = "Host runner for Cordis WebAssembly Component examples"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+cordis-wasm = { path = "../../crates/cordis-wasm", version = "0.3.5" }
+cordis-core = { workspace = true }
+tokio = { workspace = true }
+
+[lints]
+workspace = true

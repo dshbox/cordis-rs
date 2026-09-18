@@ -1,0 +1,18 @@
+[package]
+name = "cordis-wasm-hello-plugin"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen = "=0.62.0"
+
+[dev-dependencies]
+cordis-wasm = { path = "../../crates/cordis-wasm", version = "0.3.5" }
+cordis-core = { path = "../../crates/cordis-core", version = "0.3.5" }
+tokio = { version = "1", default-features = false, features = ["rt", "sync", "macros"] }
+
+[workspace]

@@ -4,6 +4,7 @@
 .DS_Store
 /.cargo-home/
 /.scratch/
+/.work/
 /.codegraph/
 # Local agent skill packs and lockfiles
 /.agents/

@@ -74,7 +74,16 @@ gate_clippy() { cargo clippy --locked --workspace --all-targets -- -D warnings; 
 
 gate_vocab()  { ci/harness-vocab-scan.sh; }
 
-gate_test()   { timeout --kill-after=5s "${GATES_TEST_TIMEOUT:-300}" cargo test --locked --workspace; }
+gate_test() {
+  local timeout_seconds=${GATES_TEST_TIMEOUT:-300}
+  timeout --kill-after=5s "$timeout_seconds" cargo test --locked --workspace || return
+  # Guest crates are standalone Component packages, so workspace tests do not
+  # discover them. Keep their host/guest probes under the same CI timeout.
+  timeout --kill-after=5s "$timeout_seconds" cargo test --locked \
+    --manifest-path examples_wasm/hello_plugin/Cargo.toml || return
+  timeout --kill-after=5s "$timeout_seconds" cargo test --locked \
+    --manifest-path examples_wasm/logging_exporters/Cargo.toml
+}
 
 gate_doc()    { ci/readme-version-contract.sh && RUSTDOCFLAGS='-D warnings' cargo doc --locked --workspace --no-deps; }
 

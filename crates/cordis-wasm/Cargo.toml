@@ -1,0 +1,21 @@
+[package]
+name = "cordis-wasm"
+description = "Experimental WebAssembly Component Model adapter for Cordis v3"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+cordis-core = { workspace = true }
+parking_lot = { workspace = true }
+tokio = { workspace = true }
+thiserror = { workspace = true }
+sha2 = "0.10"
+wasmtime = { workspace = true }
+wasmtime-wasi = { workspace = true }
+
+[lints]
+workspace = true

@@ -1,0 +1,69 @@
+package cordis:plugin@0.1.0;
+
+/// Host-owned diagnostics available to every Cordis component generation.
+/// This is a foundation capability, not a Cordis Service: it neither creates
+/// a dependency edge nor grants access to another Fiber's Context.
+interface diagnostics {
+  enum level { debug, info, warn, error }
+  /// Emit through the owning Fiber's host-assigned logger channel.
+  emit: async func(level: level, message: string);
+}
+
+/// Immutable input selected by the host for one component generation.
+/// This is not a generic Service lookup; replacement creates a fresh generation.
+interface configuration {
+  get: async func() -> list<u8>;
+}
+
+/// Static declaration for one Cordis Component implementation.
+/// This is metadata, not a general Service locator.
+interface manifest {
+  enum standard-capability { configuration, diagnostics }
+  record descriptor {
+    name: string,
+    standard-capabilities: list<standard-capability>,
+    subscribed-events: list<string>,
+  }
+  /// Describe the Component without lifecycle work.
+  describe: async func() -> descriptor;
+}
+
+/// Guest-originated Component events delivered through the owning Context.
+interface events {
+  record event { name: string, payload: list<u8> }
+  record event-error { message: string }
+  emit: async func(event: event) -> result<_, event-error>;
+}
+
+/// Host-to-guest delivery for subscriptions declared in `manifest`.
+interface event-handler {
+  use events.{event, event-error};
+  /// The adapter serializes delivery and never synchronously re-enters a guest.
+  handle: async func(event: event) -> result<_, event-error>;
+}
+
+/// The guest-controlled part of one Cordis apply generation.
+interface lifecycle {
+  record lifecycle-error { message: string }
+  /// Failure prevents activation; the host still calls `dispose` once.
+  activate: async func() -> result<_, lifecycle-error>;
+  /// Idempotent guest cleanup; errors and traps cannot retain the generation.
+  dispose: async func() -> result<_, lifecycle-error>;
+}
+
+/// The Cordis Component contract for guest-owned behavior.
+/// Context, Scope, ServiceRealm, Loader, Fiber control, and Runtime
+/// observation stay host-owned. Components receive only configuration,
+/// diagnostics, and declared Event delivery.
+///
+/// Future request/reply and timer capabilities are intentionally documented in
+/// `examples_wasm/BOUNDARY.md`, not declared here. A WIT interface joins the
+/// guest contract only with a bound host adapter and a lifecycle probe.
+world cordis-plugin {
+  import configuration;
+  import diagnostics;
+  import events;
+  export lifecycle;
+  export manifest;
+  export event-handler;
+}

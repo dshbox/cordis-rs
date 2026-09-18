@@ -32,6 +32,10 @@ grep -Fq 'TOOLCHAIN: ${{ inputs.toolchain }}' .github/actions/setup-rust/action.
   || fail 'setup-rust must pass the toolchain input through an environment variable'
 grep -Fq 'RUSTUP_TOOLCHAIN=$TOOLCHAIN' .github/actions/setup-rust/action.yml \
   || fail 'setup-rust must export the environment-selected RUSTUP_TOOLCHAIN so lane selection beats directory overrides'
+grep -Fq 'targets: ${{ inputs.targets }}' .github/actions/setup-rust/action.yml \
+  || fail 'setup-rust must pass requested targets to rustup'
+grep -Fq 'default: "wasm32-wasip2"' .github/actions/setup-rust/action.yml \
+  || fail 'setup-rust must install wasm32-wasip2 for component fixtures'
 
 workspace_msrv="$(sed -n 's/^rust-version = "\([^"]*\)"$/\1/p' Cargo.toml)"
 [ -n "$workspace_msrv" ] || fail 'Cargo.toml has no workspace rust-version'

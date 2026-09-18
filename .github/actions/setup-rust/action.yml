@@ -10,6 +10,10 @@ inputs:
     description: Comma-separated rustup components
     required: false
     default: ""
+  targets:
+    description: Comma-separated rustup compilation targets
+    required: false
+    default: "wasm32-wasip2"
 
 runs:
   using: composite
@@ -19,6 +23,7 @@ runs:
       with:
         toolchain: ${{ inputs.toolchain }}
         components: ${{ inputs.components }}
+        targets: ${{ inputs.targets }}
 
     # rust-toolchain.toml is a directory override and otherwise wins over the
     # default selected by rustup. Export the lane explicitly so MSRV/latest
