@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.3.9](https://github.com/dshbox/cordis-rs/compare/cordis-timer-v0.3.8...cordis-timer-v0.3.9) - 2026-09-19
+
+### Other
+
+- close operational failure maturity audit ([#156](https://github.com/dshbox/cordis-rs/pull/156))
+
 ## [0.3.3](https://github.com/dshbox/cordis-rs/compare/cordis-timer-v0.3.2...cordis-timer-v0.3.3) - 2026-09-16
 
 ### Other
