@@ -149,12 +149,13 @@ settled architecture merely to create more pre-1.0 work.
 The following work can improve confidence before or after 1.0, but its mere absence
 must not keep the project permanently pre-1.0:
 
-- Prepare a short external concurrency review guide that points reviewers at named
-  invariants, forbidden states, transition/linearization points, reduced models,
-  negative controls, real Tokio evidence, and known coverage boundaries. An
-  independent critical-path review is strongly desirable; any correctness finding
-  it produces becomes a blocker until resolved, but obtaining a particular reviewer
-  is not itself a release gate.
+- Maintain the short
+  [external concurrency review guide](docs/lifecycle-concurrency-review-guide.md) that
+  points reviewers at named invariants, forbidden states, transition/linearization
+  points, reduced models, negative controls, real Tokio evidence, and known coverage
+  boundaries. An independent critical-path review is strongly desirable; any correctness
+  finding it produces becomes a blocker until resolved, but obtaining a particular
+  reviewer is not itself a release gate.
 - Continue scheduled/deeper concurrency assurance such as larger actor counts,
   higher exploration/preemption bounds, deeper Era failure/cancellation combinations,
   and optional Shuttle random/PCT runs. Passing bounded exploration must continue to

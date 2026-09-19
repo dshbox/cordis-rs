@@ -1,0 +1,87 @@
+name: Correctness assurance
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "30 4 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: correctness-assurance-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  deeper-loom:
+    name: Deeper Inertia Loom
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup-rust
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - name: Explore four-actor two-mutator range
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p target/correctness-assurance
+          echo "commit=$(git rev-parse HEAD)"
+          rustc -Vv
+          cargo -V
+          cargo tree -p cordis-core --features loom-tests | grep -m1 "loom v"
+          echo "actors=4 max_threads=4 max_branches=48 preemption_bound=4 max_permutations=none max_duration=none"
+          echo "A zero exit means the declared finite range completed; there is no time or permutation budget."
+          CORDIS_LOOM_INERTIA_PREEMPTION_BOUND=4 \
+            cargo test --locked --release -p cordis-core --features loom-tests \
+              --test loom_inertia two_mutations_preserve_revision_inspection_coverage \
+              -- --exact --nocapture \
+            2>&1 | tee target/correctness-assurance/deeper-loom.log
+      - name: Preserve deeper Loom log
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: deeper-loom
+          path: target/correctness-assurance/deeper-loom.log
+          if-no-files-found: error
+          retention-days: 14
+
+  coverage:
+    name: Coverage-assisted gap discovery
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup-rust
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: taiki-e/install-action@3f74d7c16a4242f1c95561e98edc25d36adb4375 # v2
+        with:
+          tool: cargo-llvm-cov@0.9.1
+          fallback: none
+      - name: Collect core coverage artifacts
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p target/correctness-assurance
+          cargo llvm-cov --locked -p cordis-core --lib --tests \
+            --json --output-path target/correctness-assurance/coverage.json
+          cargo llvm-cov report --summary-only \
+            | tee target/correctness-assurance/coverage-summary.txt
+          cargo llvm-cov report --html \
+            --output-dir target/correctness-assurance/html
+          echo "Coverage is discovery information only; this workflow has no percentage gate."
+      - name: Preserve coverage artifacts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: core-coverage
+          path: |
+            target/correctness-assurance/coverage.json
+            target/correctness-assurance/coverage-summary.txt
+            target/correctness-assurance/html
+          if-no-files-found: error
+          retention-days: 14
