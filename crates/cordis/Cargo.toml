@@ -21,11 +21,6 @@ default = []
 cordis-core.workspace = true
 
 [dev-dependencies]
-# Reproduce a real downstream graph: published sibling crates activate
-# cordis-core/internal-api, which Cargo unifies onto this package's direct core
-# dependency. Tests then prove direct core reachability without facade re-export.
-cordis-timer.workspace = true
-cordis-loader.workspace = true
 trybuild.workspace = true
 
 [lints]

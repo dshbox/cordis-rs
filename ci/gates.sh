@@ -74,7 +74,7 @@ gate_clippy() { cargo clippy --locked --workspace --all-targets -- -D warnings; 
 
 gate_vocab()  { ci/harness-vocab-scan.sh; }
 
-gate_test()   { timeout --kill-after=5s "${GATES_TEST_TIMEOUT:-300}" cargo test --locked --workspace; }
+gate_test()   { ci/internal-api-contract.sh && timeout --kill-after=5s "${GATES_TEST_TIMEOUT:-300}" cargo test --locked --workspace; }
 
 gate_doc()    { ci/readme-version-contract.sh && RUSTDOCFLAGS='-D warnings' cargo doc --locked --workspace --no-deps; }
 
