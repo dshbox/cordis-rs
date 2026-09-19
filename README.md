@@ -177,6 +177,21 @@ generation. Listener registrations, Service publications, tasks, effects, and
 timer operations can therefore be cleaned up with the generation instead of
 being manually threaded through application code.
 
+
+## Application teardown
+
+Cordis deliberately has no Runtime-wide shutdown API. Applications retain the
+delivered `FiberHandle`s they intend to end and call `dispose().await` during
+normal shutdown. The demonstrated example Harness records handles in spawn order
+and disposes them in reverse spawn order, attempt-all; that ordering is
+application policy, not a hidden Fiber parent/child relation.
+
+Dropping a `FiberHandle` or `Context` is ordinary Rust Drop, not lifecycle teardown,
+and root-owned registrations do not disappear merely because Context clones are
+dropped. See [Application teardown](docs/application-teardown.md) for the
+complete demonstrated pattern, including repeated teardown, generation cleanup,
+and Loader handoff ownership.
+
 ## Services: exact placement, not fallback lookup
 
 A Service is identified by its semantic Service name and resolved from one exact

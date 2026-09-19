@@ -600,7 +600,12 @@ Both return `Result<ListenerRegistration, ListenerRegistrationError>` with
 `ListenerRegistration` whose Drop is inert and whose consuming
 `remove() -> bool` controls one exact occurrence. A once claim
 unregisters before callback invocation; ordinary claimed work continues
-if a later removal wins.
+if a later removal wins. Event operation futures themselves are caller-owned,
+not lifecycle transactions with detached postcommit completion: cancellation
+before an invocation claim leaves that occurrence untouched, while cancellation
+after a once claim never restores the consumed occurrence. Cordis does not
+promise that an in-flight Event callback finishes after its operation future is
+cancelled; callers that require callback completion await the operation.
 
 Absent or private: the closure-shape marker module, custom `Listener`
 implementations, `Listener::register`, `EventCarrier`, global carrier
@@ -894,9 +899,12 @@ and `is_ok(&self) -> bool`. Ignoring a delivered outcome would discard the calle
 FiberHandle controls while Fiber residency remains explicit. `Pruned` wins for every
 descendant of a disabled Plugin, including
 groups and separately disabled Plugins. Reachable groups yield `Group`;
-reachable disabled Plugins yield `Disabled`. Ordinary resolver,
-preparation, placement, or spawn failure yields `Failed` and does not
-prune descendants. `is_ok` is true exactly when no `Failed` exists.
+reachable disabled Plugins yield `Disabled`. Ordinary resolver, preparation, or spawn failure yields `Failed` and does not
+prune descendants. Loader realm placement has no independent execution failure:
+duplicate isolate rows are rejected while building the plan, and every
+execution realm is allocated from the caller Context's Runtime, so the private
+validated mapping cannot produce `RealmMappingError`. `is_ok` is true exactly
+when no `Failed` exists.
 Resolve key is repeatable metadata; there is no `by_resolve_key` lookup.
 
 Load is partial, not transactional. Before final outcome handoff, Loader
@@ -969,7 +977,8 @@ an uncommitted boundary `Elapsed` wins. Deadline expiry is normal;
 generation cancellation is a distinct error. Exactly one terminal
 outcome commits. Dropping abandons the operation and `F` and disarms
 cleanup when possible; generation cleanup never polls, moves, or drops
-`F`.
+`F`. `Timeout<F>` adds no panic boundary around caller-owned work: a panic
+while polling `F` follows ordinary Rust unwinding through the caller's poll.
 
 `Interval: Stream<Item = Result<(), TimerCancelled>>` anchors its phase
 at successful construction, first tick at anchor + period. A late poll

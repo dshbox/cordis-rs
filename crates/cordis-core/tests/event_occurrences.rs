@@ -161,6 +161,70 @@ async fn once_is_consumed_before_callback_and_panic_never_restores_it() {
 }
 
 #[tokio::test]
+async fn cancelling_dispatch_before_once_claim_leaves_the_occurrence_registered() {
+    let ctx = Context::new();
+    let hits = Arc::new(AtomicUsize::new(0));
+    let callback_hits = hits.clone();
+    let registration = ctx
+        .on_with::<Ping, _>(
+            observer_sync(move |_, _| -> Result<(), Infallible> {
+                callback_hits.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            }),
+            ListenerOptions::default().once(),
+        )
+        .unwrap();
+
+    let dispatch = ctx.emit::<Ping>(Routing::Unscoped, 1);
+    drop(dispatch);
+
+    assert_eq!(hits.load(Ordering::SeqCst), 0);
+    assert!(
+        registration.remove(),
+        "cancellation before the first invocation claim leaves the exact occurrence registered"
+    );
+}
+
+#[tokio::test]
+async fn cancelling_dispatch_after_once_claim_does_not_restore_the_occurrence() {
+    let ctx = Context::new();
+    let hits = Arc::new(AtomicUsize::new(0));
+    let callback_hits = hits.clone();
+    let registration = ctx
+        .on_with::<Ping, _>(
+            observer(move |_, _| {
+                let callback_hits = callback_hits.clone();
+                async move {
+                    callback_hits.fetch_add(1, Ordering::SeqCst);
+                    std::future::pending::<()>().await;
+                    Ok::<(), Infallible>(())
+                }
+            }),
+            ListenerOptions::default().once(),
+        )
+        .unwrap();
+
+    let mut dispatch = Box::pin(ctx.emit::<Ping>(Routing::Unscoped, 1));
+    assert!(
+        futures::poll!(&mut dispatch).is_pending(),
+        "the claimed callback is in flight"
+    );
+    assert_eq!(hits.load(Ordering::SeqCst), 1);
+    drop(dispatch);
+
+    ctx.emit::<Ping>(Routing::Unscoped, 2).await.unwrap();
+    assert_eq!(
+        hits.load(Ordering::SeqCst),
+        1,
+        "caller cancellation cannot restore an already-won once claim"
+    );
+    assert!(
+        !registration.remove(),
+        "the cancelled dispatch still consumed the exact once occurrence"
+    );
+}
+
+#[tokio::test]
 async fn query_short_circuit_and_waterfall_veto_do_not_consume_unreached_once() {
     let query = Context::new();
     let first = query

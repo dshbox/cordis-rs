@@ -118,17 +118,21 @@ settled architecture merely to create more pre-1.0 work.
 
 ### Operational and failure maturity
 
-- [ ] **Close a 1.0 failure-boundary audit.** Map the supported critical paths to
-  existing docs/tests for returned failure, contained panic, caller cancellation,
-  executor-unavailable/off-runtime behavior where applicable, cross-task
-  lifecycle-recursion attribution, deterministic cleanup, and application teardown.
-  Close any material undefined boundary or explicitly
-  classify it as unsupported in the owning authority.
-- [ ] **Verify teardown guidance against demonstrated consumers.** The project must
-  show a documented, tested way for applications to terminate their admitted work
-  using the existing lifecycle model. This criterion does not require inventing a
-  Runtime-wide shutdown API: the approved architecture deliberately omits one until
-  its documented reopening condition is met.
+- [x] **Close a 1.0 failure-boundary audit.** The
+  [failure-boundary audit](docs/failure-boundary-audit.md) maps every supported
+  critical-path family across returned failure, contained panic, caller
+  cancellation, executor-unavailable/off-runtime behavior where applicable,
+  cross-task lifecycle-recursion attribution, deterministic cleanup, and
+  application teardown. Every matrix cell is classified as Covered, N/A, or
+  explicitly Unsupported, with no remaining material gap.
+- [x] **Verify teardown guidance against demonstrated consumers.** The top-level
+  README and [application teardown guide](docs/application-teardown.md) document
+  the demonstrated Harness/Roster policy: retain delivered `FiberHandle`s,
+  dispose them in reverse spawn order, and attempt every disposal. The shared
+  `examples_common::Roster` and `examples/common/tests/boot.rs` exercise
+  reverse-order, attempt-all, and repeat teardown behavior. No Runtime-wide
+  shutdown API was added; the approved architecture's absence and reopening
+  condition remain unchanged.
 
 ### Documentation and release policy
 
