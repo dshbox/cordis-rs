@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.3.8](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.3.7...cordis-core-v0.3.8) - 2026-09-19
+
+### Other
+
+- *(core)* deepen lifecycle correctness assurance ([#151](https://github.com/dshbox/cordis-rs/pull/151))
+
 ## [0.3.7](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.3.6...cordis-core-v0.3.7) - 2026-09-18
 
 ### Other
