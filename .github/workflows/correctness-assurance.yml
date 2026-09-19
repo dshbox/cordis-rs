@@ -43,7 +43,7 @@ jobs:
             2>&1 | tee target/correctness-assurance/deeper-loom.log
       - name: Preserve deeper Loom log
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: deeper-loom
           path: target/correctness-assurance/deeper-loom.log
@@ -63,6 +63,11 @@ jobs:
           # as the canonical test lane.
           components: rust-src
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          # llvm-cov uses a dedicated instrumentation target and trybuild creates
+          # transient target trees; caching them adds little value and makes
+          # rust-cache post-clean report benign ENOENT annotations.
+          cache-targets: false
       - uses: taiki-e/install-action@3f74d7c16a4242f1c95561e98edc25d36adb4375 # v2
         with:
           tool: cargo-llvm-cov@0.9.1
@@ -82,7 +87,7 @@ jobs:
           echo "Coverage is discovery information only; this workflow has no percentage gate."
       - name: Preserve coverage artifacts
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: core-coverage
           path: |
