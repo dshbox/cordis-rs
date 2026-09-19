@@ -66,6 +66,8 @@ jobs:
           # authority; upgrades are deliberate, never floating.
           components: rust-src
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - if: runner.os == 'Linux'
+        run: ci/internal-api-contract.sh
       - run: cargo test --locked --workspace
 
   loom:
