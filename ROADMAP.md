@@ -78,13 +78,18 @@ settled architecture merely to create more pre-1.0 work.
 - [ ] **Declare an API freeze candidate.** Resolve every known planned breaking
   change before the freeze and record that the normative public-interface inventory
   is the candidate 1.0 surface.
-- [ ] **Resolve public macro ergonomics before the API freeze.** Review repetitive
-  consumer declarations such as `Plugin`, `Service`, and `Event` implementations and
-  record whether 1.0 intentionally ships with no public macro surface or whether a
-  demonstrated ergonomic need justifies one. Absence of macros is not itself a
-  blocker; leaving the intended canonical authoring style undecided is. Any public
-  declarative or procedural macro introduced here becomes supported API and must not
-  make generated representation details part of the stable contract.
+- [x] **Resolve public macro ergonomics before the API freeze.** Representative
+  declarations were reviewed in `hello_plugin`, `scopes_tenants`, `gateway`, and
+  `chat_capstone` against the public trait contracts. Cordis 1.0 intentionally
+  ships with no public declarative or procedural macro surface:
+  direct implementation of the semantic traits is the canonical authoring style,
+  as recorded in the normative
+  [`v3 public interface`](docs/v3-public-interface.md#authoring-style-and-macro-surface).
+  `Service` and `Event` declarations keep small semantic contracts explicit, while
+  `Plugin` and `ConfigurableService` bodies contain behavior that macro syntax would
+  not eliminate. A future macro remains possible as additive supported API when a
+  demonstrated repeated pattern has one unambiguous semantic meaning; generated
+  representation details are not thereby part of the stable contract.
 - [ ] **Complete one stabilization release after the freeze without a planned
   breaking change.** If a deliberate public break is required, make the break,
   update its owning authority, and restart the stabilization release requirement.

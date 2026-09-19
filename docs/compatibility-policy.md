@@ -29,6 +29,13 @@ features explicitly classified below as unsupported are outside the downstream
 compatibility promise even if Rust or Cargo makes them reachable in a particular
 dependency graph.
 
+The intended 1.0 surface has no supported public macro surface; direct trait
+implementation is the canonical authoring style recorded by the normative public
+interface. If a public macro is introduced later, its documented invocation
+syntax and caller-visible generated API or behavior become supported surface in
+the same way as ordinary public API. Incidental expansion representation remains
+an implementation detail unless the normative interface explicitly exposes it.
+
 ## What counts as a breaking change
 
 After 1.0, a change is breaking when it makes previously supported downstream

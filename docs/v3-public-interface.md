@@ -48,6 +48,35 @@ The interface guarantees, for every item in every crate:
   `Clone`, `Send`, `Sync`, or `'static` bound beyond the declarations
   below.
 
+## Authoring style and macro surface
+
+The intended 1.0 surface intentionally has **no supported public macro surface**.
+`cordis-core`, `cordis-loader`, `cordis-timer`, and the `cordis-rs` facade
+export no declarative macro, derive macro, attribute macro, or function-like
+procedural macro as part of the downstream contract.
+
+The canonical authoring style is ordinary Rust declarations plus direct
+implementation of the semantic traits, including `Plugin`, `Service`,
+`ConfigurableService`, `Event`, and `PluginResolver`. Listener roles are
+constructed through the ordinary public adapter functions rather than generated
+syntax.
+
+This is deliberate rather than an unfinished convenience layer. The small
+`Service` and `Event` implementations make semantic identity and typed contract
+shape explicit. The longer `Plugin` and `ConfigurableService` implementations
+contain preparation, application, configuration-composition, error, and bound
+semantics that a macro would not remove. A macro that merely rewrites those
+implementations would add a second supported authoring syntax without reducing
+the semantic decisions a consumer must make; a macro that hides them would make
+the contract less explicit.
+
+A future macro may be introduced additively when demonstrated consumer usage
+shows a repeated authoring pattern with one unambiguous semantic meaning. Its
+documented invocation syntax and caller-visible generated API or behavior then
+join the supported surface. Generated helper names and internal expansion
+structure remain implementation details unless the normative interface
+explicitly exposes them.
+
 ## Crate facades and canonical paths
 
 Rust modules are private by default. Each crate exposes one curated
