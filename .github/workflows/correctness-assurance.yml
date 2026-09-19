@@ -62,12 +62,6 @@ jobs:
           # library source, so coverage must use the same snapshot authority
           # as the canonical test lane.
           components: rust-src
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
-        with:
-          # llvm-cov uses a dedicated instrumentation target and trybuild creates
-          # transient target trees; caching them adds little value and makes
-          # rust-cache post-clean report benign ENOENT annotations.
-          cache-targets: false
       - uses: taiki-e/install-action@3f74d7c16a4242f1c95561e98edc25d36adb4375 # v2
         with:
           tool: cargo-llvm-cov@0.9.1
