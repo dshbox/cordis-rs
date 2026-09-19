@@ -3,7 +3,9 @@
 mod common;
 
 use cordis_core::lifecycle::{LifecycleOperation, PluginFailureKind, RestartError};
-use cordis_core::{Context, FiberState, InjectSpec, Plugin, PreparedPlugin, Service};
+use cordis_core::{
+    Context, FiberState, InjectSpec, Plugin, PreparedChange, PreparedPlugin, Service, UpdateOutcome,
+};
 use parking_lot::Mutex;
 use std::convert::Infallible;
 use std::sync::Arc;
@@ -70,6 +72,55 @@ async fn restart_preserves_identity_and_retries_a_same_target_failure() {
     assert_eq!(fiber_handle.state(), FiberState::Active);
     assert_eq!(fiber_handle.id(), id);
     assert_eq!(applies.load(Ordering::SeqCst), 3);
+}
+
+struct PanicOnRestart {
+    applies: Arc<AtomicU32>,
+}
+
+impl Plugin for PanicOnRestart {
+    type Config = ();
+    type Input = ();
+    type PrepareError = Infallible;
+    type ApplyError = Infallible;
+
+    fn prepare(&self, (): ()) -> Result<(), Infallible> {
+        Ok(())
+    }
+
+    async fn apply(&self, _ctx: Context, _prepared: &()) -> Result<(), Infallible> {
+        let attempt = self.applies.fetch_add(1, Ordering::SeqCst) + 1;
+        if attempt == 2 {
+            panic!("restart panic")
+        }
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn restart_contains_apply_panic_after_complete_rollback() {
+    let root = Context::new();
+    let applies = Arc::new(AtomicU32::new(0));
+    let fiber_handle = root
+        .spawn(prepared(PanicOnRestart {
+            applies: applies.clone(),
+        }))
+        .await
+        .unwrap();
+    let id = fiber_handle.id();
+
+    let error = fiber_handle
+        .restart()
+        .await
+        .expect_err("second apply panics");
+    let RestartError::Apply(failure) = error else {
+        panic!("expected normalized restart panic: {error:?}")
+    };
+    assert_eq!(failure.kind(), PluginFailureKind::Panic);
+    assert!(failure.diagnostic().contains("restart panic"));
+    assert_eq!(fiber_handle.state(), FiberState::Failed);
+    assert_eq!(fiber_handle.id(), id);
+    assert_eq!(applies.load(Ordering::SeqCst), 2);
 }
 
 #[derive(Debug)]
@@ -224,6 +275,209 @@ impl Plugin for RestartCancellation {
         }
         Ok(())
     }
+}
+
+#[tokio::test]
+async fn cancelled_precommit_restart_waiter_does_not_replace_the_generation() {
+    let root = Context::new();
+    let applies = Arc::new(AtomicU32::new(0));
+    let cleanup_started = Arc::new(tokio::sync::Notify::new());
+    let cleanup_release = Arc::new(tokio::sync::Notify::new());
+    let fiber_handle = root
+        .spawn(prepared(RestartCancellation {
+            applies: applies.clone(),
+            cleanup_started: cleanup_started.clone(),
+            cleanup_release: cleanup_release.clone(),
+        }))
+        .await
+        .unwrap();
+
+    let first = tokio::spawn({
+        let fiber_handle = fiber_handle.clone();
+        async move { fiber_handle.restart().await }
+    });
+    cleanup_started.notified().await;
+    assert_eq!(fiber_handle.state(), FiberState::Unloading);
+
+    let mut cancelled = Box::pin(fiber_handle.restart());
+    assert!(
+        futures::poll!(&mut cancelled).is_pending(),
+        "second restart must still be waiting before its generation-replacement commit"
+    );
+    drop(cancelled);
+
+    cleanup_release.notify_one();
+    first.await.unwrap().unwrap();
+    assert_eq!(fiber_handle.state(), FiberState::Active);
+    assert_eq!(
+        applies.load(Ordering::SeqCst),
+        2,
+        "cancelling before the second restart commit must not replace another generation"
+    );
+
+    fiber_handle
+        .restart()
+        .await
+        .expect("a later restart still acquires the lifecycle slot");
+    assert_eq!(applies.load(Ordering::SeqCst), 3);
+}
+
+#[test]
+fn committed_restart_survives_origin_runtime_shutdown() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    let root = Context::new();
+    let applies = Arc::new(AtomicU32::new(0));
+    let cleanup_started = Arc::new(tokio::sync::Notify::new());
+    let cleanup_release = Arc::new(tokio::sync::Notify::new());
+    let fiber_handle = runtime
+        .block_on(root.spawn(prepared(RestartCancellation {
+            applies: applies.clone(),
+            cleanup_started: cleanup_started.clone(),
+            cleanup_release: cleanup_release.clone(),
+        })))
+        .unwrap();
+
+    let handle = runtime.handle().clone();
+    let restarting = fiber_handle.clone();
+    let restart = std::thread::spawn(move || handle.block_on(restarting.restart()));
+
+    runtime.block_on(cleanup_started.notified());
+    assert_eq!(fiber_handle.state(), FiberState::Unloading);
+    runtime.shutdown_background();
+    cleanup_release.notify_one();
+
+    restart
+        .join()
+        .expect("runtime shutdown must not panic a committed restart")
+        .expect("committed restart still reaches current-target quiescence");
+    assert_eq!(fiber_handle.state(), FiberState::Active);
+    assert_eq!(applies.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn committed_update_survives_origin_runtime_shutdown() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    let root = Context::new();
+    let applies = Arc::new(AtomicU32::new(0));
+    let cleanup_started = Arc::new(tokio::sync::Notify::new());
+    let cleanup_release = Arc::new(tokio::sync::Notify::new());
+    let fiber_handle = runtime
+        .block_on(root.spawn(prepared(RestartCancellation {
+            applies: applies.clone(),
+            cleanup_started: cleanup_started.clone(),
+            cleanup_release: cleanup_release.clone(),
+        })))
+        .unwrap();
+
+    let handle = runtime.handle().clone();
+    let updating = fiber_handle.clone();
+    let update = std::thread::spawn(move || {
+        handle.block_on(updating.update(PreparedChange::from_input::<RestartCancellation>(())))
+    });
+
+    runtime.block_on(cleanup_started.notified());
+    assert_eq!(fiber_handle.state(), FiberState::Unloading);
+    runtime.shutdown_background();
+    cleanup_release.notify_one();
+
+    assert_eq!(
+        update
+            .join()
+            .expect("runtime shutdown must not panic a committed update")
+            .expect("committed update still reaches current-target quiescence"),
+        UpdateOutcome::Committed(FiberState::Active)
+    );
+    assert_eq!(fiber_handle.state(), FiberState::Active);
+    assert_eq!(applies.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn committed_era_swap_survives_origin_runtime_shutdown() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    let root = Context::new();
+    let applies = Arc::new(AtomicU32::new(0));
+    let cleanup_started = Arc::new(tokio::sync::Notify::new());
+    let cleanup_release = Arc::new(tokio::sync::Notify::new());
+    let source = runtime
+        .block_on(root.spawn(prepared(RestartCancellation {
+            applies: applies.clone(),
+            cleanup_started: cleanup_started.clone(),
+            cleanup_release: cleanup_release.clone(),
+        })))
+        .unwrap();
+    let source_id = source.id().clone();
+
+    let handle = runtime.handle().clone();
+    let swapping = source.clone();
+    let swap = std::thread::spawn(move || {
+        handle.block_on(swapping.era_swap(PreparedChange::from_input::<RestartCancellation>(())))
+    });
+
+    runtime.block_on(cleanup_started.notified());
+    assert_eq!(source.state(), FiberState::Unloading);
+    runtime.shutdown_background();
+    cleanup_release.notify_one();
+
+    let successor = swap
+        .join()
+        .expect("runtime shutdown must not panic a committed era swap")
+        .expect("committed era swap still completes successor handoff");
+    assert_eq!(source.state(), FiberState::Disposed);
+    assert_eq!(successor.state(), FiberState::Active);
+    assert_ne!(successor.id(), source_id);
+    assert_eq!(applies.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn cancelled_precommit_dispose_waiter_leaves_the_fiber_live() {
+    let root = Context::new();
+    let applies = Arc::new(AtomicU32::new(0));
+    let cleanup_started = Arc::new(tokio::sync::Notify::new());
+    let cleanup_release = Arc::new(tokio::sync::Notify::new());
+    let fiber_handle = root
+        .spawn(prepared(RestartCancellation {
+            applies: applies.clone(),
+            cleanup_started: cleanup_started.clone(),
+            cleanup_release: cleanup_release.clone(),
+        }))
+        .await
+        .unwrap();
+
+    let restart = tokio::spawn({
+        let fiber_handle = fiber_handle.clone();
+        async move { fiber_handle.restart().await }
+    });
+    cleanup_started.notified().await;
+
+    let mut dispose = Box::pin(fiber_handle.dispose());
+    assert!(
+        futures::poll!(&mut dispose).is_pending(),
+        "dispose must still be waiting before its Open-to-Closing claim"
+    );
+    drop(dispose);
+
+    cleanup_release.notify_one();
+    restart.await.unwrap().unwrap();
+    assert_eq!(fiber_handle.state(), FiberState::Active);
+    assert_eq!(applies.load(Ordering::SeqCst), 2);
+
+    fiber_handle
+        .dispose()
+        .await
+        .expect("a later disposer can still win the terminal claim");
+    assert_eq!(fiber_handle.state(), FiberState::Disposed);
 }
 
 #[tokio::test]
@@ -387,6 +641,42 @@ impl Plugin for DisposeBarrier {
         .map_err(|_| ApplyBoom)?;
         Ok(())
     }
+}
+
+#[test]
+fn committed_dispose_survives_origin_runtime_shutdown() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    let root = Context::new();
+    let cleanup_started = Arc::new(tokio::sync::Notify::new());
+    let cleanup_release = Arc::new(tokio::sync::Notify::new());
+    let cleanups = Arc::new(AtomicU32::new(0));
+    let fiber_handle = runtime
+        .block_on(root.spawn(prepared(DisposeBarrier {
+            cleanup_started: cleanup_started.clone(),
+            cleanup_release: cleanup_release.clone(),
+            cleanups: cleanups.clone(),
+        })))
+        .unwrap();
+
+    let handle = runtime.handle().clone();
+    let disposing = fiber_handle.clone();
+    let disposer = std::thread::spawn(move || handle.block_on(disposing.dispose()));
+
+    runtime.block_on(cleanup_started.notified());
+    assert_eq!(fiber_handle.state(), FiberState::Unloading);
+    runtime.shutdown_background();
+    cleanup_release.notify_one();
+
+    disposer
+        .join()
+        .expect("runtime shutdown must not panic a committed disposal")
+        .expect("committed disposal still reaches its terminal barrier");
+    assert_eq!(cleanups.load(Ordering::SeqCst), 1);
+    assert_eq!(fiber_handle.state(), FiberState::Disposed);
 }
 
 #[tokio::test]

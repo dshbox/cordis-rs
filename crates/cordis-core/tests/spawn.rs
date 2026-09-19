@@ -480,6 +480,35 @@ async fn spawn_through_an_inactive_context_is_refused_before_allocation() {
 }
 
 // ---------------------------------------------------------------------------
+// LF-19: the pre-allocation part of spawn is yield-free, so cancelling before
+// the commit is represented by dropping the unpolled future. It must allocate
+// nothing and run no Plugin work.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn caller_cancellation_before_commit_allocates_nothing() {
+    let ctx = Context::new();
+    let applies = Arc::new(AtomicU32::new(0));
+    let observed = applies.clone();
+    let spawn = ctx.spawn(PreparedPlugin::from_input(
+        Scripted(move |_ctx: Context| -> Result<(), ApplyBoom> {
+            observed.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }),
+        (),
+    ));
+
+    drop(spawn);
+
+    assert_eq!(applies.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        ordinary_fiber_count(&ctx),
+        0,
+        "precommit caller cancellation must leave no attempted Fiber resident"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // LF-19: caller cancellation after the allocation commit completes the
 // disposal and unlink of the undelivered Fiber under framework ownership,
 // independently of caller polling — and is never reported as Interrupted

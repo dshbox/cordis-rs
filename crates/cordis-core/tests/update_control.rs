@@ -1,7 +1,9 @@
 //! Issue 35 typed same-Fiber update-control conformance evidence.
 
-use cordis_core::event::{ListenerOptions, around, mapper, mapper_sync};
-use cordis_core::lifecycle::{FiberState, UpdateError, UpdateNext, UpdateOutcome};
+use cordis_core::event::{InvocationFailureKind, ListenerOptions, around, mapper, mapper_sync};
+use cordis_core::lifecycle::{
+    FiberState, PluginFailureKind, UpdateError, UpdateNext, UpdateOutcome,
+};
 use cordis_core::{Context, InjectSpec, Plugin, PreparedChange, PreparedPlugin};
 use parking_lot::Mutex;
 use std::convert::Infallible;
@@ -527,6 +529,62 @@ impl Plugin for FailingProbe {
     }
 }
 
+struct PanickingApplyProbe {
+    seen: Arc<Mutex<Vec<u8>>>,
+}
+
+impl Plugin for PanickingApplyProbe {
+    type Config = u8;
+    type Input = u8;
+    type PrepareError = Infallible;
+    type ApplyError = Infallible;
+
+    fn prepare(&self, value: u8) -> Result<u8, Infallible> {
+        Ok(value)
+    }
+
+    async fn apply(&self, _: Context, value: &u8) -> Result<(), Infallible> {
+        self.seen.lock().push(*value);
+        if *value == 2 {
+            panic!("update apply panic")
+        }
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn postcommit_update_apply_panic_is_contained_and_keeps_the_new_input() {
+    let ctx = Context::new();
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let fiber_handle = ctx
+        .spawn(PreparedPlugin::from_input(
+            PanickingApplyProbe { seen: seen.clone() },
+            1,
+        ))
+        .await
+        .unwrap();
+    let id = fiber_handle.id();
+
+    let error = fiber_handle
+        .update(PreparedChange::from_input::<PanickingApplyProbe>(2))
+        .await
+        .expect_err("committed update apply panics");
+    let UpdateError::Apply(failure) = error else {
+        panic!("expected normalized postcommit apply panic: {error:?}")
+    };
+    assert_eq!(failure.kind(), PluginFailureKind::Panic);
+    assert!(failure.diagnostic().contains("update apply panic"));
+    assert_eq!(fiber_handle.id(), id);
+    assert_eq!(fiber_handle.state(), FiberState::Failed);
+
+    assert!(fiber_handle.restart().await.is_err());
+    assert_eq!(
+        *seen.lock(),
+        vec![1, 2, 2],
+        "restart retries the committed replacement input rather than restoring the old input"
+    );
+}
+
 #[tokio::test]
 async fn postcommit_apply_failure_is_invisible_to_control_and_candidate_is_retained() {
     let ctx = Context::new();
@@ -817,6 +875,39 @@ async fn prepend_and_once_fix_typed_transformation_order() {
         .await
         .unwrap();
     assert_eq!(*seen.lock(), vec![1, 21, 3]);
+}
+
+#[tokio::test]
+async fn mapper_panic_is_contained_precommit_and_preserves_the_old_generation() {
+    let ctx = Context::new();
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let _registration = ctx
+        .on_update::<Probe, _>(
+            mapper_sync::<Probe, _>(|_, _v| -> Result<u8, Infallible> { panic!("mapper panic") }),
+            ListenerOptions::default(),
+        )
+        .unwrap();
+    let fiber_handle = ctx
+        .spawn(PreparedPlugin::from_input(Probe { seen: seen.clone() }, 1))
+        .await
+        .unwrap();
+    let id = fiber_handle.id();
+
+    match fiber_handle
+        .update(PreparedChange::from_input::<Probe>(2))
+        .await
+    {
+        Err(UpdateError::Control(failure)) => {
+            assert_eq!(failure.kind(), InvocationFailureKind::Panic);
+            assert!(failure.diagnostic().contains("mapper panic"));
+            assert!(failure.registration_id().is_some());
+        }
+        other => panic!("expected contained mapper panic, got {other:?}"),
+    }
+
+    assert_eq!(fiber_handle.id(), id);
+    assert_eq!(fiber_handle.state(), FiberState::Active);
+    assert_eq!(*seen.lock(), vec![1]);
 }
 
 #[tokio::test]

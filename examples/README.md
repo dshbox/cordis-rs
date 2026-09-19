@@ -24,7 +24,10 @@ reading stdin.
 boot/teardown mechanics (`boot_report` / `teardown`) and the shared
 ops-console section rendering (`section`).
 Policy — supervision, error aggregation, narration ordering — stays
-app-side.
+app-side. For the application-facing shutdown pattern demonstrated by that
+helper — retain delivered `FiberHandle`s, reverse-spawn-order `dispose().await`,
+attempt-all, and no implicit Runtime shutdown — see
+[`docs/application-teardown.md`](../docs/application-teardown.md).
 
 Start here: `cargo run -p hello_plugin`, then `cargo run -p gateway`
 for the declarative boot + runbook seat, then `cargo run -p worker_daemon`

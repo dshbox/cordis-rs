@@ -178,6 +178,69 @@ async fn teardown_disposes_in_reverse_spawn_order_attempt_all() {
     );
 }
 
+struct TeardownFromCleanup {
+    handles: Arc<parking_lot::Mutex<Vec<cordis_core::FiberHandle>>>,
+}
+
+impl Plugin for TeardownFromCleanup {
+    type Config = ();
+    type Input = ();
+    type PrepareError = Infallible;
+    type ApplyError = cordis_core::effect::EffectRegistrationError;
+
+    fn prepare(&self, (): ()) -> Result<(), Infallible> {
+        Ok(())
+    }
+
+    async fn apply(&self, ctx: Context, _input: &()) -> Result<(), Self::ApplyError> {
+        let handles = self.handles.clone();
+        ctx.effect(move || async move {
+            let handles = handles.lock().clone();
+            teardown(&handles).await;
+        })?;
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn teardown_attempts_later_handles_after_one_dispose_refusal() {
+    let ctx = Context::new();
+    let order = Arc::new(parking_lot::Mutex::new(Vec::new()));
+    let first = ctx
+        .spawn(prepared(Recorder {
+            name: "first",
+            order: order.clone(),
+        }))
+        .await
+        .unwrap();
+    let handles = Arc::new(parking_lot::Mutex::new(Vec::new()));
+    let last = ctx
+        .spawn(prepared(TeardownFromCleanup {
+            handles: handles.clone(),
+        }))
+        .await
+        .unwrap();
+    *handles.lock() = vec![first.clone(), last.clone()];
+
+    last.dispose().await.unwrap();
+
+    assert_eq!(
+        *order.lock(),
+        ["first"],
+        "the self-dispose refusal must not stop teardown from attempting the earlier handle"
+    );
+    assert_eq!(first.state(), FiberState::Disposed);
+    assert_eq!(last.state(), FiberState::Disposed);
+    assert_eq!(
+        ctx.runtime_snapshot()
+            .fibers()
+            .iter()
+            .filter(|f| f.role() == FiberRole::Ordinary)
+            .count(),
+        0
+    );
+}
+
 #[tokio::test]
 async fn teardown_is_idempotent_across_repeat_calls() {
     let ctx = Context::new();
