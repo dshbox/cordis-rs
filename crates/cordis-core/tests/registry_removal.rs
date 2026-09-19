@@ -31,6 +31,19 @@ impl Plugin for Plain {
 }
 
 #[tokio::test]
+async fn cancelling_typed_removal_before_detach_leaves_the_allocation_live() {
+    let ctx = Context::new();
+    let fiber_handle = ctx.spawn(prepared(Plain)).await.unwrap();
+
+    let removal = ctx.remove_plugins::<Plain>();
+    drop(removal);
+
+    assert_eq!(fiber_handle.state(), FiberState::Active);
+    ctx.remove_plugins::<Plain>().await.unwrap();
+    assert_eq!(fiber_handle.state(), FiberState::Disposed);
+}
+
+#[tokio::test]
 async fn typed_removal_freezes_the_detached_allocation_and_repeated_absence_succeeds() {
     let ctx = Context::new();
     let a = ctx.spawn(prepared(Plain)).await.unwrap();

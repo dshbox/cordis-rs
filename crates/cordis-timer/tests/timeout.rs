@@ -95,6 +95,28 @@ async fn work_ready_before_deadline_returns_completed_output() {
     assert!(matches!(result, Ok(TimeoutOutcome::Completed("value"))));
 }
 
+#[tokio::test(start_paused = true)]
+async fn caller_work_panic_unwinds_through_timeout_poll() {
+    let ctx = Context::new();
+    let mut timeout = Box::pin(
+        ctx.timeout(Duration::from_secs(10), async {
+            panic!("timeout work boom");
+        })
+        .unwrap(),
+    );
+
+    let waker = Waker::noop();
+    let mut task_cx = TaskContext::from_waker(waker);
+    let panic = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        Future::poll(timeout.as_mut(), &mut task_cx)
+    }));
+
+    assert!(
+        panic.is_err(),
+        "Timeout must not contain a panic from caller-owned work"
+    );
+}
+
 /// Timeout is also one-shot; retaining it after completion does not make a
 /// second poll valid, even when the work output would happen to be Copy.
 #[tokio::test(start_paused = true)]
