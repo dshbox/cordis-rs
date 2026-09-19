@@ -1,7 +1,8 @@
 # Cordis v3 public interface
 
 This document is the exhaustive caller-visible contract of the three
-Cordis v3 crates: `cordis-core`, `cordis-loader`, and `cordis-timer`.
+Cordis v3 semantic crates — `cordis-core`, `cordis-loader`, and
+`cordis-timer` — plus the supported `cordis-rs` application facade.
 Every public module path, crate-root re-export, declaration, trait bound,
 enum variant, accessor, operation result, failure phase, and cancellation
 law of the approved v3 interface appears here exactly once, at its
@@ -29,9 +30,12 @@ The interface guarantees, for every item in every crate:
 
 - **No compatibility alias.** A removed or renamed path fails to
   compile; no old and new spelling coexist to ease migration.
-- **No second canonical path.** Each specialist item is reachable at
-  exactly one semantic module path. The crate-root whitelists below are
-  the only convenience re-exports, and there is no glob re-export.
+- **No second canonical semantic path.** Within each semantic crate, each
+  specialist item is reachable at exactly one semantic module path. The
+  crate-root whitelists below are the only convenience re-exports, and
+  there is no glob re-export. The explicitly listed `cordis-rs`
+  application facade is a supported mirror of the `cordis-core` facade,
+  not a second declaration of those semantics.
 - **No broad prelude.** No crate ships a prelude module or any facade
   beyond the explicit root whitelists.
 - **No storage escape.** No public item exposes storage topology,
@@ -157,6 +161,16 @@ and `outcome`. Its crate-root whitelist is `EntryId`, `PluginEntry`,
 `TimerExt`, `Sleep`, `Timeout`, `TimeoutOutcome`, `Interval`,
 `TimerCancelled`, and `TimerRegistrationError`.
 
+### cordis-rs application facade
+
+`cordis-rs` preserves the application import name `cordis` and mirrors the
+supported `cordis-core` facade. Its root whitelist is the `cordis-core`
+root whitelist above. It also re-exports the seven core semantic modules
+`effect`, `event`, `lifecycle`, `logger`, `observation`, `plugin`, and
+`service`. It does not re-export Loader, Timer, or sibling-only
+internals. Mirrored items retain their `cordis-core` contracts and
+introduce no independent semantics.
+
 ## Context and its axes
 
 `Context::new()` is the sole ordinary Runtime constructor and returns
@@ -242,6 +256,13 @@ actually retains or erases them. `Plugin` has no `Sync` supertrait.
 delegates the complete contract. `name()` is diagnostic only and
 defaults to `type_name`; `inject()` defaults to `InjectSpec::none()`.
 There is no declaration-only `Plugin::provide`.
+
+`PrepareError` and `ApplyError` are concrete Plugin-authoring error types, not
+application-erasure slots. `BoxError` remains an optional outer application boundary
+such as `main -> Result<(), BoxError>`; it is not the canonical Plugin associated error.
+When apply code uses `?` across several operation-specific families, define an
+application-local concrete error enum or newtype with the required conversions so those
+boundaries remain explicit until the Plugin apply boundary normalizes the final error.
 
 Creation crosses three explicit boundaries:
 
@@ -357,18 +378,22 @@ Service name, or slot state.
 `Unloading`, `Failed`, and `Disposed`, with `Debug + Clone + Copy + Eq`;
 it has no default, numeric representation, ordering, or serde contract.
 
-`FiberHandle` is opaque, `Clone + Debug`, and inert on Drop. It offers `name`,
-`state`, per-FiberHandle `pending_missing`, `ready`, `wait_state`, `restart`,
-and `dispose`, each with its operation-specific error. `ready` drives
-the target Fiber toward convergence; `wait_state` passively awaits a
-target state and can elapse.
+`FiberHandle` is opaque, `Clone + Debug`, and inert on Drop. Its accessors are
+`name(&self) -> &str`, `state(&self) -> FiberState`, `id(&self) -> FiberId`, and
+`pending_missing(&self) -> Vec<String>`.
 
-`FiberHandle::id() -> FiberId`; there is no nullable numeric `uid()`.
-`FiberId` is opaque Runtime-local correlation identity with
-`Debug + Clone + Eq + Hash` only. Restart, same-Fiber update, and
-disposal preserve it; era replacement allocates a new identity;
-cross-Runtime identities never compare equal. It grants no lookup or
-control.
+All lifecycle controls are async: `ready(&self) -> Result<FiberState, ReadyError>`;
+`wait_state(&self, state: FiberState, timeout: std::time::Duration)` returns
+`Result<(), WaitStateError>`;
+`restart(&self) -> Result<(), RestartError>`; `update(&self, change: PreparedChange)`
+`-> Result<UpdateOutcome, UpdateError>`; `era_swap(&self, change: PreparedChange)`
+`-> Result<FiberHandle, EraSwapError>`; and `dispose(&self)`
+`-> Result<(), LifecycleRecursion>`.
+
+`FiberId` is opaque Runtime-local correlation identity with `Debug + Clone + Eq + Hash`
+only; there is no nullable numeric `uid()`. Restart, same-Fiber update, and disposal
+preserve it; era replacement allocates a new identity; cross-Runtime identities never
+compare equal. It grants no lookup or control.
 
 `PreparedChange::from_input::<P>(P::Input)` seals a move-only,
 `must_use`, one-attempt candidate associated with Plugin contract `P`.
@@ -568,8 +593,10 @@ a successful claim, outside locks.
 `ListenerOptions` is opaque `Debug + Clone + Copy + Default`; the
 default is append, scoped, repeatable. Consuming `prepend`, `global`,
 and `once` builders plus read-only `is_*` facts replace public fields.
-`Context::on` and `Context::on_with` are the registration operations;
-there are no once twins. A successful registration returns a move-only
+Event registration entry points are `on<E, L>(&self, listener: L)` and
+`on_with<E, L>(&self, listener: L, options: ListenerOptions)`.
+Both return `Result<ListenerRegistration, ListenerRegistrationError>` with
+`E: Event` and `L: Listener<E>`. There are no once twins. A successful registration returns a move-only
 `ListenerRegistration` whose Drop is inert and whose consuming
 `remove() -> bool` controls one exact occurrence. A once claim
 unregisters before callback invocation; ordinary claimed work continues
@@ -675,12 +702,14 @@ destruction occur outside locks.
 
 There is no `EffectMeta`, no labels, and no `Context::effects()`.
 Effects do not grow acquire, producer, iterator, or nested-lifecycle
-APIs. `Context::run` is a generation-owned cooperative task/join
-operation; its wrapper consumes any task output and returns framework
-`()`, so user output has no universal `Send` bound. Registration fails
-before the task starts. `Context::spawn_attributed` is deliberately different:
-it only carries current settle attribution into user-owned spawned work and
-returns its `JoinHandle`; it registers no generation cleanup or join.
+APIs. `Context::run` is synchronous task registration with signature
+`fn run<F>(&self, task: F) -> Result<(), TaskRegistrationError>` and bound
+`F: std::future::Future + Send + 'static`. Its wrapper consumes task output and retains
+framework `()` only, so `F::Output` has no universal `Send` bound. Registration
+fails before the task starts; callers do not await `run` itself.
+`Context::spawn_attributed` is deliberately different: it carries current settle
+attribution into user-owned work and returns its `JoinHandle`; it registers no
+generation cleanup or join.
 
 ## Logger
 
@@ -823,10 +852,10 @@ pub trait PluginResolver {
 }
 ```
 
-A closure blanket implementation exists. `PluginRequest` is opaque and
-exposes only the resolve key, JSON config, and inject syntax — no
-EntryId, source name, isolate declarations, Context, Scope, realm,
-topology, or Runtime state. `Some` means recognized: Plugin and
+A closure blanket implementation exists. `PluginRequest` is opaque. Its borrowed
+accessors are `resolve_key(&self) -> &str`, `config(&self) -> &serde_json::Value`, and
+`inject(&self) -> &[InjectEntry]`; it exposes no entry identity, isolate policy,
+Context, topology, or Runtime state. `Some` means recognized: Plugin and
 configured-inject inputs fully typed and prepared, overlay complete, and
 sealed. `None` means unknown key. `Err` means typed preparation or
 resolution failure. Loader catches a resolver panic and normalizes it.
@@ -843,8 +872,9 @@ bound to `E`. For the same reason, the standard `Error::source()` chain can
 expose a serde deserialization error but is intentionally `None` for an
 arbitrary typed preparation error. Raw intercept injection does not exist.
 
-`LoadPlan::load(&self, &Context, &R) -> LoadOutcome` produces exactly
-one ordered outcome for every plan entry:
+`LoadPlan::load` is asynchronous with exact signature
+`async fn load<R>(&self, ctx: &Context, resolver: &R) -> LoadOutcome`
+where `R: PluginResolver + ?Sized`. It produces one ordered outcome per plan entry:
 
 ```rust
 #[derive(Debug)]
@@ -857,17 +887,17 @@ pub enum EntryOutcome {
 }
 ```
 
-`EntryOutcome` is `Debug` and exposes `id() -> &EntryId` for exact
-correlation without variant matching. `LoadOutcome` is `Debug + must_use`:
-ignoring a delivered outcome would discard the caller's FiberHandle controls while
-Fiber residency remains explicit. `Pruned` wins for every descendant of a disabled Plugin, including
+`EntryOutcome` is `Debug` and exposes `id(&self) -> &EntryId`. `LoadOutcome` is `Debug +
+must_use` and exposes `entries(&self) -> &[EntryOutcome]`, `entry(&self, id: &EntryId)
+-> Option<&EntryOutcome>`, `fiber_handles(&self) -> impl Iterator<Item = &FiberHandle>`,
+and `is_ok(&self) -> bool`. Ignoring a delivered outcome would discard the caller's
+FiberHandle controls while Fiber residency remains explicit. `Pruned` wins for every
+descendant of a disabled Plugin, including
 groups and separately disabled Plugins. Reachable groups yield `Group`;
 reachable disabled Plugins yield `Disabled`. Ordinary resolver,
 preparation, placement, or spawn failure yields `Failed` and does not
-prune descendants. `LoadOutcome` exposes ordered entries, exact EntryId
-lookup, spawned FiberHandle iteration, and `is_ok`, which is true exactly when
-no `Failed` exists. Resolve key is repeatable metadata; there is no
-`by_resolve_key` lookup.
+prune descendants. `is_ok` is true exactly when no `Failed` exists.
+Resolve key is repeatable metadata; there is no `by_resolve_key` lookup.
 
 Load is partial, not transactional. Before final outcome handoff, Loader
 is responsible for either handing each already-delivered FiberHandle to the
