@@ -845,9 +845,20 @@ fn two_mutations_preserve_revision_inspection_coverage() {
     // This is the first larger Phase-1 scenario. Keep its declared range
     // explicit and bounded; the smaller core models remain exhaustive without
     // a preemption bound.
-    builder.preemption_bound = Some(2);
+    let preemption_bound = std::env::var("CORDIS_LOOM_INERTIA_PREEMPTION_BOUND")
+        .ok()
+        .map(|value| {
+            value
+                .parse()
+                .expect("CORDIS_LOOM_INERTIA_PREEMPTION_BOUND must be an integer")
+        })
+        .unwrap_or(3);
+    builder.preemption_bound = Some(preemption_bound);
     builder.max_permutations = None;
     builder.max_duration = None;
+    eprintln!(
+        "CORDIS_LOOM_RANGE actors=4 max_threads=4 max_branches=48 preemption_bound={preemption_bound} max_permutations=none max_duration=none"
+    );
     builder.check(|| {
         let committed = Arc::new(AtomicUsize::new(0));
         let settled = Arc::new(AtomicUsize::new(0));
@@ -901,4 +912,5 @@ fn two_mutations_preserve_revision_inspection_coverage() {
         assert_eq!(inspected, 2);
         assert_eq!(settled.load(Ordering::SeqCst), 2);
     });
+    eprintln!("CORDIS_LOOM_RESULT declared_range_completed preemption_bound={preemption_bound}");
 }

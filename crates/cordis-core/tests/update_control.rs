@@ -354,6 +354,101 @@ async fn cancelling_postcommit_waiter_does_not_cancel_update_owner() {
 }
 
 #[tokio::test]
+async fn committed_update_serializes_terminal_dispose_behind_its_barrier() {
+    let ctx = Context::new();
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let entered = Arc::new(Notify::new());
+    let release = Arc::new(Notify::new());
+    let fiber_handle = ctx
+        .spawn(PreparedPlugin::from_input(
+            BlockingProbe {
+                seen: seen.clone(),
+                entered: entered.clone(),
+                release: release.clone(),
+            },
+            1,
+        ))
+        .await
+        .unwrap();
+
+    let update = tokio::spawn({
+        let fiber_handle = fiber_handle.clone();
+        async move {
+            fiber_handle
+                .update(PreparedChange::from_input::<BlockingProbe>(2))
+                .await
+        }
+    });
+    entered.notified().await;
+
+    let mut dispose = Box::pin(fiber_handle.dispose());
+    assert!(
+        futures::poll!(&mut dispose).is_pending(),
+        "terminal dispose must not pass a committed update that still owns the lifecycle slot"
+    );
+
+    release.notify_one();
+    assert_eq!(
+        update.await.unwrap().unwrap(),
+        UpdateOutcome::Committed(FiberState::Active)
+    );
+    dispose.await.unwrap();
+
+    assert_eq!(fiber_handle.state(), FiberState::Disposed);
+    assert_eq!(*seen.lock(), vec![1, 2]);
+}
+
+#[tokio::test]
+async fn committed_update_serializes_era_swap_until_update_quiescence() {
+    let ctx = Context::new();
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let entered = Arc::new(Notify::new());
+    let release = Arc::new(Notify::new());
+    let source = ctx
+        .spawn(PreparedPlugin::from_input(
+            BlockingProbe {
+                seen: seen.clone(),
+                entered: entered.clone(),
+                release: release.clone(),
+            },
+            1,
+        ))
+        .await
+        .unwrap();
+    let source_id = source.id();
+
+    let update = tokio::spawn({
+        let source = source.clone();
+        async move {
+            source
+                .update(PreparedChange::from_input::<BlockingProbe>(2))
+                .await
+        }
+    });
+    entered.notified().await;
+
+    let mut swap = Box::pin(source.era_swap(PreparedChange::from_input::<BlockingProbe>(3)));
+    assert!(
+        futures::poll!(&mut swap).is_pending(),
+        "era swap must not claim a source while a committed update owns the lifecycle slot"
+    );
+
+    release.notify_one();
+    assert_eq!(
+        update.await.unwrap().unwrap(),
+        UpdateOutcome::Committed(FiberState::Active)
+    );
+    let successor = swap.await.unwrap();
+
+    assert_ne!(successor.id(), source_id);
+    assert_eq!(source.state(), FiberState::Disposed);
+    assert_eq!(successor.state(), FiberState::Active);
+    assert_eq!(*seen.lock(), vec![1, 2, 3]);
+
+    successor.dispose().await.unwrap();
+}
+
+#[tokio::test]
 async fn concurrent_updates_commit_in_postcontrol_admission_order() {
     let ctx = Context::new();
     let seen = Arc::new(Mutex::new(Vec::new()));

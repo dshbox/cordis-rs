@@ -256,6 +256,41 @@ async fn cancelled_postcommit_restart_waiter_does_not_stop_the_restart() {
     assert_eq!(applies.load(Ordering::SeqCst), 2);
 }
 
+#[tokio::test]
+async fn committed_restart_serializes_terminal_dispose_behind_its_barrier() {
+    let root = Context::new();
+    let applies = Arc::new(AtomicU32::new(0));
+    let cleanup_started = Arc::new(tokio::sync::Notify::new());
+    let cleanup_release = Arc::new(tokio::sync::Notify::new());
+    let fiber_handle = root
+        .spawn(prepared(RestartCancellation {
+            applies: applies.clone(),
+            cleanup_started: cleanup_started.clone(),
+            cleanup_release: cleanup_release.clone(),
+        }))
+        .await
+        .unwrap();
+
+    let restart = tokio::spawn({
+        let fiber_handle = fiber_handle.clone();
+        async move { fiber_handle.restart().await }
+    });
+    cleanup_started.notified().await;
+
+    let mut dispose = Box::pin(fiber_handle.dispose());
+    assert!(
+        futures::poll!(&mut dispose).is_pending(),
+        "terminal dispose must not pass a committed restart that still owns the lifecycle slot"
+    );
+
+    cleanup_release.notify_one();
+    restart.await.unwrap().unwrap();
+    dispose.await.unwrap();
+
+    assert_eq!(fiber_handle.state(), FiberState::Disposed);
+    assert_eq!(applies.load(Ordering::SeqCst), 2);
+}
+
 #[derive(Debug)]
 struct RestartVersion(u32);
 impl Service for RestartVersion {

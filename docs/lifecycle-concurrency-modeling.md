@@ -626,6 +626,129 @@ complete when all of the following are true:
       execute.
 - [x] Known coverage gaps and progress assumptions are documented.
 
+## Correctness-assurance deepening — 2026-09-19
+
+The completed Phase 1–3 evidence was reviewed against deeper state-space,
+longer async histories, and ordinary branch/error coverage. This section
+records the additional confidence work without changing the normative
+contract or turning confidence tooling into a 1.0 semver gate.
+
+### Deeper Inertia range
+
+The four-actor/two-mutator model was measured in release mode after compilation:
+
+| Preemption bound | Local wall-clock cost | Result |
+| --: | --: | --- |
+| 2 | ~0.22 s | declared finite range completed |
+| 3 | ~1.53 s | declared finite range completed |
+| 4 | ~7.87 s | declared finite range completed |
+
+The model keeps `max_threads = 4`, `max_branches = 48`, no permutation cap,
+and no duration cap. Ordinary runs now use preemption 3, a still-small finite
+range. The scheduled/manual correctness assurance lane runs preemption 4.
+The test emits the declared actor/thread, branch, preemption, permutation, and
+duration bounds before entry and a `declared_range_completed` marker only after
+`Builder::check` returns. Therefore a zero exit in that lane means the declared
+finite range finished; it is not a time-budget exploration.
+
+The Era reduced suite was re-audited. Its twelve tests already cover the
+declared three-thread arbitration, death-before-birth, captured-recipe, and
+handoff/cancellation ownership ranges. The review found no new
+failure/cancellation combination that was well-specified enough for a smaller
+Era model and not already better covered by deterministic real-Tokio barriers.
+No symmetry-driven Era model was added.
+
+### Lifecycle overlap matrix and drift review
+
+The external review guide at
+[`lifecycle-concurrency-review-guide.md`](lifecycle-concurrency-review-guide.md)
+now maps LC-01 through LC-06 and ER-01 through ER-08 to production transitions,
+linearization points, forbidden histories, positive reduced models,
+discriminating negative controls, real Tokio regressions, and known coverage
+boundaries. It also records a selective lifecycle overlap/cancellation evidence
+matrix rather than a mechanical Cartesian product.
+
+That matrix found three material direct-evidence gaps. Deterministic Tokio
+regressions now establish that:
+
+- terminal disposal cannot pass an already-committed restart that still owns
+  the lifecycle slot;
+- terminal disposal cannot pass an already-committed update that still owns
+  the lifecycle slot; and
+- Era replacement cannot claim its source while a committed update still owns
+  the lifecycle slot, but may replace the updated source after update
+  quiescence.
+
+All three tests use `Notify` plus an explicit `Poll::Pending` assertion at the
+forbidden early-completion boundary. No sleep or repeated probabilistic run is
+used to manufacture the race. No production defect was found: the existing
+single lifecycle arbiter already provided the required serialization.
+
+### Shuttle evaluation
+
+Shuttle 0.9.3 and the `shuttle-tokio` 1.0.0 wrapper were both compiled in local
+probes with Rust 1.88.0, so MSRV compatibility is not the blocker. Shuttle can
+provide reproducible randomized/PCT-style exploration and schedule replay, but
+a faithful Cordis long-history run would need to schedule more than Tokio
+tasks: the critical lifecycle path also uses `std` atomics, `parking_lot`, and
+ServiceStore synchronization.
+
+Replacing only Tokio would therefore leave important protocol scheduling
+outside the explored scheduler; replacing all synchronization would recreate
+the test-oriented production abstraction rejected in Phase 1 without evidence
+that model/production drift has become a real maintenance defect. At the 2026-09-19 evaluation, the upstream Tokio wrapper was not treated as a
+Cordis correctness authority for notification/scheduling behavior; the decision
+therefore does not rely on wrapper fidelity matching production Tokio.
+
+Decision: do not add Shuttle now. Re-evaluate if the upstream wrapper closes the
+relevant semantic gaps, production becomes naturally wrapper-friendly, or a
+real long-history counterexample cannot be reduced to the existing Loom +
+deterministic Tokio evidence. This decision is about current evidence value and
+maintenance cost, not a claim that Shuttle is generally unsuitable.
+
+### Coverage-assisted gap discovery
+
+`cargo-llvm-cov` 0.9.1 was run over core unit and integration tests as discovery
+information, not as a percentage gate. The integration-test report observed
+approximately 96.7% line coverage in `fiber/inertia.rs` and 95.6% in
+`fiber/era.rs`; the unit-only report intentionally had different percentages.
+Those values are navigation data only and are not correctness scores.
+
+Uncovered regions were classified manually:
+
+1. implementation-only defensive branches, such as impossible inertia words,
+   anonymous Era recipes, and post-claim candidate-contract invariant failures;
+2. transitions whose supported behavior is already better discriminated by
+   Loom/structural evidence, such as losing CAS/retry paths; and
+3. a genuine production-path evidence gap in the creation-window
+   `InertiaSlot::kick` path where the target cell is still empty.
+
+Only the third category produced a test change. The existing
+`a_convergence_winner_leaves_the_first_apply_to_the_initial_pass` unit contract
+now enters through the real `commit_recheck -> kick -> wait_idle` path instead
+of manually claiming the slot. It proves that the kicked convergence initializes
+the target and acknowledges the durable recheck without stealing creation's
+first apply; the initial pass then applies exactly once.
+
+The scheduled/manual assurance workflow preserves JSON, summary, and HTML
+coverage artifacts. It deliberately has no percentage threshold.
+
+### Mutation-testing evaluation
+
+`cargo-mutants` 27.1.0 declares Rust 1.88 as its minimum and was evaluated on a
+narrow ordinary semantic seam, `FiberHandle::update`, rather than across the
+hand-written atomic protocol. The generated high-signal set was tiny: a
+whole-function replacement was unviable because the result has no `Default`,
+while deleting the liveness negation turned the focused update-control suite
+into a timeout at its exact phase barriers instead of a clean semantic failure.
+
+That is useful diagnostic evidence but a poor scheduled signal: the narrow run
+already mixes unviable mutants with timeout classification, and expanding it
+into atomic lifecycle code would duplicate stronger Loom negative controls at
+substantially higher cost. Mutation testing is therefore not added to CI in
+this package. It remains an optional local probe for small non-concurrent
+decision logic when a concrete testing question justifies it.
+
 ## Non-goals
 
 Phase 1 does not:

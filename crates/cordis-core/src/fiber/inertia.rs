@@ -865,18 +865,23 @@ mod tests {
         let applies = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let fiber = fiber_in_creation(&ctx, applies.clone(), false);
 
-        // a kicked convergence wins the slot in the spawn window: it must
-        // NOT run the first apply
-        assert!(fiber.slot.try_claim());
-        let target = fiber.compute_target(&root);
-        fiber.settle_once(&target, false).await;
+        // A real Service-style committed recheck kicks convergence in the
+        // spawn window before the creation pass has recorded its first target.
+        // The kick wins IDLE, initializes the target cell, and drives a
+        // convergence pass that must NOT steal the creation's first apply.
+        fiber.slot.commit_recheck();
+        fiber.slot.kick(&fiber, &root);
+        fiber.slot.wait_idle().await;
         assert_eq!(
             applies.load(std::sync::atomic::Ordering::SeqCst),
             0,
             "a convergence pass never runs a creation-pending first apply"
         );
         assert_eq!(fiber.state(), FiberState::Pending);
-        fiber.slot.abandon();
+        assert!(
+            !fiber.slot.has_committed_recheck(),
+            "the kicked pass acknowledges the committed spawn-window recheck"
+        );
 
         // the initial pass then runs it — exactly once
         let outcome = fiber.slot.initial_spawn_pass(&fiber, &root).await;
