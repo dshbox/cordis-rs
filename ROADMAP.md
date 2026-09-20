@@ -75,9 +75,13 @@ settled architecture merely to create more pre-1.0 work.
   Cargo feature expectations, package-version coordination, and MSRV changes.
   `internal-api` remains unsupported downstream while its use by already-published
   sibling crates carries an explicit package-compatibility obligation.
-- [ ] **Declare an API freeze candidate.** Resolve every known planned breaking
-  change before the freeze and record that the normative public-interface inventory
-  is the candidate 1.0 surface.
+- [x] **Declare an API freeze candidate.** The normative
+  [public-interface inventory](docs/v3-public-interface.md#10-api-freeze-candidate)
+  is now the candidate 1.0 supported surface. The
+  [freeze evidence](docs/api-freeze-candidate.md) records the audited
+  known-breaking-change sources, their blocker/additive/non-blocker/reopening
+  classifications, and the rule for restarting stabilization evidence. No known
+  queued consumer-visible breaking change remained at the declaration baseline.
 - [x] **Resolve public macro ergonomics before the API freeze.** Representative
   declarations were reviewed in `hello_plugin`, `scopes_tenants`, `gateway`, and
   `chat_capstone` against the public trait contracts. Cordis 1.0 intentionally

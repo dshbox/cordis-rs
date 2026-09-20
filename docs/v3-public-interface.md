@@ -24,6 +24,31 @@ Signatures below are the contract: `Context::name` denotes an inherent
 method on `Context`, and a type named without a module is reachable as
 the facades section states.
 
+## 1.0 API freeze candidate
+
+This inventory is the **candidate 1.0 supported surface**. The freeze baseline
+is the first repository revision that contains this declaration together with
+the completed `Declare an API freeze candidate` criterion in `ROADMAP.md`;
+releases that predate that revision do not count as post-freeze stabilization
+evidence. The audit supporting this declaration is recorded in
+[`api-freeze-candidate.md`](api-freeze-candidate.md).
+
+The freeze applies only to the supported compatibility surface defined by
+[`compatibility-policy.md`](compatibility-policy.md): these declarations and
+caller-visible semantics, the documented supported Cargo surface, the
+`cordis-rs` facade, and the published-sibling compatibility obligation. It does
+not freeze private representation, doc-hidden unsupported downstream surface,
+test facilities, or other implementation details into the public contract.
+
+Compatible additive API and implementation work may continue after this point.
+Correctness and security fixes remain mandatory; a fix that preserves this
+contract does not disturb the freeze. If a deliberate change instead breaks the
+candidate supported contract, or a correctness/security finding proves that the
+candidate contract itself must change incompatibly, update the owning authority,
+land the break, and restart the ROADMAP stabilization-release count from that
+new baseline. Cleanup, refactoring, and documentation-only changes do not
+restart that count when they preserve the supported contract.
+
 ## Interface promises
 
 The interface guarantees, for every item in every crate:
@@ -125,7 +150,7 @@ one canonical semantic module path:
 | `plugin` | `Plugin`, `PreparedPlugin`, `PreparedChange`, `InjectSpec` |
 | `lifecycle` | `FiberHandle`, `FiberId`, `FiberState`, `FiberRole`, `UpdateOutcome`, `PluginFailure`, `PluginFailureKind`, `LifecycleRecursion`, `LifecycleOperation`, `SpawnError`, `ReadyError`, `RestartError`, `WaitStateError`, `UpdateError`, `EraSwapError`, `EraSwapFailure`, `UpdateListener`, `UpdateNext` |
 | `service` | `Service`, `ConfigurableService`, `ServiceRealm`, `ServicePublication`, `RealmMappingError`, `ServiceLookupError`, `ServicePublishError`, `ServiceControlError`, `ConfigResolutionError` |
-| `event` | `Event`, `Scope`, `Routing`, `QueryOutcome`, `Listener`, `ListenerOptions`, `ListenerRegistration`, `ListenerRegistrationId`, `Next`, `StatefulCallback`, `observer`, `observer_sync`, `responder`, `responder_sync`, `mapper`, `mapper_sync`, `around`, `ListenerRole`, `EventOperation`, `DispatchOutcomeKind`, `InvocationFailure`, `InvocationFailureKind`, `ParallelFailures`, `ListenerRegistrationError`, `DispatchError` |
+| `event` | `Event`, `Scope`, `Routing`, `QueryOutcome`, `Listener`, `ListenerOptions`, `ListenerRegistration`, `ListenerRegistrationId`, `Next`, `StatefulCallback`, `observer`, `observer_sync`, `responder`, `responder_sync`, `mapper`, `mapper_sync`, `around`, `with_state`, `ListenerRole`, `EventOperation`, `DispatchOutcomeKind`, `InvocationFailure`, `InvocationFailureKind`, `ParallelFailures`, `ListenerRegistrationError`, `DispatchError` |
 | `effect` | `CleanupResult`, `EffectRegistration`, `EffectRegistrationError`, `EffectFailure`, `EffectFailureKind`, `TaskRegistrationError` |
 | `logger` | `Level`, `LogRecord`, `Logger`, `Exporter`, `ExporterRegistration`, `BufferExporter`, `BufferSizeZero` |
 | `observation` | `RuntimeSnapshot`, `FiberSnapshot`, `ServiceSnapshot`, `ServicePublicationId`, `ScopeId`, `ObservationRouting`, `RuntimeObservation`, `ResidencyChange`, `ListenerChange`, `RuntimeObserver` |
