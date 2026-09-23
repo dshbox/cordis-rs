@@ -395,6 +395,8 @@ pub(crate) struct Fiber {
     /// admission window for restart/update replacement without conflating it
     /// with terminal Fiber liveness.
     generation_replacing: AtomicBool,
+    /// Serializes exact Service mutation with the synchronous generation-close claim.
+    pub(crate) service_mutation_gate: Mutex<()>,
     /// Full terminal barrier publication: set only after cleanup, Disposed,
     /// exact residency release, and conditional Registry prune have finished.
     dispose_complete: AtomicBool,
@@ -460,6 +462,7 @@ impl Fiber {
             alive: AtomicBool::new(true),
             disposing: AtomicBool::new(false),
             generation_replacing: AtomicBool::new(false),
+            service_mutation_gate: Mutex::new(()),
             dispose_complete: AtomicBool::new(false),
             dispose_done: tokio::sync::Notify::new(),
             name: name.into(),
@@ -568,6 +571,22 @@ impl Fiber {
     /// spawn state is known. The root fiber has none.
     pub(crate) fn fiber_ctx(self: &Arc<Self>) -> Option<Context> {
         self.spawn_state.context_for(self)
+    }
+
+    /// Close mutation admission under the same gate held by exact Service control.
+    pub(crate) fn claim_terminal(&self) -> bool {
+        let _gate = self.service_mutation_gate.lock();
+        self.disposing.swap(true, Ordering::SeqCst)
+    }
+
+    pub(crate) fn mark_terminal(&self) {
+        let _gate = self.service_mutation_gate.lock();
+        self.disposing.store(true, Ordering::SeqCst);
+    }
+
+    pub(crate) fn mark_replacing(&self) {
+        let _gate = self.service_mutation_gate.lock();
+        self.generation_replacing.store(true, Ordering::SeqCst);
     }
 
     /// Whether this fiber can still create effects, i.e. it has not been
@@ -902,7 +921,7 @@ impl Fiber {
             return;
         }
 
-        if self.disposing.swap(true, Ordering::SeqCst) {
+        if self.claim_terminal() {
             // The committed owner may have released the settle slot before its
             // exact Registry unlink completed. Give the slot back, then join
             // the owner's stronger terminal barrier rather than returning early.
@@ -1004,7 +1023,7 @@ impl Fiber {
     /// "no resident attempted Fiber" half of the failed-creation contract.
     /// The caller releases the slot afterwards.
     pub(crate) async fn creation_teardown(self: &Arc<Self>) {
-        self.disposing.store(true, Ordering::SeqCst);
+        self.mark_terminal();
         settle_ctx::bracket(self.clone(), self.teardown_body()).await;
         self.force_unlink();
         self.publish_dispose_complete();
@@ -1020,11 +1039,11 @@ impl Fiber {
         if self.slot.take_creation_ownership() {
             // the cancelled pass died holding the slot: inherit its
             // ownership and complete the teardown
-            self.disposing.store(true, Ordering::SeqCst);
+            self.mark_terminal();
         } else {
             // the pass never owned the slot or released it before dying:
             // arbitrate against a concurrent dispose, then claim
-            if self.disposing.swap(true, Ordering::SeqCst) {
+            if self.claim_terminal() {
                 // A terminal disposer already committed. Creation cleanup must
                 // coalesce onto that same full barrier rather than report its
                 // attempted Fiber gone before exact unlink/prune completes.
@@ -1372,6 +1391,25 @@ pub enum WaitStateError {
     Recursion(LifecycleRecursion),
 }
 
+#[cfg(test)]
+struct ReadyFailureProbe {
+    fiber: FiberId,
+    reached: Arc<std::sync::Barrier>,
+    resume: Arc<std::sync::Barrier>,
+}
+
+#[cfg(test)]
+static READY_FAILURE_PROBE: Mutex<Option<Arc<ReadyFailureProbe>>> = Mutex::new(None);
+
+#[cfg(test)]
+fn probe_ready_failure(fiber: &FiberId) {
+    let probe = READY_FAILURE_PROBE.lock().clone();
+    if let Some(probe) = probe.filter(|probe| &probe.fiber == fiber) {
+        probe.reached.wait();
+        probe.resume.wait();
+    }
+}
+
 impl FiberHandle {
     pub(crate) fn new(fiber: Arc<Fiber>) -> Self {
         Self { fiber }
@@ -1424,7 +1462,7 @@ impl FiberHandle {
         settle_ctx::refuse_recursion(&self.fiber, LifecycleOperation::Ready)
             .map_err(ReadyError::Recursion)?;
         let fiber = &self.fiber;
-        let state = loop {
+        loop {
             if fiber.slot.has_committed_recheck()
                 && let Some(root) = fiber.spawn_state.root()
             {
@@ -1432,22 +1470,25 @@ impl FiberHandle {
             }
             fiber.slot.wait_idle().await;
             let observed = fiber.state();
-            if fiber.slot.is_idle() && !fiber.slot.has_committed_recheck() {
-                break observed;
+            if !fiber.slot.is_idle() || fiber.slot.has_committed_recheck() {
+                continue;
             }
-        };
-        match state {
-            FiberState::Failed => {
-                let failure = fiber
-                    .error
-                    .lock()
-                    .clone()
-                    .expect("Failed is published only with a parked PluginFailure");
-                Err(ReadyError::Apply(spawn::clone_owned(&failure)))
-            }
-            FiberState::Active | FiberState::Pending | FiberState::Disposed => Ok(state),
-            FiberState::Loading | FiberState::Unloading => {
-                unreachable!("an idle Fiber cannot publish a transient lifecycle state")
+            match observed {
+                FiberState::Failed => {
+                    #[cfg(test)]
+                    probe_ready_failure(fiber.id());
+                    // A new settle may clear the old failure after the idle/state
+                    // probe. Retry that newer transaction instead of panicking.
+                    if let Some(failure) = fiber.error.lock().clone() {
+                        return Err(ReadyError::Apply(spawn::clone_owned(&failure)));
+                    }
+                }
+                FiberState::Active | FiberState::Pending | FiberState::Disposed => {
+                    return Ok(observed);
+                }
+                FiberState::Loading | FiberState::Unloading => {
+                    unreachable!("an idle Fiber cannot publish a transient lifecycle state")
+                }
             }
         }
     }
@@ -1550,5 +1591,65 @@ impl FiberHandle {
         let state = self.fiber.slot.update_pass(&self.fiber, change).await?;
         debug_assert!(matches!(state, FiberState::Active | FiberState::Pending));
         Ok(UpdateOutcome::Committed(state))
+    }
+}
+
+#[cfg(test)]
+mod ready_failure_race_tests {
+    use super::*;
+    use std::convert::Infallible;
+    use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+
+    struct RetryFailure(Arc<AtomicUsize>);
+    impl crate::Plugin for RetryFailure {
+        type Config = ();
+        type Input = ();
+        type PrepareError = Infallible;
+        type ApplyError = std::io::Error;
+        fn prepare(&self, _: ()) -> Result<(), Infallible> {
+            Ok(())
+        }
+        async fn apply(&self, _: Context, _: &()) -> Result<(), std::io::Error> {
+            if self.0.fetch_add(1, AtomicOrdering::SeqCst) == 1 {
+                Err(std::io::Error::other("retry fails"))
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn ready_failed_state_racing_successful_restart_never_panics() {
+        let ctx = Context::new();
+        let handle = ctx
+            .spawn(crate::PreparedPlugin::from_input(
+                RetryFailure(Arc::new(AtomicUsize::new(0))),
+                (),
+            ))
+            .await
+            .unwrap();
+        assert!(matches!(
+            handle.restart().await,
+            Err(RestartError::Apply(_))
+        ));
+        assert_eq!(handle.state(), FiberState::Failed);
+
+        let reached = Arc::new(std::sync::Barrier::new(2));
+        let resume = Arc::new(std::sync::Barrier::new(2));
+        *READY_FAILURE_PROBE.lock() = Some(Arc::new(ReadyFailureProbe {
+            fiber: handle.id(),
+            reached: reached.clone(),
+            resume: resume.clone(),
+        }));
+        let waiter = tokio::spawn({
+            let handle = handle.clone();
+            async move { handle.ready().await }
+        });
+        reached.wait();
+        handle.restart().await.unwrap();
+        resume.wait();
+        *READY_FAILURE_PROBE.lock() = None;
+        assert!(waiter.await.expect("ready must not panic").is_ok());
+        handle.dispose().await.unwrap();
     }
 }

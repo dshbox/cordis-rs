@@ -128,7 +128,7 @@ impl FiberHandle {
         // changes nothing. Under the slot, `disposing` is the one live-source
         // arbitration shared with ordinary terminal disposal.
         self.fiber.slot.claim().await;
-        if !self.fiber.is_alive() || self.fiber.disposing.swap(true, Ordering::SeqCst) {
+        if !self.fiber.is_alive() || self.fiber.claim_terminal() {
             self.fiber.slot.abandon();
             return Err(EraSwapError::Closed);
         }

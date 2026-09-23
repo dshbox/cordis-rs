@@ -620,7 +620,7 @@ impl InertiaSlot {
         // registration either commits before us and is drained, or loses and
         // publishes nothing. The detached owner clears it only when Loading
         // opens the replacement generation.
-        fiber.generation_replacing.store(true, Ordering::SeqCst);
+        fiber.mark_replacing();
 
         // The restart transaction is now committed: the lifecycle slot and
         // target belong to this operation. Transfer all remaining awaits to a
@@ -687,7 +687,7 @@ impl InertiaSlot {
         // before the authoritative Plugin input changes. A racing registration
         // therefore linearizes wholly before this replacement or observes the
         // closed gate and cannot escape the old-generation drain.
-        fiber.generation_replacing.store(true, Ordering::SeqCst);
+        fiber.mark_replacing();
         fiber
             .spawn_state
             .commit_change(change)
