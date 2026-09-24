@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.3.13](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.3.12...cordis-core-v0.3.13) - 2026-09-24
+
+### Other
+
+- *(core)* accept completed convergence in old-wake ready probe
+
 ## [0.3.12](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.3.11...cordis-core-v0.3.12) - 2026-09-24
 
 ### Fixed
