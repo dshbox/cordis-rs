@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.3.12](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.3.11...cordis-core-v0.3.12) - 2026-09-24
+
+### Fixed
+
+- *(core)* preserve cleanup barriers and dependent convergence across handoff ([#164](https://github.com/dshbox/cordis-rs/pull/164))
+
 ## [0.3.11](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.3.10...cordis-core-v0.3.11) - 2026-09-24
 
 ### Fixed
