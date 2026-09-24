@@ -373,6 +373,91 @@ async fn loading_occupation_is_invisible_until_active_then_visibility_drifts() {
     assert_eq!(root.try_service::<Counter>().unwrap().0, 7);
 }
 
+struct DrainingDependent {
+    entered: Arc<tokio::sync::Notify>,
+    release: Arc<tokio::sync::Notify>,
+}
+
+impl Plugin for DrainingDependent {
+    type Config = ();
+    type Input = ();
+    type PrepareError = Infallible;
+    type ApplyError = Infallible;
+
+    fn inject(&self) -> InjectSpec {
+        InjectSpec::none().require(Counter::NAME)
+    }
+
+    fn prepare(&self, (): ()) -> Result<(), Infallible> {
+        Ok(())
+    }
+
+    async fn apply(&self, ctx: Context, _prepared: &()) -> Result<(), Infallible> {
+        let entered = self.entered.clone();
+        let release = self.release.clone();
+        ctx.effect(move || async move {
+            entered.notify_one();
+            release.notified().await;
+        })
+        .unwrap();
+        Ok(())
+    }
+}
+
+#[test]
+fn service_cleanup_convergence_survives_origin_runtime_shutdown() {
+    let origin = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    let root = Context::new();
+    let provider_started = Arc::new(tokio::sync::Notify::new());
+    let provider_release = Arc::new(tokio::sync::Notify::new());
+    let dependent_started = Arc::new(tokio::sync::Notify::new());
+    let dependent_release = Arc::new(tokio::sync::Notify::new());
+    let provider = origin
+        .block_on(root.spawn(prepared(ParkingProvider {
+            cleanup_started: provider_started.clone(),
+            release_cleanup: provider_release.clone(),
+        })))
+        .unwrap();
+    let dependent = origin
+        .block_on(root.spawn(prepared(DrainingDependent {
+            entered: dependent_started.clone(),
+            release: dependent_release.clone(),
+        })))
+        .unwrap();
+    assert_eq!(dependent.state(), FiberState::Active);
+
+    let disposing = provider.clone();
+    origin.spawn(async move {
+        disposing.dispose().await.unwrap();
+    });
+    // The dependent pass has the slot and awaits its actual cleanup on the
+    // completion runtime. Shutting down now drops its original Tokio task.
+    origin.block_on(dependent_started.notified());
+    origin.shutdown_background();
+    provider_release.notify_one();
+    dependent_release.notify_one();
+
+    let observer = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let outcome = observer.block_on(async {
+        tokio::time::timeout(std::time::Duration::from_millis(500), dependent.ready()).await
+    });
+    assert_eq!(
+        outcome
+            .expect("committed dependent recheck survives origin shutdown")
+            .unwrap(),
+        FiberState::Pending
+    );
+    observer.block_on(provider.dispose()).unwrap();
+    observer.block_on(dependent.dispose()).unwrap();
+}
+
 struct ParkingProvider {
     cleanup_started: Arc<tokio::sync::Notify>,
     release_cleanup: Arc<tokio::sync::Notify>,
