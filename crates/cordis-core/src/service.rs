@@ -454,19 +454,6 @@ impl ServiceStore {
             .map_err(|_| ServiceLookupError::ContractMismatch { service: S::NAME })
     }
 
-    fn mutation_state(owner: &Weak<Fiber>) -> Option<crate::fiber::FiberState> {
-        let fiber = owner.upgrade()?;
-        if !fiber.is_alive() {
-            return None;
-        }
-        let state = fiber.state();
-        matches!(
-            state,
-            crate::fiber::FiberState::Loading | crate::fiber::FiberState::Active
-        )
-        .then_some(state)
-    }
-
     fn set_exact(
         &self,
         key: RealmKey,
@@ -491,7 +478,14 @@ impl ServiceStore {
                 value,
             ));
         }
-        if Self::mutation_state(owner).is_none() {
+        let fiber = owner.upgrade();
+        let _gate = fiber
+            .as_ref()
+            .map(|fiber| fiber.service_mutation_gate.lock());
+        if !fiber
+            .as_ref()
+            .is_some_and(|fiber| fiber.assert_can_register().is_ok())
+        {
             return Err((ServiceControlError::MutationClosed { service: name }, value));
         }
         Ok(std::mem::replace(&mut slot.value, value))
@@ -515,7 +509,15 @@ impl ServiceStore {
             }
             _ => return Err(ServiceControlError::StalePublication { service: name }),
         };
-        let Some(owner_state) = Self::mutation_state(owner) else {
+        let fiber = owner.upgrade();
+        let _gate = fiber
+            .as_ref()
+            .map(|fiber| fiber.service_mutation_gate.lock());
+        let Some(owner_state) = fiber
+            .as_ref()
+            .filter(|fiber| fiber.assert_can_register().is_ok())
+            .map(|fiber| fiber.state())
+        else {
             return Err(ServiceControlError::MutationClosed { service: name });
         };
         let drift = (owner_state == crate::fiber::FiberState::Active).then(|| {

@@ -665,6 +665,73 @@ impl Plugin for CapturingProvider {
     }
 }
 
+#[tokio::test(flavor = "current_thread")]
+async fn terminal_claim_closes_exact_service_mutation_before_unloading() {
+    let root = Context::new();
+    let publication = Arc::new(parking_lot::Mutex::new(None));
+    let provider = root
+        .spawn(prepared(CapturingProvider {
+            publication: publication.clone(),
+            block_cleanup: false,
+            cleanup_started: Arc::new(tokio::sync::Notify::new()),
+            release_cleanup: Arc::new(tokio::sync::Notify::new()),
+        }))
+        .await
+        .unwrap();
+    assert_eq!(provider.state(), FiberState::Active);
+
+    // Poll through the synchronous terminal claim. The detached teardown cannot
+    // run on this thread before we check the still-Active publication.
+    let dispose = provider.dispose();
+    tokio::pin!(dispose);
+    assert!(futures::poll!(&mut dispose).is_pending());
+    assert_eq!(provider.state(), FiberState::Active);
+
+    let occurrence = publication.lock().take().unwrap();
+    assert_eq!(
+        occurrence.set(Arc::new(Counter(11))),
+        Err(ServiceControlError::MutationClosed {
+            service: Counter::NAME,
+        })
+    );
+    assert_eq!(
+        occurrence.remove(),
+        Err(ServiceControlError::MutationClosed {
+            service: Counter::NAME,
+        })
+    );
+    dispose.await.unwrap();
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn restart_commit_closes_old_publication_mutation_before_unloading() {
+    let root = Context::new();
+    let publication = Arc::new(parking_lot::Mutex::new(None));
+    let provider = root
+        .spawn(prepared(CapturingProvider {
+            publication: publication.clone(),
+            block_cleanup: false,
+            cleanup_started: Arc::new(tokio::sync::Notify::new()),
+            release_cleanup: Arc::new(tokio::sync::Notify::new()),
+        }))
+        .await
+        .unwrap();
+    let old = publication.lock().take().unwrap();
+
+    let restart = provider.restart();
+    tokio::pin!(restart);
+    assert!(futures::poll!(&mut restart).is_pending());
+    assert_eq!(provider.state(), FiberState::Active);
+    assert_eq!(
+        old.set(Arc::new(Counter(11))),
+        Err(ServiceControlError::MutationClosed {
+            service: Counter::NAME,
+        })
+    );
+    restart.await.unwrap();
+    provider.dispose().await.unwrap();
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn manual_remove_wins_exact_cleanup_claim_and_old_generation_cannot_touch_replacement() {
     let root = Context::new();
