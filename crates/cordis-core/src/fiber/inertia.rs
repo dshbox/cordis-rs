@@ -618,17 +618,19 @@ impl InertiaSlot {
         // Irreversible generation-replacement commit. This synchronous marker
         // participates in gated publication's under-journal-lock recheck, so a
         // registration either commits before us and is drained, or loses and
-        // publishes nothing. The detached owner clears it only when Loading
-        // opens the replacement generation.
+        // publishes nothing. The completion-runtime owner clears it only when
+        // Loading opens the replacement generation.
         fiber.mark_replacing();
 
         // The restart transaction is now committed: the lifecycle slot and
         // target belong to this operation. Transfer all remaining awaits to a
-        // framework-owned task before yielding again so caller cancellation can
-        // abandon only its wait, never strand a half-closed generation.
+        // framework-owned completion-runtime task before yielding again. Its
+        // first poll may reach arbitrary Plugin apply work, so it must never
+        // migrate between Tokio drivers. Caller cancellation abandons only its
+        // wait, never a half-closed generation.
         let (tx, rx) = tokio::sync::oneshot::channel();
         let fiber = fiber.clone();
-        crate::effect::detach(async move {
+        let _join = crate::effect::spawn_completion(async move {
             let result = fiber
                 .slot
                 .restart_committed(&fiber, &root, target, revision)
@@ -695,9 +697,12 @@ impl InertiaSlot {
         let revision = self.recheck_revision();
         let target = fiber.compute_target(&root);
         self.record_target(target.clone());
+        // A committed update can poll arbitrary Plugin apply work. Start its
+        // owner on the durable executor so no polled user Future is transferred
+        // between Tokio drivers if the caller's runtime shuts down.
         let (tx, rx) = tokio::sync::oneshot::channel();
         let fiber = fiber.clone();
-        crate::effect::detach(async move {
+        let _join = crate::effect::spawn_completion(async move {
             let result = fiber
                 .slot
                 .update_committed(&fiber, &root, target, revision)

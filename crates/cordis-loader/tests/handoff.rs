@@ -264,6 +264,12 @@ fn abandoned_handoff_survives_runtime_shutdown() {
         1,
         "pre-delivery successful Fiber must roll back after executor shutdown"
     );
+
+    let observer = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    observer.block_on(wait_for_root_only(&ctx));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
