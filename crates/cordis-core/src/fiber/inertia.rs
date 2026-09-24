@@ -376,7 +376,7 @@ impl InertiaSlot {
                     }
                 }
                 INERTIA_IDLE => {
-                    let Ok(handle) = tokio::runtime::Handle::try_current() else {
+                    let Ok(_handle) = tokio::runtime::Handle::try_current() else {
                         // The durable revision remains outstanding. A later
                         // ready/lifecycle driver can claim it without another
                         // mutation.
@@ -396,7 +396,7 @@ impl InertiaSlot {
                         let settled = self.target.lock().clone();
                         if let Some(settled) = settled {
                             if self.exit_recheck(fiber, root, &settled, revision) {
-                                drop(Self::spawn_convergence_pass(&handle, fiber, root));
+                                drop(Self::spawn_convergence_pass(fiber, root));
                             }
                         } else {
                             // Before the creation pass records its first target,
@@ -404,7 +404,7 @@ impl InertiaSlot {
                             // convergence winner owns the slot, but settle_once
                             // still leaves the first apply to creation.
                             self.record_target(fiber.compute_target(root));
-                            drop(Self::spawn_convergence_pass(&handle, fiber, root));
+                            drop(Self::spawn_convergence_pass(fiber, root));
                         }
                         return;
                     }
@@ -424,21 +424,21 @@ impl InertiaSlot {
     /// [`Self::drifted_since`] for why the comparison is not against the
     /// stored target.
     ///
-    /// Hand the (already-ACTIVE) slot to a fresh convergence task after a
-    /// best-effort kick wins an idle slot. The clones live here so the spawned
-    /// future owns its Fiber and root; the pass borrows them for its whole life.
-    fn spawn_convergence_pass(
-        handle: &tokio::runtime::Handle,
-        fiber: &Arc<Fiber>,
-        root: &Arc<Root>,
-    ) -> tokio::task::JoinHandle<()> {
+    /// Hand the (already-ACTIVE) slot to a framework-owned convergence task
+    /// after a best-effort kick wins an idle slot. It starts on the completion
+    /// runtime so a user apply, cleanup, or Tokio resource created inside that
+    /// pass never migrates if the caller's runtime shuts down.
+    fn spawn_convergence_pass(fiber: &Arc<Fiber>, root: &Arc<Root>) -> tokio::task::JoinHandle<()> {
         let logger = root.logger.logger_for_fiber(&fiber.name);
         let context = format!("fiber={:?}", fiber.name);
         let fiber = fiber.clone();
         let root = root.clone();
-        crate::framework_task::spawn(handle, logger, "fiber convergence", context, async move {
-            fiber.slot.convergence_pass(&fiber, &root).await
-        })
+        crate::effect::spawn_completion(crate::framework_task::report_panic(
+            logger,
+            "fiber convergence",
+            context,
+            async move { fiber.slot.convergence_pass(&fiber, &root).await },
+        ))
     }
 
     /// Drive the initial settle pass of a freshly spawned fiber: claim the
@@ -933,11 +933,7 @@ mod tests {
         // records before spawning the pass. The task must fail loudly; the
         // reporting boundary may add diagnostics but must not repair the slot.
         assert!(fiber.slot.try_claim());
-        let join = super::InertiaSlot::spawn_convergence_pass(
-            &tokio::runtime::Handle::current(),
-            &fiber,
-            &ctx.root,
-        );
+        let join = super::InertiaSlot::spawn_convergence_pass(&fiber, &ctx.root);
 
         let error = join
             .await

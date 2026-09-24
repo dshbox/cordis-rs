@@ -378,6 +378,43 @@ impl DependencyEdge {
     }
 }
 
+/// Tracks only a cleanup claimed by a generation drain. Manual claims are
+/// independent obligations and are deliberately outside the drain barrier.
+struct DrainCleanup {
+    completed: AtomicBool,
+    done: tokio::sync::Notify,
+}
+
+impl DrainCleanup {
+    fn new() -> Self {
+        Self {
+            completed: AtomicBool::new(false),
+            done: tokio::sync::Notify::new(),
+        }
+    }
+
+    async fn wait(&self) {
+        loop {
+            let notified = self.done.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            if self.completed.load(Ordering::SeqCst) {
+                return;
+            }
+            notified.await;
+        }
+    }
+}
+
+struct DrainCleanupOwner(Arc<DrainCleanup>);
+
+impl Drop for DrainCleanupOwner {
+    fn drop(&mut self) {
+        self.0.completed.store(true, Ordering::SeqCst);
+        self.0.done.notify_waiters();
+    }
+}
+
 /// Internal lifecycle state shared by the FiberHandle clones for one Fiber.
 ///
 /// `pub(crate)` on purpose (ADR 0004): callers receive the opaque [`FiberHandle`]
@@ -409,6 +446,10 @@ pub(crate) struct Fiber {
     state: StatePublication,
     /// Effects registered during `apply`; drained on every unload.
     pub(crate) disposables: Mutex<DisposableList>,
+    /// A drain whose caller was cancelled may leave its already-claimed cleanup
+    /// running on the completion runtime. A successor drain joins that exact
+    /// cleanup before claiming older entries or publishing a terminal barrier.
+    drain_cleanup: Mutex<Option<Arc<DrainCleanup>>>,
     /// The settle protocol slot. Everything about when this fiber may
     /// settle, what target it settles toward, and who owes a wakeup lives
     /// in [`InertiaSlot`] — never touch its fields outside that impl.
@@ -469,6 +510,7 @@ impl Fiber {
             dependency_edges: dependency_edges.into_boxed_slice(),
             state: StatePublication::new(FiberState::Pending),
             disposables: Mutex::new(DisposableList::new()),
+            drain_cleanup: Mutex::new(None),
             slot: InertiaSlot::new(),
             error: Mutex::new(None),
             spawn_state: SpawnState::new(),
@@ -660,6 +702,13 @@ impl Fiber {
             .collect()
     }
 
+    async fn wait_claimed_drain_cleanup(&self) {
+        let pending = self.drain_cleanup.lock().clone();
+        if let Some(pending) = pending {
+            pending.wait().await;
+        }
+    }
+
     /// Run one claimed cleanup and report its failure, if any. The
     /// execution itself ([`crate::effect::execute_cleanup`]) contains
     /// panics and normalizes returned errors into one
@@ -686,7 +735,13 @@ impl Fiber {
         let (tx, rx) = tokio::sync::oneshot::channel();
         let fiber = self.clone();
         let report_logger = logger.clone();
+        let completion = Arc::new(DrainCleanup::new());
+        *self.drain_cleanup.lock() = Some(completion.clone());
         let work = async move {
+            // The final owner is the detached task, including when its
+            // outcome receiver is dropped by a cancelled creation pass.
+            let _completion = DrainCleanupOwner(completion);
+
             let outcome = settle_ctx::bracket(fiber, async move {
                 crate::effect::execute_cleanup(cleanup).await
             })
@@ -736,6 +791,7 @@ impl Fiber {
     /// must refuse instead of waiting out a drain that awaits them
     /// (ADR 0019).
     pub(crate) async fn drain_disposables(self: &Arc<Self>) {
+        self.wait_claimed_drain_cleanup().await;
         let tokens: Vec<_> = self.disposables.lock().tokens();
         self.draining.store(true, Ordering::SeqCst);
         self.run_tokens_contained(tokens).await;
@@ -984,7 +1040,9 @@ impl Fiber {
     /// creation guard's re-run — the journal claims each occurrence
     /// before running it, the death mark and edge unregister are
     /// one-synchronous-step, and a completed teardown (Disposed) is
-    /// detected at the top so no transition regresses.
+    /// detected at the top so no transition regresses. The resumed drain
+    /// joins a previously claimed cleanup before running remaining entries
+    /// or publishing Disposed.
     async fn teardown_body(self: &Arc<Self>) {
         // the creation window closes with the teardown, whatever ended it
         self.creation_pending.store(false, Ordering::SeqCst);

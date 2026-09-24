@@ -11,27 +11,25 @@ use futures::FutureExt;
 use std::future::Future;
 use std::panic::AssertUnwindSafe;
 
-pub(crate) fn spawn<F>(
-    handle: &tokio::runtime::Handle,
+/// Add diagnostics while preserving a framework invariant panic as a panic.
+pub(crate) async fn report_panic<F>(
     logger: Logger,
     operation: &'static str,
     context: String,
     future: F,
-) -> tokio::task::JoinHandle<F::Output>
+) -> F::Output
 where
     F: Future + Send + 'static,
     F::Output: Send + 'static,
 {
-    handle.spawn(async move {
-        match AssertUnwindSafe(future).catch_unwind().await {
-            Ok(output) => output,
-            Err(payload) => {
-                logger.error(format!(
-                    "cordis: framework task {operation} panicked ({context}): {}",
-                    crate::contained::payload_text(&payload)
-                ));
-                std::panic::resume_unwind(payload);
-            }
+    match AssertUnwindSafe(future).catch_unwind().await {
+        Ok(output) => output,
+        Err(payload) => {
+            logger.error(format!(
+                "cordis: framework task {operation} panicked ({context}): {}",
+                crate::contained::payload_text(&payload)
+            ));
+            std::panic::resume_unwind(payload);
         }
-    })
+    }
 }

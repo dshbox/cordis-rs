@@ -553,11 +553,18 @@ pub(crate) fn detach(work: impl Future<Output = ()> + Send + 'static) {
     }
 }
 
-/// Detach arbitrary async cleanup. It is first polled on the shared completion
-/// runtime, so Tokio time/IO primitives created by the cleanup never migrate
-/// between runtime drivers if the caller's runtime later shuts down.
+/// Start runtime-bound framework work on the shared completion runtime, so
+/// futures created during cleanup or dependent convergence do not migrate
+/// between Tokio drivers when the caller's runtime shuts down.
+pub(crate) fn spawn_completion(
+    work: impl Future<Output = ()> + Send + 'static,
+) -> tokio::task::JoinHandle<()> {
+    completion_runtime().spawn(work)
+}
+
+/// Detach an async cleanup on the completion runtime from its first poll.
 pub(crate) fn detach_cleanup(work: impl Future<Output = ()> + Send + 'static) {
-    let _join = completion_runtime().spawn(work);
+    let _join = spawn_completion(work);
 }
 
 #[cfg(test)]

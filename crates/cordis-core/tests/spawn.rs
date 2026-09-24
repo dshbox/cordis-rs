@@ -660,6 +660,76 @@ async fn caller_cancellation_mid_cleanup_completes_the_claimed_cleanup() {
     .expect("the claimed cleanup completed and the fiber unlinked");
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cancelled_creation_keeps_rollback_order_and_terminal_barrier() {
+    let ctx = Context::new();
+    let entered = Arc::new(tokio::sync::Notify::new());
+    let release = Arc::new(tokio::sync::Notify::new());
+    let older_ran = Arc::new(AtomicU32::new(0));
+    let newer_done = Arc::new(AtomicU32::new(0));
+    let plugin = Scripted({
+        let entered = entered.clone();
+        let release = release.clone();
+        let older_ran = older_ran.clone();
+        let newer_done = newer_done.clone();
+        move |ctx: Context| -> Result<(), ApplyBoom> {
+            let older_ran = older_ran.clone();
+            ctx.effect_sync(move || {
+                older_ran.fetch_add(1, Ordering::SeqCst);
+            })
+            .unwrap();
+            let entered = entered.clone();
+            let release = release.clone();
+            let newer_done = newer_done.clone();
+            ctx.effect(move || async move {
+                entered.notify_one();
+                release.notified().await;
+                newer_done.fetch_add(1, Ordering::SeqCst);
+            })
+            .unwrap();
+            Err(ApplyBoom("rollback".to_owned()))
+        }
+    });
+    let spawn = tokio::spawn({
+        let ctx = ctx.clone();
+        async move { ctx.spawn(PreparedPlugin::from_input(plugin, ())).await }
+    });
+    entered.notified().await;
+    spawn.abort();
+    assert!(spawn.await.unwrap_err().is_cancelled());
+
+    // The detached creation guard must join the cleanup already claimed by
+    // the aborted drain before it can run the older cleanup or unlink.
+    let premature = bounded(200, async {
+        loop {
+            if older_ran.load(Ordering::SeqCst) != 0 || ordinary_fiber_count(&ctx) == 0 {
+                return true;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap_or(false);
+    release.notify_one();
+    bounded(2000, async {
+        loop {
+            if newer_done.load(Ordering::SeqCst) == 1
+                && older_ran.load(Ordering::SeqCst) == 1
+                && ordinary_fiber_count(&ctx) == 0
+            {
+                return;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("rollback completed after release");
+    assert!(
+        !premature,
+        "rollback ran an older cleanup or unlinked before the claimed cleanup finished"
+    );
+}
+
 /// Drive one poll of a future whose pending state the test then abandons
 /// (off-runtime spawn-future drop below).
 fn poll_once<F: Future>(fut: std::pin::Pin<&mut F>) -> std::task::Poll<F::Output> {
