@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.3.11](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.3.10...cordis-core-v0.3.11) - 2026-09-24
+
+### Fixed
+
+- *(core)* include late source service edges in era swap preflight ([#162](https://github.com/dshbox/cordis-rs/pull/162))
+
 ## [0.3.10](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.3.9...cordis-core-v0.3.10) - 2026-09-24
 
 ### Fixed
