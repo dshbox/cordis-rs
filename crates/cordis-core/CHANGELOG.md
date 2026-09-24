@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.3.10](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.3.9...cordis-core-v0.3.10) - 2026-09-24
+
+### Fixed
+
+- fix v3 service mutation and ready lifecycle races ([#160](https://github.com/dshbox/cordis-rs/pull/160))
+
 ## [0.3.9](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.3.8...cordis-core-v0.3.9) - 2026-09-19
 
 ### Other
