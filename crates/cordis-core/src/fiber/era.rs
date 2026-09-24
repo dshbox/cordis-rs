@@ -111,24 +111,47 @@ impl FiberHandle {
             .spawn_state
             .era_recipe()
             .map_err(|_| EraSwapError::Closed)?;
+        // Waiting for the lifecycle slot remains precommit: cancellation here
+        // changes nothing. The source may publish new Services while another
+        // lifecycle pass holds the slot; capture its edges only after winning
+        // that slot, before the irreversible terminal claim.
+        self.fiber.slot.claim().await;
+        if !self.fiber.is_alive() {
+            self.fiber.slot.abandon();
+            return Err(EraSwapError::Closed);
+        }
+        // A gated provide holds this journal through slot publication. Holding
+        // it across the edge snapshot and terminal claim either includes that
+        // publication or closes its admission. Exact set/remove may run in
+        // parallel, but neither can add an edge to this source.
+        let journal = self.fiber.disposables.lock();
         let old_publication_edges = recipe.root.services.slots_owned_by(&self.fiber);
-        let entry_dependents =
-            capture_dependents(&recipe.root, &old_publication_edges, &[&self.fiber]);
-
+        // Retain the fallback Registry snapshot until after the journal is
+        // released: its final Arc may own user-defined Drop behavior.
+        let (mut entry_dependents, retained_snapshot) = recipe
+            .root
+            .dependents_for_edges_with_retention(&old_publication_edges);
         for dependent in &entry_dependents {
-            super::settle_ctx::refuse_recursion(dependent, LifecycleOperation::EraSwap)
-                .map_err(EraSwapError::Recursion)?;
+            if std::ptr::eq(self.fiber.as_ref(), dependent.as_ref()) {
+                continue;
+            }
+            if let Err(error) =
+                super::settle_ctx::refuse_recursion(dependent, LifecycleOperation::EraSwap)
+            {
+                drop(journal);
+                self.fiber.slot.abandon();
+                return Err(EraSwapError::Recursion(error));
+            }
         }
         // Fresh-query dependents are not knowable yet. Preserve the current
         // exact-allocation attribution across the postclaim detach so their
         // later `ready` backstop can make the same self-wait decision.
         let caller_attribution = super::settle_ctx::capture_attribution();
-
-        // Waiting for the lifecycle slot remains precommit: cancellation here
-        // changes nothing. Under the slot, `disposing` is the one live-source
-        // arbitration shared with ordinary terminal disposal.
-        self.fiber.slot.claim().await;
-        if !self.fiber.is_alive() || self.fiber.claim_terminal() {
+        let already_disposing = self.fiber.claim_terminal();
+        drop(journal);
+        drop(retained_snapshot);
+        entry_dependents.retain(|dependent| !std::ptr::eq(self.fiber.as_ref(), dependent.as_ref()));
+        if already_disposing {
             self.fiber.slot.abandon();
             return Err(EraSwapError::Closed);
         }
