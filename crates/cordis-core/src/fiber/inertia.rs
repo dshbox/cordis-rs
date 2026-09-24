@@ -1122,9 +1122,12 @@ mod tests {
         assert_eq!(fiber.state(), FiberState::Pending);
 
         // A stale-wake implementation would return the old Pending state here.
-        // The real loop must notice the durable obligation, drive the new target,
-        // and wait again for that convergence pass.
-        assert!(matches!(ready.as_mut().poll(&mut task_cx), Poll::Pending));
+        // The recheck must drive the new target; its completion task can finish
+        // before this poll returns, so both Pending and Ready(Active) are valid.
+        match ready.as_mut().poll(&mut task_cx) {
+            Poll::Pending | Poll::Ready(Ok(FiberState::Active)) => {}
+            stale => panic!("ready returned a stale or invalid state: {stale:?}"),
+        }
 
         // The kick above transferred progress to framework-owned convergence.
         // Cancelling this caller must not cancel that committed work.
