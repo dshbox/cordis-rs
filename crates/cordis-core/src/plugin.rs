@@ -194,7 +194,7 @@ pub(crate) trait SealedPlugin: Send + Sync {
     /// outstanding and the state is home. A foreign-contract change is
     /// handed back with the state intact (the precommit check upstream of
     /// this call is the guarantee; this arm is the fail-closed backstop).
-    fn swap_input(&self, change: PreparedChange) -> Result<(), PreparedChange>;
+    fn swap_input(&self, change: PreparedChange) -> Result<Box<dyn Any + Send>, PreparedChange>;
 
     /// Move the Plugin behavior into a fresh seal carrying the change's
     /// candidate — the era swap's successor. The old seal is left empty:
@@ -259,7 +259,7 @@ impl<P: Plugin> SealedPlugin for TypedPlugin<P> {
         })
     }
 
-    fn swap_input(&self, change: PreparedChange) -> Result<(), PreparedChange> {
+    fn swap_input(&self, change: PreparedChange) -> Result<Box<dyn Any + Send>, PreparedChange> {
         let (contract, input) = change.into_parts();
         if contract != TypeId::of::<P>() {
             return Err(PreparedChange::from_parts(contract, input));
@@ -285,10 +285,9 @@ impl<P: Plugin> SealedPlugin for TypedPlugin<P> {
                 }
             }
         };
-        // Plugin input values are user-owned and may run arbitrary
-        // Drop code. Two-phase replacement keeps that work outside the mutex.
-        drop(superseded);
-        Ok(())
+        // Return the user-owned old input to the lifecycle caller. It must
+        // publish a committed completion owner before running arbitrary Drop.
+        Ok(Box::new(superseded))
     }
 
     fn into_successor(

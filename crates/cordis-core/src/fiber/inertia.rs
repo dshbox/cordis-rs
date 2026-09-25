@@ -690,7 +690,7 @@ impl InertiaSlot {
         // therefore linearizes wholly before this replacement or observes the
         // closed gate and cannot escape the old-generation drain.
         fiber.mark_replacing();
-        fiber
+        let superseded = fiber
             .spawn_state
             .commit_change(change)
             .expect("precommit contract check and slot ownership make commit infallible");
@@ -701,14 +701,23 @@ impl InertiaSlot {
         // owner on the durable executor so no polled user Future is transferred
         // between Tokio drivers if the caller's runtime shuts down.
         let (tx, rx) = tokio::sync::oneshot::channel();
+        let (drop_done, wait_drop) = tokio::sync::oneshot::channel::<()>();
         let fiber = fiber.clone();
         let _join = crate::effect::spawn_completion(async move {
+            // Preserve the old input's destruction-before-new-apply ordering.
+            // A panicking Drop closes this channel too, without cancelling the
+            // owner that owes the committed slot's terminal publication.
+            let _ = wait_drop.await;
             let result = fiber
                 .slot
                 .update_committed(&fiber, &root, target, revision)
                 .await;
             let _ = tx.send(result);
         });
+        // User-owned Drop is outside the Plugin lock. The owner exists before
+        // this can unwind, but its first settle cannot begin until Drop ends.
+        drop(superseded);
+        let _ = drop_done.send(());
         rx.await
             .expect("framework-owned update transaction publishes completion")
     }
@@ -967,6 +976,28 @@ mod tests {
             records[0]
                 .text()
                 .contains("an active convergence pass has a recorded SemanticTarget")
+        );
+
+        // This state cannot arise through a public API: test-only code claimed
+        // ACTIVE without recording a target. Another Tokio runtime cannot
+        // synthesize a valid terminal answer from that corrupt ownership.
+        let observed = fiber.clone();
+        let waiter = std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            runtime.block_on(async {
+                tokio::time::timeout(
+                    std::time::Duration::from_millis(100),
+                    FiberHandle::new(observed).ready(),
+                )
+                .await
+            })
+        });
+        assert!(
+            waiter.join().unwrap().is_err(),
+            "corrupt ACTIVE slot stays Pending"
         );
 
         // Test-only cleanup after proving that production reporting did not
