@@ -792,21 +792,22 @@ async fn terminal_claim_closes_exact_service_mutation_before_unloading() {
 async fn restart_commit_closes_old_publication_mutation_synchronously() {
     let root = Context::new();
     let publication = Arc::new(parking_lot::Mutex::new(None));
+    let cleanup_started = Arc::new(tokio::sync::Notify::new());
+    let release_cleanup = Arc::new(tokio::sync::Notify::new());
     let provider = root
         .spawn(prepared(CapturingProvider {
             publication: publication.clone(),
-            block_cleanup: false,
-            cleanup_started: Arc::new(tokio::sync::Notify::new()),
-            release_cleanup: Arc::new(tokio::sync::Notify::new()),
+            block_cleanup: true,
+            cleanup_started: cleanup_started.clone(),
+            release_cleanup: release_cleanup.clone(),
         }))
         .await
         .unwrap();
     let old = publication.lock().take().unwrap();
 
-    // The first poll reaches the synchronous replacement commit before it
-    // returns Pending. The completion-runtime owner may already have advanced
-    // the public state to Unloading (or beyond), so state is not a valid
-    // scheduler barrier here; the exact old occurrence is the contract.
+    // The first poll commits synchronously. Park the completion-runtime owner
+    // in the old generation's cleanup so it cannot finish before the poll
+    // observes Pending; the old occurrence remains present but mutation-closed.
     let restart = provider.restart();
     tokio::pin!(restart);
     assert!(futures::poll!(&mut restart).is_pending());
@@ -816,8 +817,17 @@ async fn restart_commit_closes_old_publication_mutation_synchronously() {
             service: Counter::NAME,
         })
     );
+    cleanup_started.notified().await;
+    release_cleanup.notify_one();
     restart.await.unwrap();
-    provider.dispose().await.unwrap();
+
+    // The replacement generation registers the same blocking cleanup; its
+    // final disposal needs a second, distinct release.
+    let disposing_provider = provider.clone();
+    let disposing = tokio::spawn(async move { disposing_provider.dispose().await.unwrap() });
+    cleanup_started.notified().await;
+    release_cleanup.notify_one();
+    disposing.await.unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
