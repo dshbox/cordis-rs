@@ -141,7 +141,7 @@ impl SpawnState {
     pub(super) fn commit_change(
         &self,
         change: PreparedChange,
-    ) -> std::result::Result<(), SpawnStateError> {
+    ) -> std::result::Result<Box<dyn std::any::Any + Send>, SpawnStateError> {
         let plugin = self
             .stored
             .lock()
@@ -149,13 +149,13 @@ impl SpawnState {
             .ok_or_else(invalid_plugin)?
             .plugin
             .clone();
-        plugin.swap_input(change).map_err(|_| SpawnStateError)?;
+        let superseded = plugin.swap_input(change).map_err(|_| SpawnStateError)?;
         self.stored
             .lock()
             .as_mut()
             .ok_or_else(invalid_plugin)?
             .effective_input = EffectiveApplyInput(Arc::new(()));
-        Ok(())
+        Ok(superseded)
     }
 
     /// Derive the fiber-owned context when this is a spawned fiber.
