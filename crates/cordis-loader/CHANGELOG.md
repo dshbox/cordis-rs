@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.3.14](https://github.com/dshbox/cordis-rs/compare/cordis-loader-v0.3.13...cordis-loader-v0.3.14) - 2026-09-25
+
+### Fixed
+
+- *(core)* pin committed apply work to completion runtime
+
 ## [0.3.4](https://github.com/dshbox/cordis-rs/compare/cordis-loader-v0.3.3...cordis-loader-v0.3.4) - 2026-09-16
 
 ### Fixed
