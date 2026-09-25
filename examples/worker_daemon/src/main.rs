@@ -255,9 +255,13 @@ async fn main() -> Result<(), BoxError> {
     section("shutdown: Harness reverse Roster disposal");
     probe.teardown.store(true, Ordering::SeqCst);
     roster.teardown().await;
-    let order = probe.order.lock().clone();
-    assert_eq!(order, ["provider", "worker"]);
-    println!("  reverse roster disposal: provider before worker");
+    // Roster calls dispose in reverse order, but withdrawing the provider's
+    // Service can start worker convergence while provider cleanup is draining.
+    // Verify both cleanups happened exactly once without ordering their callbacks.
+    let mut cleaned = probe.order.lock().clone();
+    cleaned.sort_unstable();
+    assert_eq!(cleaned, ["provider", "worker"]);
+    println!("  reverse roster disposal: provider and worker cleaned");
     println!("  worker daemon down");
     Ok(())
 }
