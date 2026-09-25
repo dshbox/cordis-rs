@@ -6,6 +6,7 @@
 //! recipe plus a `PreparedChange`, affected dependents converge to their current
 //! targets, and only then may the fresh `FiberHandle` be handed off.
 
+use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
@@ -14,6 +15,47 @@ use crate::plugin::{PreparedChange, PreparedPlugin};
 
 use super::spawn::{SpawnError, spawn_prepared_era_successor};
 use super::{EraSwapError, EraSwapFailure, Fiber, FiberHandle, LifecycleOperation};
+
+enum EraOwnerFailure {
+    Transaction(EraSwapError),
+    InputDropPanic(InputDropPanic),
+}
+
+// The reply may be sent and then abandoned before the caller polls it.
+// Retain a diagnostic owner until the original payload is actually resumed.
+struct InputDropPanic {
+    payload: Option<Box<dyn std::any::Any + Send>>,
+    logger: crate::logger::Logger,
+    fiber_name: String,
+}
+
+impl InputDropPanic {
+    fn report(&self) {
+        if let Some(payload) = &self.payload {
+            self.logger.error(format!(
+                "cordis: era input Drop panicked after caller cancellation (fiber={:?}): {}",
+                self.fiber_name,
+                crate::contained::payload_text(payload)
+            ));
+        }
+    }
+
+    fn resume(mut self) -> ! {
+        resume_unwind(
+            self.payload
+                .take()
+                .expect("panic payload is owned until delivery"),
+        )
+    }
+}
+
+impl Drop for InputDropPanic {
+    fn drop(&mut self) {
+        if self.payload.is_some() {
+            self.report();
+        }
+    }
+}
 
 struct EraHandoff {
     fiber_handle: FiberHandle,
@@ -177,6 +219,8 @@ impl FiberHandle {
 
                 match result {
                     Err(error) => {
+                        // An undelivered panic reply reports itself on Drop;
+                        // an ordinary transaction error is inert on cancellation.
                         let _ = send.send(Err(error));
                     }
                     Ok(successor) => {
@@ -200,7 +244,8 @@ impl FiberHandle {
             .await
             .expect("era replacement owner retains its completion sender");
         match completion {
-            Err(error) => Err(error),
+            Err(EraOwnerFailure::Transaction(error)) => Err(error),
+            Err(EraOwnerFailure::InputDropPanic(panic)) => panic.resume(),
             Ok(handoff) => Ok(handoff.accept()),
         }
     }
@@ -230,7 +275,7 @@ async fn run_committed_replacement(
     change: PreparedChange,
     old_publication_edges: Vec<(String, RealmKey)>,
     entry_dependents: Vec<Arc<Fiber>>,
-) -> std::result::Result<FiberHandle, EraSwapError> {
+) -> std::result::Result<FiberHandle, EraOwnerFailure> {
     // The source claim already owns the lifecycle slot and closed every
     // generation gate through `disposing`. The Fiber lifecycle owner completes
     // the same full terminal barrier used by ordinary disposal.
@@ -254,9 +299,23 @@ async fn run_committed_replacement(
         }
     };
 
-    let plugin = plugin.into_successor(change).unwrap_or_else(|_| {
-        panic!("the claimed source retains one compatible successor candidate")
-    });
+    // The old user Input is destroyed by into_successor. A panic there must
+    // not drop the detached owner before the final affected-dependent barrier.
+    // Keep the original payload for the caller after every new Service drift
+    // has converged.
+    let plugin = match catch_unwind(AssertUnwindSafe(|| plugin.into_successor(change))) {
+        Ok(result) => result.unwrap_or_else(|_| {
+            panic!("the claimed source retains one compatible successor candidate")
+        }),
+        Err(payload) => {
+            converge_final(&root, &old_publication_edges, &source, None).await;
+            return Err(EraOwnerFailure::InputDropPanic(InputDropPanic {
+                payload: Some(payload),
+                logger: root.logger.logger_for_fiber(&source.name),
+                fiber_name: source.name.clone(),
+            }));
+        }
+    };
 
     let successor = match spawn_prepared_era_successor(
         &spawning_ctx,
@@ -278,7 +337,9 @@ async fn run_committed_replacement(
             // query so an Incomplete result cannot outrun target changes that
             // landed while successor creation was in flight.
             converge_final(&root, &old_publication_edges, &source, None).await;
-            return Err(EraSwapError::Incomplete(map_spawn_failure(error)));
+            return Err(EraOwnerFailure::Transaction(EraSwapError::Incomplete(
+                map_spawn_failure(error),
+            )));
         }
     };
 

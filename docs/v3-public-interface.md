@@ -418,7 +418,11 @@ disposal, a live quiescent successor, fresh dependent queries and final
 convergence, and FiberHandle handoff. `EraSwapError::Incomplete` means the old
 Fiber is gone, no attempted successor remains resident, and final
 cleanup and convergence completed; it reports successor-specific causes
-and never embeds `SpawnError`.
+and never embeds `SpawnError`. If the old user `Plugin::Input` panics during
+its destruction after the source claim, the owner completes final affected-
+dependent convergence before resuming the original panic in the awaiting
+caller. An unconsumed panic reply records the original diagnostic after
+the same barrier.
 
 The Registry has no public presence: there is no public `Registry`, no
 `Runtime`/`RuntimeId`/record types, no `PluginKey` or PluginGroup, no
