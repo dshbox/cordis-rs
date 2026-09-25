@@ -236,11 +236,5 @@ pub enum ListenerRegistrationError {
 pub type ErasedPayload = Box<dyn std::any::Any + Send>;
 
 pub(crate) fn panic_message(payload: Box<dyn std::any::Any + Send>) -> String {
-    if let Some(message) = payload.downcast_ref::<&'static str>() {
-        (*message).to_owned()
-    } else if let Some(message) = payload.downcast_ref::<String>() {
-        message.clone()
-    } else {
-        "listener panicked".to_owned()
-    }
+    crate::contained::consume_panic_payload(payload, "listener panicked")
 }

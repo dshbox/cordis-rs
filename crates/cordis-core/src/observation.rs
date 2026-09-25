@@ -321,10 +321,7 @@ impl ObservationHub {
                     ),
                     Err(payload) => crate::contained::report_text(
                         None,
-                        format!(
-                            "cordis: runtime observer panicked: {}",
-                            crate::contained::payload_text(&payload)
-                        ),
+                        format!("cordis: runtime observer panicked: {payload}"),
                     ),
                 }
             });
