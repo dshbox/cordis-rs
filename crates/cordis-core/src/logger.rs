@@ -103,8 +103,8 @@ impl LogRecord {
 ///
 /// `min_level(channel) == None` means use [`Exporter::default_level`].
 /// Logger invokes filtering and export only after releasing its occurrence-store
-/// lock, and contains panics per occurrence so one broken exporter cannot block
-/// later attempts.
+/// lock, and contains callback and snapshot-destruction panics per occurrence
+/// so one broken exporter cannot block later attempts.
 pub trait Exporter: Send + Sync {
     /// Receive one record that passed this exporter's threshold.
     fn export(&self, record: &LogRecord);
@@ -367,6 +367,11 @@ impl LoggerService {
                     }
                 });
             });
+            // An exporter can remove its own occurrence from inside export().
+            // Its snapshot Arc may then be the last reference. Destruction
+            // after the callback boundary must be contained separately so a
+            // panicking Drop cannot escape a lifecycle holder's log call.
+            crate::contained::contain("log exporter drop", None, || drop(exporter));
         }
     }
 }

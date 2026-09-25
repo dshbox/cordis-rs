@@ -1,8 +1,9 @@
 //! Public-path regression for Service-dependent convergence ownership.
 
 use cordis_core::lifecycle::ReadyError;
-use cordis_core::logger::{Exporter, LogRecord};
+use cordis_core::logger::{Exporter, ExporterRegistration, LogRecord};
 use cordis_core::{Context, FiberState, InjectSpec, Plugin, PreparedPlugin, Service};
+use parking_lot::Mutex;
 use std::convert::Infallible;
 use std::fmt;
 use std::sync::Arc;
@@ -219,4 +220,86 @@ async fn exporter_payload_drop_panic_cannot_orphan_cleanup_convergence_owner() {
         .expect("cross-runtime ready must observe terminal convergence");
     assert_eq!(result.unwrap(), FiberState::Pending);
     assert_eq!(dependent.state(), FiberState::Pending);
+}
+
+struct SelfRemovingExporter {
+    registration: Arc<Mutex<Option<ExporterRegistration>>>,
+    dropped: Arc<Notify>,
+}
+
+impl Exporter for SelfRemovingExporter {
+    fn export(&self, record: &LogRecord) {
+        if record.text().contains("effect cleanup") {
+            let registration = self.registration.lock().take().unwrap();
+            assert!(registration.remove());
+        }
+    }
+}
+
+impl Drop for SelfRemovingExporter {
+    fn drop(&mut self) {
+        self.dropped.notify_one();
+        panic!("exporter object Drop panicked");
+    }
+}
+
+struct FollowingExporter(Arc<AtomicUsize>);
+
+impl Exporter for FollowingExporter {
+    fn export(&self, record: &LogRecord) {
+        if record.text().contains("effect cleanup") {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn exporter_object_drop_after_self_removal_cannot_orphan_convergence() {
+    let root = Context::new();
+    let first = root.provide(Arc::new(Value)).unwrap();
+    let registration = Arc::new(Mutex::new(None));
+    let dropped = Arc::new(Notify::new());
+    let self_removing = root
+        .add_exporter(Arc::new(SelfRemovingExporter {
+            registration: registration.clone(),
+            dropped: dropped.clone(),
+        }))
+        .unwrap();
+    *registration.lock() = Some(self_removing);
+
+    let following_calls = Arc::new(AtomicUsize::new(0));
+    let _following = root
+        .add_exporter(Arc::new(FollowingExporter(following_calls.clone())))
+        .unwrap();
+    let dependent = root
+        .spawn(PreparedPlugin::from_input(CleanupDependent, ()))
+        .await
+        .unwrap();
+    assert_eq!(dependent.state(), FiberState::Active);
+
+    let exporter_drop = dropped.notified();
+    tokio::pin!(exporter_drop);
+    exporter_drop.as_mut().enable();
+    first.remove().unwrap();
+    tokio::time::timeout(Duration::from_secs(3), &mut exporter_drop)
+        .await
+        .expect("self-removal must drop the last exporter snapshot reference");
+
+    let observed = dependent.clone();
+    let waiter = std::thread::spawn(move || {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            tokio::time::timeout(Duration::from_secs(3), observed.ready()).await
+        })
+    });
+    let state = waiter
+        .join()
+        .unwrap()
+        .expect("cross-runtime ready must observe the completed convergence")
+        .unwrap();
+    assert_eq!(state, FiberState::Pending);
+    assert_eq!(following_calls.load(Ordering::SeqCst), 1);
 }
