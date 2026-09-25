@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.3.17](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.3.16...cordis-core-v0.3.17) - 2026-09-25
+
+### Fixed
+
+- *(core)* contain panic payload destruction
+
 ## [0.3.16](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.3.15...cordis-core-v0.3.16) - 2026-09-25
 
 ### Fixed
