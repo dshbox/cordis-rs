@@ -628,10 +628,45 @@ async fn replacement_losing_to_committed_dispose_refuses_before_successor_alloca
     assert_eq!(old.state(), FiberState::Disposed);
 }
 
+struct SuccessorCleanupProbe {
+    completed: AtomicBool,
+    done: tokio::sync::Notify,
+}
+
+impl SuccessorCleanupProbe {
+    fn new() -> Self {
+        Self {
+            completed: AtomicBool::new(false),
+            done: tokio::sync::Notify::new(),
+        }
+    }
+
+    fn complete(&self) {
+        self.completed.store(true, Ordering::SeqCst);
+        self.done.notify_waiters();
+    }
+
+    async fn wait(&self) {
+        loop {
+            let notified = self.done.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            if self.completed.load(Ordering::SeqCst) {
+                return;
+            }
+            notified.await;
+        }
+    }
+
+    fn completed(&self) -> bool {
+        self.completed.load(Ordering::SeqCst)
+    }
+}
+
 struct FailingEraProvider {
     successor_entered: Arc<tokio::sync::Notify>,
     fail_release: Arc<tokio::sync::Notify>,
-    successor_cleaned: Arc<AtomicBool>,
+    successor_cleaned: Arc<SuccessorCleanupProbe>,
 }
 
 impl Plugin for FailingEraProvider {
@@ -663,7 +698,7 @@ impl Plugin for FailingEraProvider {
                 return Ok(());
             }
             ctx.effect_sync(move || {
-                cleaned.store(true, Ordering::SeqCst);
+                cleaned.complete();
             })
             .unwrap();
             entered.notify_one();
@@ -723,7 +758,7 @@ async fn successor_apply_failure_keeps_primary_cause_cleans_successor_and_waits_
     let root = Context::new();
     let successor_entered = Arc::new(tokio::sync::Notify::new());
     let fail_release = Arc::new(tokio::sync::Notify::new());
-    let successor_cleaned = Arc::new(AtomicBool::new(false));
+    let successor_cleaned = Arc::new(SuccessorCleanupProbe::new());
     let old = root
         .spawn(PreparedPlugin::from_input(
             FailingEraProvider {
@@ -768,12 +803,9 @@ async fn successor_apply_failure_keeps_primary_cause_cleans_successor_and_waits_
         .unwrap();
     entered_nine.notified().await;
     fail_release.notify_one();
-    tokio::task::yield_now().await;
-
-    assert!(
-        successor_cleaned.load(Ordering::SeqCst),
-        "failed successor cleanup completes before incomplete return"
-    );
+    common::bounded(2_000, successor_cleaned.wait())
+        .await
+        .expect("failed successor cleanup completes before incomplete return");
     assert!(
         !swap.is_finished(),
         "incomplete replacement must wait for the dependent's final current target"
@@ -798,7 +830,7 @@ async fn successor_apply_panic_remains_the_primary_incomplete_cause_after_cleanu
     let root = Context::new();
     let successor_entered = Arc::new(tokio::sync::Notify::new());
     let fail_release = Arc::new(tokio::sync::Notify::new());
-    let successor_cleaned = Arc::new(AtomicBool::new(false));
+    let successor_cleaned = Arc::new(SuccessorCleanupProbe::new());
     let old = root
         .spawn(PreparedPlugin::from_input(
             FailingEraProvider {
@@ -823,7 +855,7 @@ async fn successor_apply_panic_remains_the_primary_incomplete_cause_after_cleanu
     let error = swap.await.unwrap().unwrap_err();
 
     assert_eq!(old.state(), FiberState::Disposed);
-    assert!(successor_cleaned.load(Ordering::SeqCst));
+    assert!(successor_cleaned.completed());
     match error {
         EraSwapError::Incomplete(EraSwapFailure::SuccessorApply(failure)) => {
             assert_eq!(failure.kind(), PluginFailureKind::Panic);
@@ -1710,10 +1742,19 @@ async fn cancellation_during_final_dependent_recheck_finishes_no_handoff_converg
     let _ = swap.await;
     release.notify_one();
 
-    dependent
-        .wait_state(FiberState::Pending, std::time::Duration::from_secs(2))
-        .await
-        .expect("no-handoff cleanup reconverges dependent to final missing target");
+    common::bounded(2_000, async {
+        loop {
+            if cleanups.load(Ordering::SeqCst) == 2
+                && dependent.state() == FiberState::Pending
+                && matches!(dependent.ready().await, Ok(FiberState::Pending))
+            {
+                return;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("no-handoff cleanup reaches successor cleanup and final missing quiescence");
     assert_eq!(source.state(), FiberState::Disposed);
     assert_eq!(cleanups.load(Ordering::SeqCst), 2);
     assert_eq!(seen.lock().last().copied(), Some(2));

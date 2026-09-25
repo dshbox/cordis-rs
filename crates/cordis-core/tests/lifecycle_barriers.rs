@@ -8,8 +8,11 @@ use cordis_core::{
 };
 use parking_lot::Mutex;
 use std::convert::Infallible;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::task::{Context as TaskContext, Poll};
 
 #[derive(Debug, thiserror::Error)]
 #[error("restart apply failed")]
@@ -355,6 +358,246 @@ fn committed_restart_survives_origin_runtime_shutdown() {
         .expect("runtime shutdown must not panic a committed restart")
         .expect("committed restart still reaches current-target quiescence");
     assert_eq!(fiber_handle.state(), FiberState::Active);
+    assert_eq!(applies.load(Ordering::SeqCst), 2);
+}
+
+// Poll a real Tokio driver-bound resource to Pending before publishing the
+// exact shutdown barrier. This distinguishes task transfer from terminal
+// completion without relying on scheduler timing or repeated stress runs.
+struct RuntimeBoundPollProbe {
+    timer: Option<Pin<Box<tokio::time::Sleep>>>,
+    armed: Option<std::sync::mpsc::Sender<()>>,
+}
+
+impl RuntimeBoundPollProbe {
+    fn new(armed: std::sync::mpsc::Sender<()>) -> Self {
+        Self {
+            timer: None,
+            armed: Some(armed),
+        }
+    }
+}
+
+impl Future for RuntimeBoundPollProbe {
+    type Output = ();
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<()> {
+        let this = self.as_mut().get_mut();
+        let timer = this.timer.get_or_insert_with(|| {
+            Box::pin(tokio::time::sleep(std::time::Duration::from_millis(200)))
+        });
+        let outcome = timer.as_mut().poll(cx);
+        if outcome.is_pending()
+            && let Some(armed) = this.armed.take()
+        {
+            armed.send(()).unwrap();
+        }
+        outcome
+    }
+}
+
+struct RuntimeBoundReplacement {
+    applies: Arc<AtomicU32>,
+    armed: parking_lot::Mutex<Option<std::sync::mpsc::Sender<()>>>,
+}
+
+impl Plugin for RuntimeBoundReplacement {
+    type Config = ();
+    type Input = ();
+    type PrepareError = Infallible;
+    type ApplyError = Infallible;
+
+    fn prepare(&self, (): ()) -> Result<(), Infallible> {
+        Ok(())
+    }
+
+    async fn apply(&self, _ctx: Context, _prepared: &()) -> Result<(), Infallible> {
+        if self.applies.fetch_add(1, Ordering::SeqCst) == 1 {
+            let armed = self.armed.lock().take().expect("replacement applies once");
+            RuntimeBoundPollProbe::new(armed).await;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug)]
+struct RuntimeAffinityService;
+impl Service for RuntimeAffinityService {
+    const NAME: &'static str = "runtime-affinity-service";
+}
+
+struct RuntimeBoundDependent {
+    armed: parking_lot::Mutex<Option<std::sync::mpsc::Sender<()>>>,
+}
+
+impl Plugin for RuntimeBoundDependent {
+    type Config = ();
+    type Input = ();
+    type PrepareError = Infallible;
+    type ApplyError = Infallible;
+
+    fn inject(&self) -> InjectSpec {
+        InjectSpec::none().require(RuntimeAffinityService::NAME)
+    }
+
+    fn prepare(&self, (): ()) -> Result<(), Infallible> {
+        Ok(())
+    }
+
+    async fn apply(&self, _ctx: Context, _prepared: &()) -> Result<(), Infallible> {
+        let armed = self.armed.lock().take().expect("dependent applies once");
+        RuntimeBoundPollProbe::new(armed).await;
+        Ok(())
+    }
+}
+
+#[test]
+fn dependent_convergence_polls_user_future_only_on_completion_runtime() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    let root = Context::new();
+    let (armed_tx, armed_rx) = std::sync::mpsc::channel();
+    let dependent = runtime
+        .block_on(root.spawn(prepared(RuntimeBoundDependent {
+            armed: parking_lot::Mutex::new(Some(armed_tx)),
+        })))
+        .unwrap();
+    assert_eq!(dependent.state(), FiberState::Pending);
+
+    let publication = runtime
+        .block_on(async { root.provide(Arc::new(RuntimeAffinityService)) })
+        .unwrap();
+    armed_rx
+        .recv_timeout(std::time::Duration::from_secs(2))
+        .expect("dependent apply polled its completion-runtime timer to Pending");
+    runtime.shutdown_background();
+
+    let observer = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    assert_eq!(
+        observer
+            .block_on(async {
+                tokio::time::timeout(std::time::Duration::from_secs(2), dependent.ready()).await
+            })
+            .expect("dependent convergence survives origin runtime shutdown")
+            .unwrap(),
+        FiberState::Active
+    );
+    observer.block_on(dependent.dispose()).unwrap();
+    drop(publication);
+}
+
+fn run_runtime_bound_replacement<T, F, Fut>(
+    operation: F,
+) -> (
+    std::thread::Result<T>,
+    cordis_core::FiberHandle,
+    Arc<AtomicU32>,
+)
+where
+    T: Send + 'static,
+    F: FnOnce(cordis_core::FiberHandle) -> Fut + Send + 'static,
+    Fut: Future<Output = T> + Send + 'static,
+{
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    let root = Context::new();
+    let applies = Arc::new(AtomicU32::new(0));
+    let (armed_tx, armed_rx) = std::sync::mpsc::channel();
+    let fiber_handle = runtime
+        .block_on(root.spawn(prepared(RuntimeBoundReplacement {
+            applies: applies.clone(),
+            armed: parking_lot::Mutex::new(Some(armed_tx)),
+        })))
+        .unwrap();
+
+    let handle = runtime.handle().clone();
+    let running = fiber_handle.clone();
+    let (result_tx, result_rx) = std::sync::mpsc::channel();
+    let worker = std::thread::spawn(move || {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            handle.block_on(operation(running))
+        }));
+        let _ = result_tx.send(result);
+    });
+
+    armed_rx
+        .recv_timeout(std::time::Duration::from_secs(2))
+        .expect("replacement apply polled its origin-runtime timer to Pending");
+    runtime.shutdown_background();
+
+    let operation = result_rx
+        .recv_timeout(std::time::Duration::from_secs(2))
+        .expect("committed lifecycle operation publishes its result");
+    worker.join().unwrap();
+    (operation, fiber_handle, applies)
+}
+
+fn assert_runtime_bound_replacement_ready(fiber_handle: &cordis_core::FiberHandle) {
+    let observer = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    assert_eq!(
+        observer
+            .block_on(async {
+                tokio::time::timeout(std::time::Duration::from_secs(2), fiber_handle.ready()).await
+            })
+            .expect("ready reaches the committed replacement terminal barrier")
+            .unwrap(),
+        FiberState::Active
+    );
+}
+
+#[test]
+fn committed_restart_does_not_migrate_a_polled_user_future_between_runtimes() {
+    let (operation, fiber_handle, applies) =
+        run_runtime_bound_replacement(|fiber_handle| async move { fiber_handle.restart().await });
+    operation
+        .expect("committed restart task does not panic after executor handoff")
+        .expect("origin runtime shutdown does not become a user apply failure");
+    assert_runtime_bound_replacement_ready(&fiber_handle);
+    assert_eq!(applies.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn committed_update_does_not_migrate_a_polled_user_future_between_runtimes() {
+    let (operation, fiber_handle, applies) =
+        run_runtime_bound_replacement(|fiber_handle| async move {
+            fiber_handle
+                .update(PreparedChange::from_input::<RuntimeBoundReplacement>(()))
+                .await
+        });
+    assert_eq!(
+        operation
+            .expect("committed update task does not panic after executor handoff")
+            .expect("origin runtime shutdown does not become a user apply failure"),
+        UpdateOutcome::Committed(FiberState::Active)
+    );
+    assert_runtime_bound_replacement_ready(&fiber_handle);
+    assert_eq!(applies.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn committed_era_swap_does_not_migrate_a_polled_user_future_between_runtimes() {
+    let (operation, source, applies) = run_runtime_bound_replacement(|fiber_handle| async move {
+        fiber_handle
+            .era_swap(PreparedChange::from_input::<RuntimeBoundReplacement>(()))
+            .await
+    });
+    let successor = operation
+        .expect("committed era-swap task does not panic after executor handoff")
+        .expect("origin runtime shutdown does not become a successor apply failure");
+    assert_eq!(source.state(), FiberState::Disposed);
+    assert_runtime_bound_replacement_ready(&successor);
     assert_eq!(applies.load(Ordering::SeqCst), 2);
 }
 

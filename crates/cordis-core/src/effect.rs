@@ -554,8 +554,8 @@ pub(crate) fn detach(work: impl Future<Output = ()> + Send + 'static) {
 }
 
 /// Start runtime-bound framework work on the shared completion runtime, so
-/// futures created during cleanup or dependent convergence do not migrate
-/// between Tokio drivers when the caller's runtime shuts down.
+/// futures created during cleanup, Plugin apply, or dependent convergence do
+/// not migrate between Tokio drivers when the caller's runtime shuts down.
 pub(crate) fn spawn_completion(
     work: impl Future<Output = ()> + Send + 'static,
 ) -> tokio::task::JoinHandle<()> {

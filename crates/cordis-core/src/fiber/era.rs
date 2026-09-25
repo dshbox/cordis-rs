@@ -144,8 +144,10 @@ impl FiberHandle {
             }
         }
         // Fresh-query dependents are not knowable yet. Preserve the current
-        // exact-allocation attribution across the postclaim detach so their
-        // later `ready` backstop can make the same self-wait decision.
+        // exact-allocation attribution across the postclaim task so their
+        // later `ready` backstop can make the same self-wait decision. The task
+        // starts on the completion runtime because successor creation can poll
+        // arbitrary Plugin apply work.
         let caller_attribution = super::settle_ctx::capture_attribution();
         let already_disposing = self.fiber.claim_terminal();
         drop(journal);
@@ -161,7 +163,7 @@ impl FiberHandle {
         let completion_edges = old_publication_edges.clone();
         let completion_source = source.clone();
         let (send, receive) = tokio::sync::oneshot::channel();
-        crate::effect::detach(super::settle_ctx::with_attribution(
+        let _join = crate::effect::spawn_completion(super::settle_ctx::with_attribution(
             caller_attribution,
             async move {
                 let result = run_committed_replacement(
