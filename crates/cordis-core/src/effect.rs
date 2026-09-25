@@ -104,9 +104,7 @@ pub(crate) async fn execute_cleanup(cleanup: Cleanup) -> Option<EffectFailure> {
     match crate::contained::catch_contained(async move { run().await }).await {
         Ok(Ok(())) => None,
         Ok(Err(failure)) => Some(failure),
-        Err(payload) => Some(EffectFailure::panicked(crate::contained::payload_text(
-            &payload,
-        ))),
+        Err(payload) => Some(EffectFailure::panicked(payload)),
     }
 }
 

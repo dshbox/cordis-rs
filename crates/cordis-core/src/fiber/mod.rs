@@ -935,9 +935,7 @@ impl Fiber {
                     Err(panic) => {
                         self.transition(FiberState::Unloading).await;
                         self.drain_disposables().await;
-                        self.store_error(Some(Arc::new(PluginFailure::panicked(
-                            crate::contained::payload_text(&panic),
-                        ))));
+                        self.store_error(Some(Arc::new(PluginFailure::panicked(panic))));
                         self.transition(FiberState::Failed).await;
                     }
                 }
