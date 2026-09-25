@@ -33,6 +33,18 @@ static VISIBLE_PUBLISH_PROBE: parking_lot::Mutex<Option<Arc<VisiblePublishProbe>
     parking_lot::Mutex::new(None);
 
 #[cfg(test)]
+struct DriftKickProbe {
+    root: Weak<Root>,
+    armed: std::sync::atomic::AtomicBool,
+    reached: Arc<std::sync::Barrier>,
+    resume: Arc<std::sync::Barrier>,
+}
+
+#[cfg(test)]
+static DRIFT_KICK_PROBE: parking_lot::Mutex<Option<Arc<DriftKickProbe>>> =
+    parking_lot::Mutex::new(None);
+
+#[cfg(test)]
 fn probe_visible_publish(service: &'static str) {
     let probe = VISIBLE_PUBLISH_PROBE.lock().clone();
     if let Some(probe) = probe.filter(|probe| probe.service == service) {
@@ -311,12 +323,26 @@ impl CommittedServiceDrift {
             affected,
             retained_snapshot,
         } = self;
+        #[cfg(test)]
+        if let Some(probe) = DRIFT_KICK_PROBE.lock().clone()
+            && probe.root.ptr_eq(&Arc::downgrade(root))
+            && probe.armed.swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            probe.reached.wait();
+            probe.resume.wait();
+        }
         for fiber in affected {
             fiber.kick_committed_recheck(root);
+            // Disposal can unlink this dependent after the semantic snapshot.
+            // Its last Arc can then destroy a user Plugin or Input while the
+            // provider still holds its lifecycle slot.
+            crate::contained::contain("Service dependent destruction", None, || drop(fiber));
         }
-        // Explicitly outside ServiceStore synchronization. This may release the
-        // last strong Fiber reference on the fallback path.
-        drop(retained_snapshot);
+        // The fallback is test-only today, but has the same ownership rule.
+        // Keep each destructor separate so one panic cannot skip the rest.
+        for fiber in retained_snapshot {
+            crate::contained::contain("Service snapshot destruction", None, || drop(fiber));
+        }
     }
 }
 
@@ -837,12 +863,125 @@ impl Context {
 
 #[cfg(test)]
 mod semantic_commit_tests {
-    use super::{VISIBLE_PUBLISH_PROBE, VisiblePublishProbe};
+    use super::{DRIFT_KICK_PROBE, DriftKickProbe, VISIBLE_PUBLISH_PROBE, VisiblePublishProbe};
     use crate::{Context, FiberState, InjectSpec, Plugin, PreparedPlugin, Service};
     use std::convert::Infallible;
     use std::future::Future;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    // The scheduling seam pauses a public restart after its Service transition
+    // has retained the dependent, before the snapshot Arc is released.
+    struct PanicOnFinalInputDrop(Arc<std::sync::atomic::AtomicBool>);
+    impl Drop for PanicOnFinalInputDrop {
+        fn drop(&mut self) {
+            if self.0.load(Ordering::SeqCst) {
+                panic!("dependent input last Arc dropped during provider restart");
+            }
+        }
+    }
+
+    struct DropDependent;
+    impl Plugin for DropDependent {
+        type Config = ();
+        type Input = PanicOnFinalInputDrop;
+        type PrepareError = Infallible;
+        type ApplyError = Infallible;
+        fn inject(&self) -> InjectSpec {
+            InjectSpec::none().require(AtomicVisibility::NAME)
+        }
+        fn prepare(&self, _: ()) -> Result<Self::Input, Infallible> {
+            unreachable!()
+        }
+        async fn apply(&self, _: Context, _: &Self::Input) -> Result<(), Infallible> {
+            Ok(())
+        }
+    }
+
+    struct PublicProvider;
+    impl Plugin for PublicProvider {
+        type Config = ();
+        type Input = ();
+        type PrepareError = Infallible;
+        type ApplyError = Infallible;
+        fn prepare(&self, _: ()) -> Result<(), Infallible> {
+            Ok(())
+        }
+        async fn apply(&self, ctx: Context, _: &()) -> Result<(), Infallible> {
+            let _publication = ctx.provide(Arc::new(AtomicVisibility)).unwrap();
+            Ok(())
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn disposed_dependent_last_arc_does_not_orphan_provider_restart() {
+        let root = Context::new();
+        let provider = root
+            .spawn(PreparedPlugin::from_input(PublicProvider, ()))
+            .await
+            .unwrap();
+        let armed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let dependent = root
+            .spawn(PreparedPlugin::from_input(
+                DropDependent,
+                PanicOnFinalInputDrop(armed.clone()),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(dependent.state(), FiberState::Active);
+        let survivor = root
+            .spawn(PreparedPlugin::from_input(
+                WantsAtomicVisibility(Arc::new(AtomicUsize::new(0))),
+                (),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(survivor.state(), FiberState::Active);
+        let weak = Arc::downgrade(&dependent.fiber);
+        let reached = Arc::new(std::sync::Barrier::new(2));
+        let resume = Arc::new(std::sync::Barrier::new(2));
+        *DRIFT_KICK_PROBE.lock() = Some(Arc::new(DriftKickProbe {
+            root: Arc::downgrade(&root.root),
+            armed: std::sync::atomic::AtomicBool::new(true),
+            reached: reached.clone(),
+            resume: resume.clone(),
+        }));
+        struct Reset;
+        impl Drop for Reset {
+            fn drop(&mut self) {
+                *DRIFT_KICK_PROBE.lock() = None;
+            }
+        }
+        let _reset = Reset;
+        let restarting = provider.clone();
+        let task = tokio::spawn(async move { restarting.restart().await });
+        tokio::task::spawn_blocking(move || reached.wait())
+            .await
+            .unwrap();
+        dependent.dispose().await.unwrap();
+        drop(dependent);
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            while weak.strong_count() != 1 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("semantic snapshot is the dependent's last Arc");
+        armed.store(true, Ordering::SeqCst);
+        tokio::task::spawn_blocking(move || resume.wait())
+            .await
+            .unwrap();
+        let outcome = tokio::time::timeout(std::time::Duration::from_secs(2), task)
+            .await
+            .expect("provider restart owner must finish")
+            .expect("dependent Input Drop must be contained");
+        outcome.unwrap();
+        assert_eq!(provider.ready().await.unwrap(), FiberState::Active);
+        assert_eq!(survivor.ready().await.unwrap(), FiberState::Active);
+        assert!(weak.upgrade().is_none());
+        survivor.dispose().await.unwrap();
+        provider.dispose().await.unwrap();
+    }
 
     struct AtomicVisibility;
 
