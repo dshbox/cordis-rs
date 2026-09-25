@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.3.18](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.3.17...cordis-core-v0.3.18) - 2026-09-25
+
+### Fixed
+
+- *(core)* contain exporter destruction during convergence logging
+
 ## [0.3.17](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.3.16...cordis-core-v0.3.17) - 2026-09-25
 
 ### Fixed
