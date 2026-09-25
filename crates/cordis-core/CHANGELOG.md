@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [0.3.14](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.3.13...cordis-core-v0.3.14) - 2026-09-25
+
+### Fixed
+
+- *(core)* pin committed apply work to completion runtime
+
+### Other
+
+- *(core)* await the restart contract, not its scheduler
+
 ## [0.3.13](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.3.12...cordis-core-v0.3.13) - 2026-09-24
 
 ### Other
