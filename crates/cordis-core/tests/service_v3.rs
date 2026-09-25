@@ -789,7 +789,7 @@ async fn terminal_claim_closes_exact_service_mutation_before_unloading() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn restart_commit_closes_old_publication_mutation_before_unloading() {
+async fn restart_commit_closes_old_publication_mutation_synchronously() {
     let root = Context::new();
     let publication = Arc::new(parking_lot::Mutex::new(None));
     let provider = root
@@ -803,10 +803,13 @@ async fn restart_commit_closes_old_publication_mutation_before_unloading() {
         .unwrap();
     let old = publication.lock().take().unwrap();
 
+    // The first poll reaches the synchronous replacement commit before it
+    // returns Pending. The completion-runtime owner may already have advanced
+    // the public state to Unloading (or beyond), so state is not a valid
+    // scheduler barrier here; the exact old occurrence is the contract.
     let restart = provider.restart();
     tokio::pin!(restart);
     assert!(futures::poll!(&mut restart).is_pending());
-    assert_eq!(provider.state(), FiberState::Active);
     assert_eq!(
         old.set(Arc::new(Counter(11))),
         Err(ServiceControlError::MutationClosed {
