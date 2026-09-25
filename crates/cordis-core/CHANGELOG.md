@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.3.16](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.3.15...cordis-core-v0.3.16) - 2026-09-25
+
+### Fixed
+
+- *(core)* finish era dependent barrier after input Drop panic
+
 ## [0.3.15](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.3.14...cordis-core-v0.3.15) - 2026-09-25
 
 ### Fixed
