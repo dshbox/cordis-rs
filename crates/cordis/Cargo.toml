@@ -1,6 +1,6 @@
 [package]
 name = "cordis-rs"
-version = "0.8.33"
+version = "0.8.34"
 description = "Application-facing facade for the Cordis v3 runtime"
 keywords = ["cordis", "plugin", "events", "lifecycle", "framework"]
 categories = ["asynchronous", "rust-patterns"]
