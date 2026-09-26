@@ -1109,6 +1109,17 @@ mod tests {
         })
         .await
         .expect("the cleanup pass's handle is the dependent's last Arc");
+        // The cleanup already finished the successor's disposal before its
+        // convergence loop; while the probe still parks that loop, wait out
+        // the transient dispose-owner clone so the cleanup's handle is
+        // provably the successor's only remaining strong reference.
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            while successor_weak.strong_count() != 1 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the parked cleanup holds the successor's only remaining Arc");
         armed.store(true, Ordering::SeqCst);
         tokio::time::timeout(std::time::Duration::from_secs(2), async {
             probe_release.notify_one()
@@ -1162,8 +1173,13 @@ mod tests {
         )
         .await
         .expect("the survivor's unload parks in its registered cleanup");
-        assert!(
-            successor_weak.strong_count() >= 1,
+        // Exactly one Arc — the parked cleanup's own handle — proves the
+        // loop is still holding the successor while it waits on the
+        // survivor; a loop that skipped the survivor would already have run
+        // the trailing drop and left zero.
+        assert_eq!(
+            successor_weak.strong_count(),
+            1,
             "the trailing successor drop waits for the survivor's barrier"
         );
         // Releasing the gate is what lets the barrier pass: the successor's
