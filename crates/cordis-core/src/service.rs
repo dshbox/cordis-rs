@@ -870,8 +870,7 @@ mod semantic_commit_tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    // The scheduling seam pauses a public restart after its Service transition
-    // has retained the dependent, before the snapshot Arc is released.
+    // Panic only when the retained snapshot releases the dependent's final Arc.
     struct PanicOnFinalInputDrop(Arc<std::sync::atomic::AtomicBool>);
     impl Drop for PanicOnFinalInputDrop {
         fn drop(&mut self) {
@@ -940,6 +939,8 @@ mod semantic_commit_tests {
         let weak = Arc::downgrade(&dependent.fiber);
         let reached = Arc::new(std::sync::Barrier::new(2));
         let resume = Arc::new(std::sync::Barrier::new(2));
+        // Pause the public restart after its Service transition has retained
+        // the dependent, before the snapshot Arc is released.
         *DRIFT_KICK_PROBE.lock() = Some(Arc::new(DriftKickProbe {
             root: Arc::downgrade(&root.root),
             armed: std::sync::atomic::AtomicBool::new(true),
