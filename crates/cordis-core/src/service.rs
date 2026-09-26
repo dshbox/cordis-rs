@@ -336,12 +336,18 @@ impl CommittedServiceDrift {
             // Disposal can unlink this dependent after the semantic snapshot.
             // Its last Arc can then destroy a user Plugin or Input while the
             // provider still holds its lifecycle slot.
-            crate::contained::contain("Service dependent destruction", None, || drop(fiber));
+            let logger = root.logger.logger_for_fiber(&fiber.name);
+            crate::contained::contain("Service dependent destruction", Some(&logger), || {
+                drop(fiber)
+            });
         }
         // The fallback is test-only today, but has the same ownership rule.
         // Keep each destructor separate so one panic cannot skip the rest.
         for fiber in retained_snapshot {
-            crate::contained::contain("Service snapshot destruction", None, || drop(fiber));
+            let logger = root.logger.logger_for_fiber(&fiber.name);
+            crate::contained::contain("Service snapshot destruction", Some(&logger), || {
+                drop(fiber)
+            });
         }
     }
 }
@@ -864,6 +870,7 @@ impl Context {
 #[cfg(test)]
 mod semantic_commit_tests {
     use super::{DRIFT_KICK_PROBE, DriftKickProbe, VISIBLE_PUBLISH_PROBE, VisiblePublishProbe};
+    use crate::logger::{BufferExporter, Level};
     use crate::{Context, FiberState, InjectSpec, Plugin, PreparedPlugin, Service};
     use std::convert::Infallible;
     use std::future::Future;
@@ -915,6 +922,8 @@ mod semantic_commit_tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn disposed_dependent_last_arc_does_not_orphan_provider_restart() {
         let root = Context::new();
+        let buffer = Arc::new(BufferExporter::new(8, Level::Debug).unwrap());
+        let _exporter = root.add_exporter(buffer.clone()).unwrap();
         let provider = root
             .spawn(PreparedPlugin::from_input(PublicProvider, ()))
             .await
@@ -979,6 +988,26 @@ mod semantic_commit_tests {
         outcome.unwrap();
         assert_eq!(provider.ready().await.unwrap(), FiberState::Active);
         assert_eq!(survivor.ready().await.unwrap(), FiberState::Active);
+        let reports = buffer
+            .snapshot()
+            .into_iter()
+            .filter(|record| {
+                record
+                    .text()
+                    .contains("Service dependent destruction panicked")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            reports.len(),
+            1,
+            "one routed diagnostic per destructor panic"
+        );
+        assert_eq!(reports[0].level(), Level::Warn);
+        assert!(
+            reports[0]
+                .text()
+                .contains("dependent input last Arc dropped during provider restart")
+        );
         assert!(weak.upgrade().is_none());
         survivor.dispose().await.unwrap();
         provider.dispose().await.unwrap();
