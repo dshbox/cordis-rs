@@ -271,7 +271,7 @@ async fn cleanup_undelivered_successor(
     )
     .await;
     #[cfg(test)]
-    probe_successor_drop(successor.fiber.id());
+    probe_successor_drop(successor.fiber.id()).await;
     // The undelivered successor never reached a caller, so this handle may be
     // its last strong reference: destroying it runs the change's user Input
     // destructor on the detached cleanup's stack.
@@ -400,7 +400,7 @@ async fn converge(root: &Arc<Root>, fibers: Vec<Arc<Fiber>>) {
         let handle = FiberHandle::new(fiber);
         let _ = handle.ready().await;
         #[cfg(test)]
-        probe_converge_drop(handle.fiber.id());
+        probe_converge_drop(handle.fiber.id()).await;
         // A dependent disposed while this era transaction was in flight is
         // unlinked from the Registry, so the handle may hold its last strong
         // reference: its destruction runs a user Input destructor on the era
@@ -424,73 +424,76 @@ fn capture_dependents(
 // Test-only scheduling probes at the two destruction seams this module
 // added containment to. They pause the framework exactly where a test must
 // intervene between a barrier observation and a drop; production builds
-// never see them.
+// never see them. Probes park the owning *task* on a Notify — never a
+// completion-runtime worker thread — so concurrently running probe tests
+// cannot starve the shared runtime. Slots are keyed by FiberId so parallel
+// tests keep independent probes.
 #[cfg(test)]
 struct ConvergeDropProbe {
     fiber: super::FiberId,
     // Convergence passes that should pass through without parking (the
-    // entry pass runs before the final one).
+    // entry and final passes run before the undelivered cleanup's own).
     skip: std::sync::atomic::AtomicUsize,
     armed: std::sync::atomic::AtomicBool,
-    reached: std::sync::Arc<std::sync::Barrier>,
-    resume: std::sync::Arc<std::sync::Barrier>,
+    entered: std::sync::Arc<tokio::sync::Notify>,
+    release: std::sync::Arc<tokio::sync::Notify>,
 }
 
 #[cfg(test)]
-static CONVERGE_DROP_PROBE: parking_lot::Mutex<Option<std::sync::Arc<ConvergeDropProbe>>> =
-    parking_lot::Mutex::new(None);
+static CONVERGE_DROP_PROBES: parking_lot::Mutex<Vec<std::sync::Arc<ConvergeDropProbe>>> =
+    parking_lot::Mutex::new(Vec::new());
 
 #[cfg(test)]
-fn probe_converge_drop(fiber: &super::FiberId) {
-    let Some(probe) = CONVERGE_DROP_PROBE.lock().clone() else {
-        return;
-    };
-    if &probe.fiber != fiber {
-        return;
+async fn probe_converge_drop(fiber: &super::FiberId) {
+    let probes = CONVERGE_DROP_PROBES.lock().clone();
+    for probe in probes {
+        if &probe.fiber != fiber {
+            continue;
+        }
+        if probe.skip.load(Ordering::SeqCst) > 0 {
+            probe.skip.fetch_sub(1, Ordering::SeqCst);
+            continue;
+        }
+        if !probe.armed.swap(false, Ordering::SeqCst) {
+            continue;
+        }
+        probe.entered.notify_one();
+        probe.release.notified().await;
     }
-    if probe.skip.load(Ordering::SeqCst) > 0 {
-        probe.skip.fetch_sub(1, Ordering::SeqCst);
-        return;
-    }
-    if !probe.armed.swap(false, Ordering::SeqCst) {
-        return;
-    }
-    probe.reached.wait();
-    probe.resume.wait();
 }
 
 #[cfg(test)]
 struct SuccessorDropProbe {
     fiber: super::FiberId,
     armed: std::sync::atomic::AtomicBool,
-    reached: std::sync::Arc<std::sync::Barrier>,
-    resume: std::sync::Arc<std::sync::Barrier>,
+    entered: std::sync::Arc<tokio::sync::Notify>,
+    release: std::sync::Arc<tokio::sync::Notify>,
 }
 
 #[cfg(test)]
-static SUCCESSOR_DROP_PROBE: parking_lot::Mutex<Option<std::sync::Arc<SuccessorDropProbe>>> =
-    parking_lot::Mutex::new(None);
+static SUCCESSOR_DROP_PROBES: parking_lot::Mutex<Vec<std::sync::Arc<SuccessorDropProbe>>> =
+    parking_lot::Mutex::new(Vec::new());
 
 #[cfg(test)]
-fn probe_successor_drop(fiber: &super::FiberId) {
-    let Some(probe) = SUCCESSOR_DROP_PROBE.lock().clone() else {
-        return;
-    };
-    if &probe.fiber != fiber {
-        return;
+async fn probe_successor_drop(fiber: &super::FiberId) {
+    let probes = SUCCESSOR_DROP_PROBES.lock().clone();
+    for probe in probes {
+        if &probe.fiber != fiber {
+            continue;
+        }
+        if !probe.armed.swap(false, Ordering::SeqCst) {
+            continue;
+        }
+        probe.entered.notify_one();
+        probe.release.notified().await;
     }
-    if !probe.armed.swap(false, Ordering::SeqCst) {
-        return;
-    }
-    probe.reached.wait();
-    probe.resume.wait();
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        CONVERGE_DROP_PROBE, ConvergeDropProbe, EraHandoff, EraHandoffGuard, SUCCESSOR_DROP_PROBE,
-        SuccessorDropProbe, map_spawn_failure,
+        CONVERGE_DROP_PROBES, ConvergeDropProbe, EraHandoff, EraHandoffGuard,
+        SUCCESSOR_DROP_PROBES, SuccessorDropProbe, map_spawn_failure,
     };
     use crate::fiber::{EraSwapError, EraSwapFailure, FiberState, SpawnError};
     use crate::logger::{BufferExporter, Level};
@@ -860,21 +863,24 @@ mod tests {
         let weak = Arc::downgrade(&successor_arc);
         let successor_id = successor_arc.id().clone();
         drop(successor_arc);
-        let reached = Arc::new(std::sync::Barrier::new(2));
-        let resume = Arc::new(std::sync::Barrier::new(2));
-        *SUCCESSOR_DROP_PROBE.lock() = Some(Arc::new(SuccessorDropProbe {
+        let probe_entered = Arc::new(Notify::new());
+        let probe_release = Arc::new(Notify::new());
+        let probe = Arc::new(SuccessorDropProbe {
             fiber: successor_id,
             armed: AtomicBool::new(true),
-            reached: reached.clone(),
-            resume: resume.clone(),
-        }));
-        struct Reset;
+            entered: probe_entered.clone(),
+            release: probe_release.clone(),
+        });
+        SUCCESSOR_DROP_PROBES.lock().push(probe.clone());
+        struct Reset(std::sync::Arc<SuccessorDropProbe>);
         impl Drop for Reset {
             fn drop(&mut self) {
-                *SUCCESSOR_DROP_PROBE.lock() = None;
+                SUCCESSOR_DROP_PROBES
+                    .lock()
+                    .retain(|slot| !std::sync::Arc::ptr_eq(slot, &self.0));
             }
         }
-        let _reset = Reset;
+        let _reset = Reset(probe);
         swap.abort();
         let _ = swap.await;
         release.notify_one();
@@ -883,13 +889,9 @@ mod tests {
         // successor drop. The successor's disposal and every transient owner
         // clone complete before the park, so the parked handle is provably
         // the last strong reference once the count settles to one.
-        tokio::time::timeout(
-            std::time::Duration::from_secs(2),
-            tokio::task::spawn_blocking(move || reached.wait()),
-        )
-        .await
-        .expect("the undelivered cleanup reaches its trailing drop")
-        .unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(2), probe_entered.notified())
+            .await
+            .expect("the undelivered cleanup reaches its trailing drop");
         tokio::time::timeout(std::time::Duration::from_secs(2), async {
             while weak.strong_count() != 1 {
                 tokio::task::yield_now().await;
@@ -898,13 +900,7 @@ mod tests {
         .await
         .expect("the cleanup's handle is the successor's last Arc");
         armed.store(true, Ordering::SeqCst);
-        tokio::time::timeout(
-            std::time::Duration::from_secs(2),
-            tokio::task::spawn_blocking(move || resume.wait()),
-        )
-        .await
-        .expect("the parked cleanup resumes")
-        .unwrap();
+        probe_release.notify_one();
 
         // The contained destruction and its report complete inside the
         // resumed cleanup; wait for the routed diagnostic rather than an Arc
@@ -951,6 +947,185 @@ mod tests {
         survivor.dispose().await.unwrap();
     }
 
+    // The undelivered cleanup's own convergence pass can meet a disposed
+    // dependent's armed Input destructor mid-loop. The pass must contain the
+    // panic, still converge the dependents after it, and still destroy the
+    // undelivered successor. The target dependent is spawned before the
+    // survivor and the single-edge capture preserves spawn order, so the
+    // survivor sits after the panic in the loop; the successor's trailing
+    // drop runs only once the loop completed, so its destruction is the
+    // loop-continuation proof.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn undelivered_cleanup_converges_past_a_dependent_destructor_panic() {
+        let root = Context::new();
+        let buffer = Arc::new(BufferExporter::new(16, Level::Debug).unwrap());
+        let _exporter = root.add_exporter(buffer.clone()).unwrap();
+        let source = root
+            .spawn(PreparedPlugin::from_input(
+                GatedInputSource,
+                PanicOnDropInput {
+                    armed: Arc::new(AtomicBool::new(false)),
+                    gate: None,
+                },
+            ))
+            .await
+            .unwrap();
+        assert_eq!(source.state(), FiberState::Active);
+        let armed = Arc::new(AtomicBool::new(false));
+        let dependent = root
+            .spawn(PreparedPlugin::from_input(
+                DropPanicDependent,
+                PanicOnLastInputDrop(armed.clone()),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(dependent.state(), FiberState::Active);
+        let applies = Arc::new(AtomicUsize::new(0));
+        let survivor = root
+            .spawn(PreparedPlugin::from_input(
+                CountingDependent(applies.clone()),
+                (),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(survivor.state(), FiberState::Active);
+        assert_eq!(applies.load(Ordering::SeqCst), 1);
+
+        // The probe hits every convergence pass, so it must be armed before
+        // the swap starts: the entry and final passes see the dependent
+        // alive and skip (two hits), and the cleanup pass parks between the
+        // dependent's ready() and its handle drop (third hit).
+        let weak = Arc::downgrade(&dependent.fiber);
+        let probe_entered = Arc::new(Notify::new());
+        let probe_release = Arc::new(Notify::new());
+        let probe = Arc::new(ConvergeDropProbe {
+            fiber: dependent.id(),
+            skip: AtomicUsize::new(2),
+            armed: AtomicBool::new(true),
+            entered: probe_entered.clone(),
+            release: probe_release.clone(),
+        });
+        CONVERGE_DROP_PROBES.lock().push(probe.clone());
+        struct Reset(std::sync::Arc<ConvergeDropProbe>);
+        impl Drop for Reset {
+            fn drop(&mut self) {
+                CONVERGE_DROP_PROBES
+                    .lock()
+                    .retain(|slot| !std::sync::Arc::ptr_eq(slot, &self.0));
+            }
+        }
+        let _reset = Reset(probe);
+
+        // The successor parks its apply on the change input's gate; cancel
+        // the caller once it has, so the owner's send fails and the real
+        // undelivered cleanup takes over.
+        let entered = Arc::new(Notify::new());
+        let release = Arc::new(Notify::new());
+        let swapping = source.clone();
+        let change_input = PanicOnDropInput {
+            armed: Arc::new(AtomicBool::new(false)),
+            gate: Some((entered.clone(), release.clone())),
+        };
+        let swap = tokio::spawn(async move {
+            swapping
+                .era_swap(PreparedChange::from_input::<GatedInputSource>(change_input))
+                .await
+        });
+        tokio::time::timeout(std::time::Duration::from_secs(2), entered.notified())
+            .await
+            .expect("the successor apply parks on the change input's gate");
+        let successor_arc = root
+            .root
+            .registry
+            .snapshot_fibers()
+            .into_iter()
+            .find(|fiber| {
+                !Arc::ptr_eq(fiber, &survivor.fiber)
+                    && !Arc::ptr_eq(fiber, &dependent.fiber)
+                    && !Arc::ptr_eq(fiber, &source.fiber)
+                    && !Arc::ptr_eq(fiber, &root.root.root_fiber)
+            })
+            .expect("the gated successor is registry-resident");
+        let successor_weak = Arc::downgrade(&successor_arc);
+        drop(successor_arc);
+        swap.abort();
+        let _ = swap.await;
+        release.notify_one();
+
+        // The cleanup pass parked after the dependent's ready(): its capture
+        // is committed and the parked handle has not dropped. Dispose the
+        // dependent, prove the parked handle is the last strong reference,
+        // then arm the destructor panic and let the loop resume into it.
+        tokio::time::timeout(std::time::Duration::from_secs(2), probe_entered.notified())
+            .await
+            .expect("the undelivered cleanup parks at the dependent's drop");
+        dependent.dispose().await.unwrap();
+        drop(dependent);
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            while weak.strong_count() != 1 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the cleanup pass's handle is the dependent's last Arc");
+        armed.store(true, Ordering::SeqCst);
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            probe_release.notify_one()
+        })
+        .await
+        .expect("the parked cleanup pass resumes");
+
+        // Exactly one routed diagnostic: the contained panic in the loop.
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            loop {
+                let routed = buffer
+                    .snapshot()
+                    .iter()
+                    .any(|record| record.text().contains("Era dependent destruction panicked"));
+                if routed {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the cleanup pass contains the dependent's destructor panic");
+        let reports = buffer
+            .snapshot()
+            .into_iter()
+            .filter(|record| record.text().contains("Era dependent destruction panicked"))
+            .collect::<Vec<_>>();
+        assert_eq!(reports.len(), 1);
+        assert_eq!(reports[0].level(), Level::Warn);
+        assert!(
+            reports[0]
+                .text()
+                .contains("disposed dependent input last Arc dropped during era convergence")
+        );
+
+        // The loop ran to completion: the dependent after the panic is not
+        // destroyed by it (state read directly — no ready() that would let
+        // this test complete a skipped barrier), and the successor's
+        // trailing drop, which runs only after the loop, destroyed it.
+        assert_eq!(
+            weak.strong_count(),
+            0,
+            "the disposed dependent is destroyed"
+        );
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            while successor_weak.strong_count() != 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the loop completed and the undelivered successor is destroyed");
+        assert_eq!(survivor.state(), FiberState::Pending);
+        assert_eq!(applies.load(Ordering::SeqCst), 2);
+        assert_eq!(source.state(), FiberState::Disposed);
+
+        survivor.dispose().await.unwrap();
+    }
+
     // The final convergence pass re-queries dependents after successor
     // visibility; a dependent live at that capture can be disposed and
     // dropped before the pass drops its handle. The probe parks the pass
@@ -983,22 +1158,25 @@ mod tests {
         assert_eq!(dependent.state(), FiberState::Active);
 
         let weak = Arc::downgrade(&dependent.fiber);
-        let reached = Arc::new(std::sync::Barrier::new(2));
-        let resume = Arc::new(std::sync::Barrier::new(2));
-        *CONVERGE_DROP_PROBE.lock() = Some(Arc::new(ConvergeDropProbe {
+        let probe_entered = Arc::new(Notify::new());
+        let probe_release = Arc::new(Notify::new());
+        let probe = Arc::new(ConvergeDropProbe {
             fiber: dependent.id(),
             skip: AtomicUsize::new(1),
             armed: AtomicBool::new(true),
-            reached: reached.clone(),
-            resume: resume.clone(),
-        }));
-        struct Reset;
+            entered: probe_entered.clone(),
+            release: probe_release.clone(),
+        });
+        CONVERGE_DROP_PROBES.lock().push(probe.clone());
+        struct Reset(std::sync::Arc<ConvergeDropProbe>);
         impl Drop for Reset {
             fn drop(&mut self) {
-                *CONVERGE_DROP_PROBE.lock() = None;
+                CONVERGE_DROP_PROBES
+                    .lock()
+                    .retain(|slot| !std::sync::Arc::ptr_eq(slot, &self.0));
             }
         }
-        let _reset = Reset;
+        let _reset = Reset(probe);
         let swapping = source.clone();
         let swap = tokio::spawn(async move {
             swapping
@@ -1010,13 +1188,9 @@ mod tests {
         // committed and the parked handle has not dropped yet. Dispose the
         // dependent and drop the public handle, then prove the parked handle
         // is the last strong reference before arming the panic.
-        tokio::time::timeout(
-            std::time::Duration::from_secs(2),
-            tokio::task::spawn_blocking(move || reached.wait()),
-        )
-        .await
-        .expect("the final convergence parks at the dependent's drop")
-        .unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(2), probe_entered.notified())
+            .await
+            .expect("the final convergence parks at the dependent's drop");
         dependent.dispose().await.unwrap();
         drop(dependent);
         tokio::time::timeout(std::time::Duration::from_secs(2), async {
@@ -1027,13 +1201,11 @@ mod tests {
         .await
         .expect("the final pass's handle is the dependent's last Arc");
         armed.store(true, Ordering::SeqCst);
-        tokio::time::timeout(
-            std::time::Duration::from_secs(2),
-            tokio::task::spawn_blocking(move || resume.wait()),
-        )
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            probe_release.notify_one()
+        })
         .await
-        .expect("the parked convergence resumes")
-        .unwrap();
+        .expect("the parked convergence resumes");
 
         let successor = tokio::time::timeout(std::time::Duration::from_secs(2), swap)
             .await

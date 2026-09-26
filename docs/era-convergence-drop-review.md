@@ -29,25 +29,34 @@ All three interleavings below are driven entirely through the public API
 probes at the two destruction seams — the `DRIFT_KICK_PROBE` /
 `READY_FAILURE_PROBE` house pattern — plus `Weak::strong_count()` barriers
 proving the captured Arc is the last strong reference before the destructor
-is armed. The probes park the framework between a barrier observation and a
-drop; they never fabricate state.
+is armed. The probes park the owning *task* on a `Notify` — never a
+completion-runtime worker thread — and are keyed by FiberId in per-test
+slots, so concurrently running probe regressions can neither starve the
+shared completion runtime nor overwrite each other's handshakes. The probes
+park the framework between a barrier observation and a drop; they never
+fabricate state.
 
 | Path | Capture | Public-API window for dispose + handle drop | Regression |
 | --- | --- | --- | --- |
 | Entry convergence | `entry_dependents` snapshot in precommit, before the completion owner starts | The owner parks in the source's terminal drain for as long as a user-registered effect cleanup stays pending; any other task can `dispose().await` a dependent and drop its public handle there. No probe needed: the user cleanup itself holds the barrier open, and the entry snapshot's Arc is proven last by count before arming. | `entry_convergence_contains_a_disposed_dependent_last_arc` |
 | Final convergence | fresh `capture_dependents` query after successor visibility | `ready()` awaits each captured dependent; its owner can complete disposal and drop the handle while the pass is between that dependent's `ready()` return and its drop. The probe parks exactly there, with a skip counter letting the earlier entry pass (same dependent, still live, unarmed) run through. | `final_convergence_contains_a_disposed_dependent_last_arc` |
-| Undelivered-successor cleanup | fresh `capture_dependents` after the guard's successor disposal; the undelivered successor itself never reached a caller | The one public route: cancel the `era_swap` caller after the owner committed — the owner's send fails, the handoff guard detaches the cleanup, and the trailing successor drop destroys the change's Input. The successor's apply parks on the change input's own gate; the cleanup probe parks between the cleanup's convergence barrier and the trailing drop, after the successor's disposal and every transient owner clone completed, so the parked handle is provably the last Arc. | `cancelled_swap_cleanup_contains_the_successor_input_destruction` |
+| Undelivered-successor cleanup | fresh `capture_dependents` after the guard's successor disposal; the undelivered successor itself never reached a caller | The one public route: cancel the `era_swap` caller after the owner committed — the owner's send fails, the handoff guard detaches the cleanup, and the trailing successor drop destroys the change's Input. The successor's apply parks on the change input's own gate; the cleanup probe parks between the cleanup's convergence barrier and the trailing drop, after the successor's disposal and every transient owner clone completed, so the parked handle is provably the last Arc. The cleanup's convergence loop can also meet a disposed dependent's armed Input destructor mid-loop: its regression skips the probe through the entry and final passes (the dependent is alive and unarmed there) and parks the cleanup pass at the dependent's drop; the survivor, spawned after it on the same single edge (capture preserves spawn order), must still converge, and the successor's trailing drop — which runs only after the loop — must still destroy it. | `cancelled_swap_cleanup_contains_the_successor_input_destruction` and `undelivered_cleanup_converges_past_a_dependent_destructor_panic` |
 
 Each regression is discriminating: with the containment removed, the entry
 and final regressions fail through the owner panicking on the
-`cordis-completion` thread and the caller losing its completion sender, and
-the cancelled-swap regression fails through the successor's destructor panic
-escaping the detached cleanup with no routed diagnostic. Barrier assertions
-are made synchronously right after `era_swap()` returns — before any
-`ready()` call, since `ready()` itself drives a pending committed recheck and
-would mask a skipped final barrier. Report-count assertions discriminate the
-pass: the final regression's single report proves the armed destruction
-happened in the final pass, not the entry pass that ran unarmed.
+`cordis-completion` thread and the caller losing its completion sender, the
+cancelled-swap regression fails through the successor's destructor panic
+escaping the detached cleanup with no routed diagnostic, and the
+loop-continuation regression fails the same way — the dependent's panic
+escapes the cleanup's convergence loop, nothing is routed, and the loop's
+remaining work (the survivor's convergence observation and the successor's
+trailing drop) never runs. Barrier assertions are made synchronously right
+after `era_swap()` returns — before any `ready()` call, since `ready()`
+itself drives a pending committed recheck and would mask a skipped final
+barrier — and survivor states in the cleanup regressions are read the same
+way. Report-count assertions discriminate the pass: the final regression's
+single report proves the armed destruction happened in the final pass, not
+the entry pass that ran unarmed.
 
 Post-fix, each destructor is destroyed under its own containment boundary
 (`contained::contain`, the PR #179 pattern) with the affected Fiber's logger
