@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.3.22](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.3.21...cordis-core-v0.3.22) - 2026-09-26
+
+### Fixed
+
+- *(core)* route bulk removal destructor reports to logger
+
 ## [0.3.21](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.3.20...cordis-core-v0.3.21) - 2026-09-26
 
 ### Fixed
