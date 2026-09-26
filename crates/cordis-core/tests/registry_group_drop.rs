@@ -1,5 +1,5 @@
 //! Public API regression for the detached group-removal barrier.
-use cordis_core::{Context, FiberState, Plugin, PreparedPlugin};
+use cordis_core::{Context, FiberState, Level, Plugin, PreparedPlugin, logger::BufferExporter};
 use futures::FutureExt;
 use std::{
     convert::Infallible,
@@ -48,6 +48,8 @@ impl Plugin for Member {
 #[tokio::test(flavor = "current_thread")]
 async fn group_removal_continues_after_a_members_final_input_drop_panics() {
     let root = Context::new();
+    let reports = Arc::new(BufferExporter::new(8, Level::Warn).unwrap());
+    let _reports_registration = root.add_exporter(reports.clone()).unwrap();
     let first_cleanups = Arc::new(AtomicUsize::new(0));
     let second_cleanups = Arc::new(AtomicUsize::new(0));
     let first = root
@@ -89,6 +91,12 @@ async fn group_removal_continues_after_a_members_final_input_drop_panics() {
     assert_eq!(first_cleanups.load(Ordering::SeqCst), 1);
     assert_eq!(second_cleanups.load(Ordering::SeqCst), 1);
     assert_eq!(second.state(), FiberState::Disposed);
+    assert!(reports.snapshot().iter().any(|record| {
+        record.level() == Level::Warn
+            && record
+                .text()
+                .contains("bulk removal member destruction panicked: final Input destructor")
+    }));
     assert_eq!(root.runtime_snapshot().fibers().len(), 1); // root only
 
     // The detached allocation cannot be found on retry. The first call must

@@ -145,7 +145,7 @@ struct DetachedGroup {
 }
 
 impl DetachedGroup {
-    async fn dispose_all(self) {
+    async fn dispose_all(self, root: &Arc<crate::context::Root>) {
         let Self { allocation, fibers } = self;
         for fiber in fibers {
             fiber.dispose().await;
@@ -153,7 +153,10 @@ impl DetachedGroup {
             // snapshot can now be the last Arc retaining user Plugin input.
             // Contain its destructor separately so a panic cannot skip the
             // remaining members or suppress group completion.
-            crate::contained::contain("bulk removal member destruction", None, || drop(fiber));
+            let logger = root.logger.logger_for_fiber(&fiber.name);
+            crate::contained::contain("bulk removal member destruction", Some(&logger), || {
+                drop(fiber)
+            });
         }
         debug_assert_eq!(allocation.fiber_count(), 0);
     }
@@ -182,8 +185,9 @@ impl crate::Context {
         };
 
         let (tx, rx) = tokio::sync::oneshot::channel();
+        let root = self.root.clone();
         crate::effect::detach(async move {
-            detached.dispose_all().await;
+            detached.dispose_all(&root).await;
             let _ = tx.send(());
         });
         rx.await
