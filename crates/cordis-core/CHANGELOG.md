@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+## [0.3.20](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.3.19...cordis-core-v0.3.20) - 2026-09-26
+
+### Fixed
+
+- *(core)* contain dependent destruction during era convergence
+
+### Other
+
+- *(core)* prove the parked cleanup holds the successor's only Arc
+- *(core)* pin the undelivered cleanup's survivor barrier causally
+- *(core)* pin undelivered cleanup continuation past a dependent panic
+- *(core)* pin era containment through public interleavings
+
 ## [0.3.19](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.3.18...cordis-core-v0.3.19) - 2026-09-26
 
 ### Fixed
