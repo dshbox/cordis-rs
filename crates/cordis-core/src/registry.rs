@@ -149,6 +149,11 @@ impl DetachedGroup {
         let Self { allocation, fibers } = self;
         for fiber in fibers {
             fiber.dispose().await;
+            // Exact disposal and unlink have completed, but this frozen
+            // snapshot can now be the last Arc retaining user Plugin input.
+            // Contain its destructor separately so a panic cannot skip the
+            // remaining members or suppress group completion.
+            crate::contained::contain("bulk removal member destruction", None, || drop(fiber));
         }
         debug_assert_eq!(allocation.fiber_count(), 0);
     }
