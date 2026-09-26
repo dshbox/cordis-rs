@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.3.21](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.3.20...cordis-core-v0.3.21) - 2026-09-26
+
+### Fixed
+
+- *(core)* contain bulk member destruction
+
 ## [0.3.20](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.3.19...cordis-core-v0.3.20) - 2026-09-26
 
 ### Fixed
