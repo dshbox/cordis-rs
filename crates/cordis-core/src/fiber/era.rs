@@ -631,6 +631,41 @@ mod tests {
         }
     }
 
+    // The loop-continuation regression's survivor parks its second
+    // generation's unload inside a user-registered cleanup, so the undelivered
+    // cleanup's convergence barrier provably waits for it. The gate is
+    // registered on the second apply only — the first generation's unload
+    // runs empty, keeping the swap's own passes unparked.
+    struct GatedCleanupDependent {
+        applies: Arc<AtomicUsize>,
+        entered: Arc<Notify>,
+        release: Arc<Notify>,
+    }
+    impl Plugin for GatedCleanupDependent {
+        type Config = ();
+        type Input = ();
+        type PrepareError = Infallible;
+        type ApplyError = Infallible;
+        fn inject(&self) -> InjectSpec {
+            InjectSpec::none().require(EraValue::NAME)
+        }
+        fn prepare(&self, _: ()) -> Result<(), Infallible> {
+            Ok(())
+        }
+        async fn apply(&self, ctx: Context, _: &()) -> Result<(), Infallible> {
+            if self.applies.fetch_add(1, Ordering::SeqCst) == 1 {
+                let entered = self.entered.clone();
+                let release = self.release.clone();
+                ctx.effect(move || async move {
+                    entered.notify_one();
+                    release.notified().await;
+                })
+                .unwrap();
+            }
+            Ok(())
+        }
+    }
+
     // The era source parks its own terminal drain inside a registered
     // cleanup, holding the entry convergence barrier open.
     struct GatedCleanupSource {
@@ -981,9 +1016,15 @@ mod tests {
             .unwrap();
         assert_eq!(dependent.state(), FiberState::Active);
         let applies = Arc::new(AtomicUsize::new(0));
+        let survivor_parked = Arc::new(Notify::new());
+        let survivor_release = Arc::new(Notify::new());
         let survivor = root
             .spawn(PreparedPlugin::from_input(
-                CountingDependent(applies.clone()),
+                GatedCleanupDependent {
+                    applies: applies.clone(),
+                    entered: survivor_parked.clone(),
+                    release: survivor_release.clone(),
+                },
                 (),
             ))
             .await
@@ -1103,22 +1144,38 @@ mod tests {
                 .contains("disposed dependent input last Arc dropped during era convergence")
         );
 
-        // The loop ran to completion: the dependent after the panic is not
-        // destroyed by it (state read directly — no ready() that would let
-        // this test complete a skipped barrier), and the successor's
-        // trailing drop, which runs only after the loop, destroyed it.
         assert_eq!(
             weak.strong_count(),
             0,
             "the disposed dependent is destroyed"
         );
+
+        // The survivor's second generation parks its unload inside a
+        // user-registered cleanup. Service drift alone would also drive the
+        // survivor to Pending, so the states above prove continuation only —
+        // this gate pins the barrier itself: while it is held, the cleanup's
+        // convergence pass cannot pass the survivor, so the successor's
+        // trailing drop, which runs only after the loop, cannot have run.
+        tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            survivor_parked.notified(),
+        )
+        .await
+        .expect("the survivor's unload parks in its registered cleanup");
+        assert!(
+            successor_weak.strong_count() >= 1,
+            "the trailing successor drop waits for the survivor's barrier"
+        );
+        // Releasing the gate is what lets the barrier pass: the successor's
+        // destruction is causally downstream of the cleanup's wait on it.
+        survivor_release.notify_one();
         tokio::time::timeout(std::time::Duration::from_secs(2), async {
             while successor_weak.strong_count() != 0 {
                 tokio::task::yield_now().await;
             }
         })
         .await
-        .expect("the loop completed and the undelivered successor is destroyed");
+        .expect("the barrier passed and the undelivered successor is destroyed");
         assert_eq!(survivor.state(), FiberState::Pending);
         assert_eq!(applies.load(Ordering::SeqCst), 2);
         assert_eq!(source.state(), FiberState::Disposed);
