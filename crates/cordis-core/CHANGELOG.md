@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+## [0.3.19](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.3.18...cordis-core-v0.3.19) - 2026-09-26
+
+### Fixed
+
+- *(core)* route dependent Drop diagnostics to exporters
+- *(core)* contain dependent destruction during Service drift kick
+
+### Other
+
+- *(core)* place drift probe comment beside setup
+
 ## [0.3.18](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.3.17...cordis-core-v0.3.18) - 2026-09-25
 
 ### Fixed
