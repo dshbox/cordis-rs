@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [0.3.27](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.3.26...cordis-core-v0.3.27) - 2026-09-27
+
+### Fixed
+
+- *(core)* close lock before rendering waterfall panic
+- *(core)* contain each uncalled waterfall snapshot drop
+
 ## [0.3.26](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.3.25...cordis-core-v0.3.26) - 2026-09-27
 
 ### Fixed
