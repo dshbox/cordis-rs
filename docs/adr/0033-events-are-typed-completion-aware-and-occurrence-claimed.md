@@ -51,8 +51,9 @@ uncalled continuation remains operation-owned when a Mapper fails. Their
 destructors cannot replace the primary failure or prevent the
 `DispatchCompleted` record. Preflight reports a tail destructor panic
 through the Runtime logger; a Mapper failure retains its kind and
-registration identity while appending a continuation destructor panic
-to its diagnostic.
+registration identity while appending each uncalled continuation destructor
+panic to its diagnostic. The operation releases each uncalled listener
+snapshot under a separate panic boundary before completing the Mapper failure.
 
 Listener roles are semantic protocol input, not closure shapes.
 `Listener<E>` is sealed and methodless, and the registration/storage

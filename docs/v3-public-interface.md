@@ -698,8 +698,10 @@ unused, and a Mapper error can leave its downstream `Next` chain uncalled.
 Destruction of those operation-owned values cannot replace the primary
 error or suppress `DispatchCompleted`: a preflight tail destructor panic
 is reported through the Runtime logger, while a Mapper failure keeps its
-kind and registration identity and adds the continuation destructor
-diagnostic.
+kind and registration identity and adds each uncalled continuation destructor
+diagnostic. Listener snapshots in that uncalled chain are released under
+separate panic boundaries; this does not change cancellation or an
+Around-owned `Next` destructor boundary.
 There are no public shape or payload mismatch errors; contract and role
 failures are the semantic variants above, and remaining representation
 checks are private invariants.

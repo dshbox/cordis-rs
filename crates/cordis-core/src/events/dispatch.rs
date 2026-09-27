@@ -13,6 +13,7 @@ use super::types::{
 };
 use crate::context::{Context, Root};
 use futures::{FutureExt, future::join_all};
+use parking_lot::Mutex;
 use std::error::Error;
 use std::future::Future;
 use std::panic::AssertUnwindSafe;
@@ -73,6 +74,59 @@ fn drop_unclaimed_hooks(logger: &crate::logger::Logger, hooks: impl IntoIterator
             Some(logger),
             || drop(hook),
         );
+    }
+}
+
+#[derive(Default)]
+struct UncalledWaterfallDiagnostics(Mutex<Option<Vec<String>>>);
+
+impl UncalledWaterfallDiagnostics {
+    fn begin(&self) {
+        *self.0.lock() = Some(Vec::new());
+    }
+
+    fn finish(&self) -> Vec<String> {
+        self.0
+            .lock()
+            .take()
+            .expect("uncalled waterfall diagnostics collection started")
+    }
+}
+
+// A Mapper failure owns its uncalled continuation. Its nested closures must
+// not recursively drop multiple user callbacks under one unwind boundary.
+// Other paths, including cancellation and an Around-owned Next, retain their
+// ordinary Drop behavior.
+struct WaterfallHook {
+    hook: Option<HookSnap>,
+    uncalled: Arc<UncalledWaterfallDiagnostics>,
+}
+
+impl WaterfallHook {
+    fn take(&mut self) -> HookSnap {
+        self.hook.take().expect("waterfall hook invoked once")
+    }
+}
+
+impl Drop for WaterfallHook {
+    fn drop(&mut self) {
+        let Some(hook) = self.hook.take() else {
+            return;
+        };
+        if self.uncalled.0.lock().is_some() {
+            if let Err(panic) = std::panic::catch_unwind(AssertUnwindSafe(|| drop(hook))) {
+                // Consuming a user panic payload can run its destructor.
+                let diagnostic = panic_message(panic);
+                self.uncalled
+                    .0
+                    .lock()
+                    .as_mut()
+                    .expect("uncalled waterfall diagnostics collection remains active")
+                    .push(diagnostic);
+            }
+        } else {
+            drop(hook);
+        }
     }
 }
 
@@ -419,13 +473,20 @@ impl Context {
             })
         }));
 
+        let uncalled = Arc::new(UncalledWaterfallDiagnostics::default());
         let mut next = tail;
         for hook in hooks.into_iter().rev() {
             let downstream = next;
             let root = self.root.clone();
             let logger = self.logger();
+            let mut hook = WaterfallHook {
+                hook: Some(hook),
+                uncalled: uncalled.clone(),
+            };
+            let uncalled = uncalled.clone();
             next = NextFn(Box::new(move |payload| {
                 Box::pin(async move {
+                    let hook = hook.take();
                     if !claim_hook(&root, E::NAME, &hook) {
                         drop_unclaimed_hooks(&logger, std::iter::once(hook));
                         return downstream.call(payload).await;
@@ -442,17 +503,23 @@ impl Context {
                                 Ok(_) => unreachable!("Mapper adapter returns a mapped payload"),
                                 Err(mut failure) => {
                                     // A failed Mapper leaves the continuation uncalled.
-                                    // Its last Drop may run a user tail destructor; keep
-                                    // the Mapper failure and complete the dispatch report.
-                                    if let Err(panic) =
+                                    // Contain each listener snapshot separately, then
+                                    // catch destruction of the remaining tail.
+                                    uncalled.begin();
+                                    let tail_panic =
                                         std::panic::catch_unwind(AssertUnwindSafe(|| {
                                             drop(downstream)
                                         }))
+                                        .err();
+                                    for diagnostic in uncalled
+                                        .finish()
+                                        .into_iter()
+                                        .chain(tail_panic.map(panic_message))
                                     {
                                         failure.diagnostic.push_str(
                                             "; uncalled waterfall continuation destruction panicked: ",
                                         );
-                                        failure.diagnostic.push_str(&panic_message(panic));
+                                        failure.diagnostic.push_str(&diagnostic);
                                     }
                                     Err(failure)
                                 }
