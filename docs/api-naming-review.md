@@ -208,3 +208,24 @@ Delivery: [#207](https://github.com/dshbox/cordis-rs/issues/207).
 
 No tree, async resolver, key-index alias or public rename is needed. Published
 sibling compatibility remains distinct from unsupported downstream __internal use.
+
+## Timer operations and terminal ownership
+
+Delivery: [#208](https://github.com/dshbox/cordis-rs/issues/208).
+[Evidence](api-freeze-evidence.md#timer-construction-arbitration-and-terminal-ownership) and
+[usage](consumer-guide.md#10-check-timer-registration-then-distinguish-elapsed-from-cancellation).
+
+| Names / members | Conclusion | Semantic assessment |
+| --- | --- | --- |
+| `cordis_timer` root: `TimerExt`, `Sleep`, `Timeout`, `Interval`, `TimeoutOutcome`, `TimerCancelled`, `TimerRegistrationError` | Retain | Flat canonical leaf surface; shapes implementation module is private and the application facade adds no second path |
+| `TimerExt`; `sleep`, `timeout`, `interval` | Clarify | Sealed Context extension constructs complete operations with synchronous registration refusal, not async registration or raw transports |
+| `Sleep` | Clarify | Opaque one-shot Future with completion or generation cancellation; one terminal result and repoll panic |
+| `Timeout` | Clarify | Caller-owned lazy work/deadline arbitration; cleanup owns cancellation only and adds no work panic boundary |
+| `Interval` | Clarify | Named result Stream anchored at construction, no burst/phase shift; cancellation emits one error then fused None, Drop emits nothing |
+| `TimeoutOutcome`; `Completed`, `Elapsed` | Retain | Caller work output versus normal deadline expiry; neither represents generation cancellation |
+| `TimerCancelled` | Retain | Distinct terminal error after successful construction and generation termination |
+| `TimerRegistrationError`; `InactiveContext`, `TimerUnavailable`, `ZeroPeriod`, `DeadlineOutOfRange` | Retain | Atomic pre-delivery generation/environment/argument/deadline refusals; TimerUnavailable includes missing driver |
+
+Standard Future/Stream `poll`/`poll_next`, Output/Item and associated pinning
+contracts remain owned by those traits and the Timer authority. No public reset,
+cancel, raw handle, timer Service, alias or rename is justified.

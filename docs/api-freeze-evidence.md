@@ -272,3 +272,36 @@ without Fiber ownership, repeatable keys, correlation-only EntryId, is_ok not
 universal Active, and inert post-delivery Drop. No material evidence gap, known
 deviation or production defect was found. Usage: [rule 9](consumer-guide.md#9-freeze-a-loader-plan-inspect-every-outcome-and-retain-delivered-handles)
 and [gateway](../examples/gateway/src/main.rs).
+
+## Timer construction, arbitration and terminal ownership
+
+Delivery: [#208](https://github.com/dshbox/cordis-rs/issues/208).
+Contract: [Timer](v3-public-interface.md#timer-facade-and-operations),
+[ADR 0036](adr/0036-module-and-crate-seams-are-semantic.md),
+[sibling compatibility](compatibility-policy.md).
+Production: [flat facade/errors](../crates/cordis-timer/src/lib.rs),
+[operations and poll kernel](../crates/cordis-timer/src/shapes.rs).
+
+| Status / scenario | Discriminating evidence | Nearest rival excluded |
+| --- | --- | --- |
+| Covered: synchronous atomic refusal and validation precedence | [sleep_registration.rs](../crates/cordis-timer/tests/sleep_registration.rs): `all_public_timer_constructors_refuse_off_runtime`, `all_public_timer_constructors_refuse_without_time_driver`, `zero_interval_precedes_inactive_context`, `inactive_context_precedes_timer_environment_validation`, `unavailable_environment_precedes_deadline_range`, `out_of_range_deadline_is_a_registration_error`, `zero_sleep_is_valid_and_deadline_is_pinned_at_construction` | Born-terminal operation on refusal, driver panic, wrong precedence, rejected zero one-shot or deadline starting at first poll |
+| Covered: generation admission and exact cancellation ownership | [generation_ownership.rs](../crates/cordis-timer/tests/generation_ownership.rs): `loading_active_and_permanent_root_admit_timer_operations`, `pending_failed_closing_and_disposed_refuse_all_timer_constructors`, `timer_publish_versus_close_is_refusal_or_one_delivered_cancelled_operation`, `cross_fiber_timer_use_keeps_registering_owner_restart_replaces_and_spawn_is_not_parenthood` | Gate bypass, unowned delivered timer, using Fiber becomes owner or spawn origin cancellation cascades |
+| Covered: lazy caller work and panic boundary | [timeout.rs](../crates/cordis-timer/tests/timeout.rs): `construction_owns_work_without_polling_it`, `timeout_accepts_borrowing_non_send_work_and_non_send_output`, `generation_cleanup_never_owns_or_drops_timeout_work`, `cancelled_timeout_work_is_dropped_by_the_caller_poll`, `caller_work_panic_unwinds_through_timeout_poll`, `timeout_work_poll_can_reenter_generation_bookkeeping` | Eager work poll, universal Send/static bounds, cleanup moves/drops work, panic normalized as framework failure or polling under locks |
+| Covered: completed/elapsed/cancelled distinctions | timeout.rs: `work_ready_before_deadline_returns_completed_output`, `deadline_already_elapsed_drops_work_without_polling_it`, `generation_cancellation_is_distinct_from_elapsed`, `standing_generation_cancellation_wins_before_work_poll`, `cancellation_wins_ready_but_uncommitted_timeout_deadline` | Elapsed polls work, cancellation becomes Elapsed or loses an uncommitted boundary |
+| Covered at production-shared private kernel: work-Ready deadline recheck | [shapes.rs](../crates/cordis-timer/src/shapes.rs): `work_ready_is_rechecked_against_deadline_before_commit` | Completed commits after work polling makes the pinned deadline elapsed; removing the second deadline poll fails the discriminator |
+| Covered: interval phase and terminal cancellation | [sleep_interval.rs](../crates/cordis-timer/tests/sleep_interval.rs): `interval_first_tick_is_anchored_at_construction`, `interval_late_poll_coalesces_without_burst_or_phase_shift`, `interval_cancellation_wins_uncommitted_boundary_tick`, `interval_cancellation_yields_one_error_then_ends`, `dropping_interval_emits_nothing` | Tick starts at first poll, late ticks burst/shift phase, cancellation loses boundary, multiple errors or Drop emits a tick |
+| Covered: one-shot terminal contract | sleep_interval.rs: `sleep_cancellation_wins_ready_but_uncommitted_expiry`, `completed_sleep_repoll_panics`, `completed_sleep_is_not_reacted_to_by_later_generation_disposal`; timeout.rs: `completed_timeout_repoll_panics` | Cancellation loses uncommitted expiry, completed operation remains cleanup-armed, or repoll produces a second result |
+| Covered: minimal bounds and no transport/alias escape | [Timer UI](../crates/cordis-timer/tests/timer_ui.rs): pass `ui-timer/pass/timeout_non_send_non_static.rs`, `named_interval_result_stream.rs`; fail `ui-timer/fail/timer_ext_is_sealed.rs`, `removed_raw_timer_transport.rs`; [facade UI](../crates/cordis-timer/tests/facade_ui.rs): pass `ui-facade59/pass/flat_root.rs`; fail `ui-facade59/fail/shapes_second_path.rs`, `timer_alias.rs`, `armed_sleep.rs` | Extra transport bounds, extensible TimerExt, raw transport, duplicate canonical path or public alias |
+
+The work-Ready discriminator uses deterministic deadline/work doubles on the
+same `poll_timeout` kernel used by production. Public integration tests cover
+construction, work ownership and terminal outcomes; the private doubles arrange
+one hard race, not every Tokio scheduling history. Evidence is insufficient for
+stronger universal equivalence or unbounded-progress claims; those are accepted
+assurance limits, not missing supported-contract discriminators. Larger paired
+observer/Loader runs remain optional confidence work, as does performance
+expansion. Accepted boundaries: lazy caller-owned work, ordinary work panic
+unwind, pinned deadlines/phase, distinct cancellation, one-shot repoll panic and
+fused post-cancellation Interval. No material evidence gap, known deviation or
+production defect was found. Usage: [rule 10](consumer-guide.md#10-check-timer-registration-then-distinguish-elapsed-from-cancellation),
+[worker_daemon](../examples/worker_daemon/src/main.rs), [gateway](../examples/gateway/src/main.rs).

@@ -249,3 +249,33 @@ Run `cargo run --locked -p gateway`; its
 [source](../examples/gateway/src/main.rs) boots a frozen plan from
 the embedded `GATEWAY_JSON`, adapts typed inputs and reports deliberate
 failed rows alongside successful handles before explicit teardown.
+
+## 10. Check Timer registration, then distinguish elapsed from cancellation
+
+Import `TimerExt` from `cordis_timer` and construct `sleep`, `timeout` or `interval`
+in a usable time environment. Construction is synchronously fallible and atomic:
+check local arguments, Context admission and the time environment/deadline before
+accepting the delivered operation. Zero one-shot delay is valid; interval period
+must be nonzero. A later generation close produces TimerCancelled, not a
+registration failure. Deadlines and interval phase are pinned at construction.
+
+Timeout work is lazy and caller-owned, with no universal Send/static requirement.
+Generation cleanup signals timer cancellation; it never polls, moves or drops
+that work. Elapsed is a normal timeout result, distinct from cancellation.
+Completed can commit only if the deadline is still unelapsed after work reports
+Ready. Work polling panic follows ordinary caller unwind. Dropping abandons the
+operation/work and disarms cleanup where possible.
+
+Poll one-shots through exactly one terminal result; repolling afterward panics.
+An interval starts at anchor + period, coalesces late polls to one overdue tick
+without catch-up bursts or phase shift, and emits one cancellation error followed
+by None forever. Dropping it emits nothing.
+
+Authority: [Timer](v3-public-interface.md#timer-facade-and-operations),
+[ADR 0036](adr/0036-module-and-crate-seams-are-semantic.md).
+Run `cargo run --locked -p worker_daemon` for
+[generation-owned sleep/interval use](../examples/worker_daemon/src/main.rs), or
+`cargo run --locked -p gateway` for
+[completed/elapsed/cancelled timeout outcomes](../examples/gateway/src/main.rs).
+The deterministic hard deadline race is documented in the
+[evidence](api-freeze-evidence.md#timer-construction-arbitration-and-terminal-ownership).
