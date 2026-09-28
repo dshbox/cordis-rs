@@ -45,3 +45,29 @@ Delivery: [#201](https://github.com/dshbox/cordis-rs/issues/201).
 feature unification makes it reachable. Its published-sibling obligation is
 reviewed under the [compatibility policy](compatibility-policy.md), separately
 from downstream names. No new public rename is justified by this path.
+
+## Context axes and exact Services
+
+Delivery: [#202](https://github.com/dshbox/cordis-rs/issues/202).
+[Evidence](api-freeze-evidence.md#context-axes-and-exact-services) and
+[usage](consumer-guide.md#2-choose-service-placement-event-reachability-and-configuration-independently).
+
+| Names / members | Conclusion | Semantic assessment |
+| --- | --- | --- |
+| `Context::root` | 改善说明 | Resets current Fiber, isolate, Scope and intercept in the same Runtime; no new Runtime or shutdown authority |
+| `ServiceRealm`; `Context::new_service_realm`, `with_service_realms`, `with_isolated_service` | 保留 | Opaque Runtime-local exact placement; private derivations never rendezvous and mappings have no fallback |
+| `RealmMappingError`; `DuplicateService { service }`, `ForeignRealm { service }` | 保留 | Ordered atomic mapping refusals, with diagnostic Service correlation |
+| `Scope`; `Context::scope`, `with_child_scope` | 改善说明 | Event reachability position and derivation only; ancestry is not exposed and implies no ownership, Service or authorization meaning |
+| `InjectSpec`; `none`, `require`, `require_configured`; `Default` | 改善说明 | Empty declaration and consuming prerequisite upserts; later require clears a configured layer, declaration order is nonsemantic |
+| `Service`; `NAME` | 保留 | Named typed value contract; NAME plus selected realm chooses an exact slot, not diagnostic Plugin identity |
+| `ConfigurableService`; `Config`, `Layer`, `Resolved`, `PrepareError`, `ComposeError`; `prepare_config`, `compose_config` | 改善说明 | Source adaptation, retained prepared layer and final resolution; Service owns composition meaning and operation-specific errors |
+| `Context::with_intercept`, `resolve_config` | 改善说明 | Prepared Service configuration overlay and typed resolution; intercept is not Event middleware or an authorization boundary |
+| `ConfigResolutionError`; `ContractMismatch { service }`, `Compose` | 保留 | Wrong named Service contract versus the Service's typed composition failure |
+| `Context::provide`, `try_service` | 改善说明 | Admission of one occurrence versus exact visible lookup; lookup requires no declared injection membership |
+| `ServicePublication`; `set`, `remove` | 改善说明 | Exact occurrence capability; set preserves target, consuming remove competes with cleanup, Drop is inert |
+| `ServiceLookupError`; `Unavailable { service }`, `ContractMismatch { service }` | 保留 | Missing/invisible selected occurrence versus wrong typed contract, without fallback |
+| `ServicePublishError`; `InactiveContext`, `DuplicatePublication { service }`, `ContractMismatch { service }` | 保留 | Generation admission refusal, occupied slot and incompatible typed contract remain distinct |
+| `ServiceControlError`; `StalePublication { service }`, `MutationClosed { service }` | 改善说明 | Exact identity is checked first; a replaced occurrence is stale even when the former generation is closed |
+
+No new spelling or domain decision is needed. These explanations retain the
+glossary's independent axes and exact-publication authority.

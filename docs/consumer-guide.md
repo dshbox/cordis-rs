@@ -28,3 +28,52 @@ Authority: [preparation and creation](v3-public-interface.md#plugin-preparation-
 Run `cargo run --locked -p hello_plugin`; its [source](../examples/hello_plugin/src/main.rs)
 prepares EchoInput, spawns, records the handle in a Roster, dispatches Ping and
 explicitly tears down.
+
+## 2. Choose Service placement, Event reachability and configuration independently
+
+Use `new_service_realm` and `with_service_realms` to share exact Service slots,
+or `with_isolated_service` for a fresh private slot. A realm belongs to one
+Runtime; equal textual Service names do not join different realms, and lookup
+never falls back to an ancestor or default realm. A batch mapping validates
+duplicates before foreign realms and installs nothing on failure.
+
+Use `with_child_scope` for Event reachability and `with_intercept::<S>` for
+already-prepared Service configuration layers. Neither implies resource
+ownership, tenant authorization or Service placement. A Context clone preserves
+all axes and current Fiber attribution; `root()` resets those axes and attribution
+to the root of the same Runtime. It does not create another Runtime.
+
+Authority: [Context axes](v3-public-interface.md#context-and-its-axes),
+[ADR 0032](adr/0032-context-axes-are-orthogonal.md).
+Run `cargo run --locked -p scopes_tenants`; its
+[source](../examples/scopes_tenants/src/main.rs) checks private/shared Service
+placement and ancestor/sibling Event routing independently. It does not implement
+an authorization policy or demonstrate intercept composition.
+
+## 3. Declare prerequisites and control the exact publication you created
+
+Build `InjectSpec` before sealing. `require` and `require_configured` upsert one
+effective requirement per Service; a later `require` clears its configured layer.
+For a configurable Service, call its `prepare_config` before installing a Layer.
+`resolve_config` supplies base, outer-to-inner Context layers and head to the
+Service's `compose_config`; the Service defines their composition, with no
+framework-wide merge or default. Config, Layer and Resolved are distinct roles.
+
+Publish with `provide`, look up with `try_service`, and retain the returned
+`ServicePublication` if you need exact mutation. `set` replaces the payload of
+that occurrence without changing the dependency target; `remove` withdraws it.
+Dropping the publication capability leaves generation cleanup armed. Loading
+publications occupy slots but become visible only when their provider is Active.
+Direct lookup needs no InjectSpec membership; declarations govern lifecycle
+prerequisites. After visibility changes, `ready` drives current-target settlement,
+including durable drift committed outside an executor; stable Pending remains a
+valid quiescent result.
+
+Authority: [Service configuration](v3-public-interface.md#dependency-declarations-and-service-configuration),
+[publication and lookup](v3-public-interface.md#service-publication-and-lookup),
+[ADR 0031](adr/0031-service-convergence-tracks-exact-publication-assignments.md).
+Run `cargo run --locked -p scopes_tenants`; its
+[source](../examples/scopes_tenants/src/main.rs) publishes and performs exact
+lookups. Configuration, set/remove and convergence boundaries are demonstrated
+by the [Service contracts](../crates/cordis-core/tests/service_v3.rs), rather than
+claimed as behavior exercised by that tour.

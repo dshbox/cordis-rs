@@ -69,3 +69,37 @@ this path; its bounded execution coverage does not prove every scheduling histor
 
 Consumer composition: [guide rule 1](consumer-guide.md#1-prepare-input-seal-it-then-spawn-and-retain-the-handle)
 and the headless [hello_plugin](../examples/hello_plugin/src/main.rs) example.
+
+## Context axes and exact Services
+
+Delivery: [#202](https://github.com/dshbox/cordis-rs/issues/202).
+Contract: [axes](v3-public-interface.md#context-and-its-axes),
+[configuration](v3-public-interface.md#dependency-declarations-and-service-configuration),
+[publication](v3-public-interface.md#service-publication-and-lookup), ADRs
+[0031](adr/0031-service-convergence-tracks-exact-publication-assignments.md) and
+[0032](adr/0032-context-axes-are-orthogonal.md).
+Production: [Context](../crates/cordis-core/src/context.rs),
+[Service occurrences](../crates/cordis-core/src/service.rs),
+[settlement](../crates/cordis-core/src/fiber/inertia.rs),
+[dependency projection](../crates/cordis-core/src/deps.rs).
+
+| Status / scenario | Discriminating evidence | Nearest rival excluded |
+| --- | --- | --- |
+| Covered: realm identity and atomic validation | [realms.rs](../crates/cordis-core/tests/realms.rs): `realms_are_opaque_runtime_local_placement_identities`, `explicit_equal_realms_join_only_the_mapped_service_slot`, `fresh_private_derivations_never_rendezvous`, `realm_batch_rejects_duplicates_before_foreign_realms` | Cross-Runtime/textual rendezvous, mapping all Services to one shared realm, or partial mutation before a later validation failure |
+| Covered: view equivalence and axis independence | realms.rs: `root_resets_fiber_isolate_scope_and_intercept_in_the_same_runtime`, `clone_preserves_fiber_realm_scope_and_intercept_exactly`, `isolate_derivation_preserves_event_reachability`; [context_equivalence.rs](../crates/cordis-core/tests/context_equivalence.rs): `equivalent_views_match_for_service_lookup_and_event_routing`, `equivalent_views_register_cleanup_to_the_same_current_fiber` | Derivation history changes lookup/routing/ownership or root creates a different Runtime |
+| Covered: synchronous typed composition and declaration normalization | [configuration.rs](../crates/cordis-core/tests/configuration.rs): `service_preparation_and_composition_are_synchronous_and_typed`, `service_composition_can_reenter_context_configuration`, `inject_normalization_erases_order_and_duplicates_from_dependency_targets`, `inject_overlay_cannot_select_a_service_realm`, `intercept_derivation_changes_no_other_context_axis` | Framework merge/default, user composition under a lock, declaration-order identity, overlay realm control or intercept altering another axis |
+| Covered: exact lookup/publication and Loading visibility | [service_v3.rs](../crates/cordis-core/tests/service_v3.rs): `exact_lookup_distinguishes_unavailable_contract_mismatch_and_realms`, `duplicate_and_contract_mismatch_publication_refuse_without_disturbing_current_occurrence`, `loading_occupation_is_invisible_until_active_then_visibility_drifts` | Fallback lookup, failed publication damaging the current occurrence, or Loading values being visible |
+| Covered: occurrence control and durable visibility drift | service_v3.rs: `exact_publication_set_preserves_target_remove_commits_drift_and_drop_is_inert`, `off_runtime_visibility_commit_is_driven_by_later_ready`, `close_withdraws_before_cleanup_and_stale_cleanup_cannot_remove_replacement`, `closed_current_reports_mutation_closed_but_replacement_makes_old_handle_stale_first`, `successful_set_and_remove_destroy_outgoing_values_outside_service_synchronization` | Payload set restarts dependents, Drop withdraws publication, off-runtime mutation is lost, old cleanup removes replacement, or user Drop runs under synchronization |
+| Covered: exact fixed edges, missing projection and failure parking | service_v3.rs: `fixed_exact_dependency_edges_survive_restart_and_update`, `pending_missing_is_the_normalized_missing_projection`, `failed_target_parking_uses_exact_publication_and_explicit_restart_bypasses_it` | Restart/update remaps prerequisites, Pending reports unrelated slots, or failure retries on payload-only set |
+| Covered at private implementation seam: projection is not authority | [Context unit tests](../crates/cordis-core/src/context.rs): `incomplete_dependency_projection_falls_back_to_fiber_owned_edges`, `disabled_projection_preserves_service_settlement`; [deps.rs](../crates/cordis-core/src/deps.rs): `clearing_and_rebuilding_projection_changes_no_authoritative_edges` | A disabled, partial or rebuilt index loses authoritative edges and dependent convergence |
+
+The projection tests privately arrange index damage and then use public
+spawn/provide/ready behavior. They prove the production fallback under those
+arrangements, not a public index-disable API or all possible corruption histories.
+Accepted boundaries: axes are independent views, not ownership/authorization;
+exact realm lookup has no fallback; same-occurrence set preserves SemanticTarget;
+restart/update retain exact edges. Era replacement resolves fresh edges from its
+captured immutable recipe; it need not select different slots. No material
+evidence gap, known deviation or production defect was identified in this path.
+Usage: [guide rules 2–3](consumer-guide.md#2-choose-service-placement-event-reachability-and-configuration-independently)
+and [scopes_tenants](../examples/scopes_tenants/src/main.rs).
