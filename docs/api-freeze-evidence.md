@@ -103,3 +103,38 @@ captured immutable recipe; it need not select different slots. No material
 evidence gap, known deviation or production defect was identified in this path.
 Usage: [guide rules 2–3](consumer-guide.md#2-choose-service-placement-event-reachability-and-configuration-independently)
 and [scopes_tenants](../examples/scopes_tenants/src/main.rs).
+
+
+
+## Lifecycle control and era replacement
+
+Delivery: [#203](https://github.com/dshbox/cordis-rs/issues/203).
+Contract: [lifecycle](v3-public-interface.md#fiber-identity-lifecycle-and-typed-group-removal),
+[typed update](v3-public-interface.md#typed-update-control), ADRs
+[0030](adr/0030-era-replacement-ends-one-fiber-before-creating-another.md) and
+[0034](adr/0034-update-control-is-precommit-and-non-dispatchable.md).
+Production: [Fiber control](../crates/cordis-core/src/fiber/mod.rs),
+[precommit policy](../crates/cordis-core/src/update.rs),
+[era owner](../crates/cordis-core/src/fiber/era.rs).
+
+| Status / scenario | Discriminating evidence | Nearest rival excluded |
+| --- | --- | --- |
+| Covered: current-target ready versus passive wait | [lifecycle_v3.rs](../crates/cordis-core/tests/lifecycle_v3.rs): `ready_reports_typed_current_failure_and_drives_a_new_target`, `wait_state_is_passive_for_off_runtime_drift`, `failed_is_published_only_after_rollback_finishes` | Old-target failure after drift, wait driving settlement, or Failed preceding rollback |
+| Covered: retry preserves identity and committed completion | [lifecycle_barriers.rs](../crates/cordis-core/tests/lifecycle_barriers.rs): `restart_preserves_identity_and_retries_a_same_target_failure`, `cancelled_precommit_restart_waiter_does_not_replace_the_generation`, `cancelled_postcommit_restart_waiter_does_not_stop_the_restart`, `committed_restart_survives_origin_runtime_shutdown` | Retry allocating a new Fiber, precommit cancellation mutating generation, or postcommit completion depending on waiter/origin executor |
+| Covered: provisional control, mismatch, veto and admission revalidation | [update_control.rs](../crates/cordis-core/tests/update_control.rs): `wrong_contract_is_precommit_and_typed`, `around_can_veto_without_reaching_private_tail`, `private_tail_is_provisional_until_outer_control_returns`, `unrecovered_control_error_preserves_old_generation`, `close_during_awaited_control_reports_admission_lost`, `same_fiber_update_recursion_is_refused_before_control` | Tail committing early, veto/error changing generation, wrong contract reaching control, or awaited control skipping admission/recursion checks |
+| Covered: forward-only committed candidate and Pending | update_control.rs: `accepted_update_can_commit_to_stable_pending_without_apply`, `postcommit_apply_failure_is_invisible_to_control_and_candidate_is_retained`, `postcommit_update_apply_panic_is_contained_and_keeps_the_new_input`, `mapper_panic_is_contained_precommit_and_preserves_the_old_generation` | Committed guaranteeing Active, outer policy catching postcommit failure, apply failure restoring old input, or mapper panic committing |
+| Covered: cancellation and sealed policy capabilities | update_control.rs: `cancelling_during_precommit_control_commits_nothing`, `cancelling_postcommit_waiter_does_not_cancel_update_owner`; [lifecycle UI](../crates/cordis-core/tests/lifecycle_ui.rs): fail `ui-lifecycle/fail/update_rejects_raw_any.rs`, `update_observer_is_not_update_policy.rs`, `update_responder_is_not_update_policy.rs`, `removed_internal_update_event.rs`; [configuration UI](../crates/cordis-core/tests/configuration_ui.rs): fail `ui-configuration/fail/prepared_values_are_move_only.rs` | Caller cancellation stranding commit, erased input or notification/response adapters becoming policy, or candidate reuse being allowed |
+| Covered: era source claim, death before birth and fresh identity | [era_replacement.rs](../crates/cordis-core/tests/era_replacement.rs): `replacement_breaks_identity_while_update_and_restart_do_not`, `old_terminal_cleanup_precedes_successor_apply`, `racing_replacements_claim_one_live_source_and_attempt_one_successor`, `successor_gets_sibling_scope_and_fresh_generation_resources_without_cascading_children`, `wrong_contract_refuses_before_source_claim` | Old/new overlap, two successors, identity reuse, child cascade or wrong-contract source destruction |
+| Covered: final convergence and failed-successor completion | era_replacement.rs: `return_waits_for_dependents_to_converge_to_the_successors_current_publication`, `mid_swap_dependent_is_included_by_the_fresh_final_query`, `successor_apply_failure_keeps_primary_cause_cleans_successor_and_waits_final_dependents`, `successor_apply_panic_remains_the_primary_incomplete_cause_after_cleanup` | Intermediate-target handoff, missed new dependent, lost primary cause or resident failed successor |
+| Covered: era cancellation ownership and immutable recipe | era_replacement.rs: `cancellation_while_waiting_for_source_claim_is_no_effect`, `cancellation_during_old_cleanup_cannot_stop_committed_replacement_completion`, `cancellation_during_successor_settle_cleans_the_undelivered_successor`, `replacement_replays_a_closed_spawn_origins_view_without_false_successor_lost`; update_control.rs: `era_swap_never_invokes_update_control` | Preclaim mutation, cancelled owner, leaked undelivered successor, incorrectly rejected captured view or update policy invoked for era |
+
+Candidate consumption is a move-only compile contract plus consuming production
+signatures for every refusal/result branch; runtime tests distinguish their
+commit effects, not a fictional candidate-return channel. Accepted boundaries:
+ready is quiescence, not universal Active; control cannot recover postcommit apply;
+era uses its immutable captured recipe, with no replacement Context parameter;
+Incomplete is forward-only. A changed-captured-mapping test is N/A because that
+mutation is not publicly expressible. These bounded tests do not prove every
+schedule. No material evidence gap, deviation or defect was found.
+Usage: [rule 4](consumer-guide.md#4-choose-same-fiber-control-or-replace-the-era-then-retain-the-right-handle)
+and [chat_capstone](../examples/chat_capstone/src/main.rs).

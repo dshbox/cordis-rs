@@ -77,3 +77,36 @@ Run `cargo run --locked -p scopes_tenants`; its
 lookups. Configuration, set/remove and convergence boundaries are demonstrated
 by the [Service contracts](../crates/cordis-core/tests/service_v3.rs), rather than
 claimed as behavior exercised by that tour.
+
+
+
+## 4. Choose same-Fiber control or replace the era, then retain the right handle
+
+Use `ready` to drive the latest target to quiescence, including Pending;
+`wait_state` passively awaits a state publication with a timeout. Restart retries
+the same Fiber and input. For new input, prepare and seal one
+`PreparedChange::from_input::<P>`, then consume it through `update` or `era_swap`.
+Every candidate permits one attempt, including mismatch, veto and failure.
+
+`on_update` installs typed precommit Mapper/Around policy. Tail acceptance is
+provisional until outer callbacks return and admission is revalidated. Veto,
+control failure and admission refusal do not commit the candidate. After update
+commit, new input remains authoritative even if apply fails; use the
+operation-specific error to decide whether to call `ready` or restart. A
+successful `Committed` may carry Pending. Update preserves FiberId.
+
+Era swap uses the captured immutable spawn recipe, skips update policy, ends the
+old Fiber before creating a fresh successor and awaits dependent convergence.
+On success, replace your retained control with the returned handle. `Incomplete`
+means the old Fiber is gone and attempted-successor cleanup and final convergence
+finished; it does not offer old-era rollback. Postcommit caller cancellation
+cannot strand framework completion, but an undelivered successor is cleaned up.
+
+Authority: [lifecycle](v3-public-interface.md#fiber-identity-lifecycle-and-typed-group-removal),
+[typed control](v3-public-interface.md#typed-update-control),
+[ADR 0030](adr/0030-era-replacement-ends-one-fiber-before-creating-another.md),
+[ADR 0034](adr/0034-update-control-is-precommit-and-non-dispatchable.md).
+Run `cargo run --locked -p chat_capstone`; its
+[source](../examples/chat_capstone/src/main.rs) asserts same-ID update, fresh-ID
+era replacement and dependent convergence, then explicitly disposes the successor.
+See [application teardown](application-teardown.md) for delivered-handle ownership.
