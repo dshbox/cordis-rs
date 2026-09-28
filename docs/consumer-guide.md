@@ -161,3 +161,32 @@ Run `cargo run --locked -p worker_daemon`; its
 [Roster](../examples/common/src/lib.rs) demonstrate explicit teardown.
 The [Roster tests](../examples/common/tests/boot.rs) separately verify reverse
 order, attempt-all after refusal and repeat-call idempotence.
+
+## 7. Select an Event role and routing, then await the intended completion
+
+Declare `Event::{NAME, Args, Output}`, adapt callbacks as Observer, Responder,
+Mapper or Around, then register with `on`/`on_with`. Sync adapters complete
+immediately and can still fail. `with_state` creates invocation-local state after
+preflight and a successful claim; it does not create persistent shared state.
+Callbacks receive their registration Context. Supply `Routing` explicitly:
+Scoped uses Event reachability; Unscoped selects across scopes in this Runtime.
+
+Choose ordered fail-first `emit`, complete claim/start-and-await-all
+`emit_parallel`, sequential first-answer `query`, or owned Mapper/Around
+`waterfall`. QueryOutcome distinguishes Answer from Miss even for false/zero/empty
+answers. `waterfall_query` derives a query tail with the same routing. Around's
+`Next` is consuming and single-use. A once occurrence is consumed before callback
+invocation, even if it fails or the caller cancels afterward. Exact removal cannot
+revoke already claimed work. Await the operation if callback completion matters:
+Event futures remain caller-owned and pending-callback cancellation does not
+promise detached completion or rollback of claims.
+
+Authority: [Events](v3-public-interface.md#event-contracts-roles-and-dispatch),
+[errors](v3-public-interface.md#event-errors),
+[ADR 0033](adr/0033-events-are-typed-completion-aware-and-occurrence-claimed.md).
+Run `cargo run --locked -p gateway` for
+[scoped waterfall/query](../examples/gateway/src/main.rs), or
+`cargo run --locked -p chat_capstone` for
+[roles, registration Context and invocation-local state](../examples/chat_capstone/src/main.rs).
+The [evidence](api-freeze-evidence.md#event-dispatch-and-exact-claims) covers
+cancellation, failure correlation and destructor boundaries separately.

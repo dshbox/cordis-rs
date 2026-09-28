@@ -121,3 +121,32 @@ Delivery: [#204](https://github.com/dshbox/cordis-rs/issues/204).
 
 The names retain their established ownership and exact-claim meanings. Consumer
 ordering does not warrant a core shutdown/tree API or a new public rename.
+
+## Event roles, dispatch and exact claims
+
+Delivery: [#205](https://github.com/dshbox/cordis-rs/issues/205).
+[Evidence](api-freeze-evidence.md#event-dispatch-and-exact-claims) and
+[usage](consumer-guide.md#7-select-an-event-role-and-routing-then-await-the-intended-completion).
+
+| Names / members | Conclusion | Semantic assessment |
+| --- | --- | --- |
+| `Event`; `NAME`, `Args`, `Output` | Retain | Named compatible typed contract; marker identity does not route or impose universal Clone/Sync bounds |
+| `Routing`; `Unscoped`, `Scoped` | Clarify | Explicit eligibility selection in one Runtime; Scoped(root) is not Unscoped |
+| `Listener`; `observer`, `observer_sync`, `responder`, `responder_sync`, `mapper`, `mapper_sync`, `around` | Clarify | Sealed methodless capability with explicit semantic roles; sync denotes immediate completion, not infallibility; no around_sync contract |
+| `StatefulCallback`; `with_state` | Clarify | Opaque adapter composition creates invocation-local state exactly once after claim, not shared listener state |
+| `ListenerOptions`; `prepend`, `global`, `once`, `is_prepend`, `is_global`, `is_once`; `Default` | Clarify | Consuming selection/order/claim policy and read-only facts; default append/scoped/repeatable, once means claim rather than success |
+| `Context::on`, `on_with`; `ListenerRegistration::remove` | Clarify | Register/control one exact occurrence; consuming remove and inert Drop do not revoke claimed invocation |
+| `ListenerRegistrationId` | Retain | Opaque correlation identity, with no lookup/removal authority |
+| `Next`; `call` | Clarify | Consuming remaining waterfall chain once, not arbitrary redispatch |
+| `Context::emit`, `emit_parallel`, `query`, `waterfall`, `waterfall_query` | Clarify | Four completion-aware primitives and one derived query tail; no detached completion after pending-future cancellation |
+| `QueryOutcome`; `Miss`, `Answer` | Retain | Explicit absence/presence; false, zero and empty values are answers |
+| `ListenerRole`; `Observer`, `Responder`, `Mapper`, `Around` | Retain | Callback semantic roles, shared by error/observation correlation |
+| `EventOperation`; `Emit`, `EmitParallel`, `Query`, `Waterfall` | Retain | Exactly four primitives; waterfall_query narrates its derived operations |
+| `DispatchOutcomeKind`; `Completed`, `Answered`, `Missed`, `Failed` | Clarify | Completed-operation narration, not guaranteed subscriber receipt or an audit journal |
+| `InvocationFailure`, `InvocationFailureKind`; `registration_id`, `kind`, `diagnostic`; `ReturnedError`, `Panic` | Retain | Normalized invocation cause/text and optional exact listener correlation; None denotes framework tail |
+| `ParallelFailures`; `failures` | Retain | Nonempty read-only failures in effective listener order, including the one-failure case |
+| `ListenerRegistrationError`; `InactiveContext`, `EventContractMismatch { event }` | Retain | Generation admission refusal versus incompatible named Event contract |
+| `DispatchError`; `EventContractMismatch { event }`, `ForeignScope`, `IncompatibleRole { operation, role }`, `Invocation`, `Parallel` | Retain | Preflight contract/routing/role failures versus correlated invocation completion failures |
+
+The inventory now includes existing canonical `event::with_state`; its public
+export and body contract already existed. No new operation, alias or rename is added.

@@ -174,3 +174,36 @@ Event/Timer future cancellation remains caller-owned; winning manual cleanup
 claim instead transfers completion to the framework. No material evidence gap,
 known deviation or production defect was found. Usage: [rules 5–6](consumer-guide.md#5-register-resources-with-their-generation-and-separate-ownership-from-attribution)
 and [worker_daemon](../examples/worker_daemon/src/main.rs).
+
+## Event dispatch and exact claims
+
+Delivery: [#205](https://github.com/dshbox/cordis-rs/issues/205).
+Contract: [Events](v3-public-interface.md#event-contracts-roles-and-dispatch),
+[errors](v3-public-interface.md#event-errors),
+[ADR 0033](adr/0033-events-are-typed-completion-aware-and-occurrence-claimed.md).
+Production: [dispatch](../crates/cordis-core/src/events/dispatch.rs),
+[adapters](../crates/cordis-core/src/events/listener.rs),
+[occurrence store](../crates/cordis-core/src/events/store.rs),
+[types/errors](../crates/cordis-core/src/events/types.rs).
+
+| Status / scenario | Discriminating evidence | Nearest rival excluded |
+| --- | --- | --- |
+| Covered: routing and preflight precede factories/claims | [event_roles.rs](../crates/cordis-core/tests/event_roles.rs): `scoped_routing_distinguishes_root_ancestor_self_sibling_descendant_and_global`, `foreign_scope_contract_and_role_preflight_run_before_factory_or_callback`, `callback_context_is_the_registration_context_and_derivations_preserve_scope`, `scope_skip_does_not_construct_state` | Foreign Scope claims, Scope means all scopes, callback receives dispatch Context, or skipped/preflight-failed work constructs state |
+| Covered: notification completion and parallel full-set claim | [event_dispatch.rs](../crates/cordis-core/tests/event_dispatch.rs): `emit_is_ordered_awaited_fail_first_and_correlates_the_failure`, `emit_parallel_claims_the_complete_set_before_any_callback_can_remove_it`, `emit_parallel_starts_all_awaits_all_and_reports_failures_in_listener_order`, `emit_parallel_uses_parallel_even_for_one_failure` | Detached emit, incremental parallel claims, early return on first failure, completion-order reporting or single-error shape switch |
+| Covered: query presence and failure correlation | event_dispatch.rs: `query_is_sequential_first_answer_fail_fast_and_owned_through_remove`, `query_fails_fast_with_exact_correlation`, `query_preserves_false_zero_empty_text_and_empty_collection_answers`, `returned_errors_future_panics_and_state_factory_panics_are_normalized_with_correlation` | Falsey answer treated as Miss, continued invocation after answer/error, removal revokes claim or panic loses identity |
+| Covered: owned waterfall and derived query | [event_waterfall.rs](../crates/cordis-core/tests/event_waterfall.rs): `waterfall_is_an_owned_outer_to_inner_onion_and_veto_skips_tail`, `waterfall_transports_move_only_args_without_clone`, `waterfall_contains_tail_panic_and_outer_around_can_recover_downstream_failure`, `waterfall_query_uses_same_routing_and_resolver_sees_answer_miss_and_failure` | Wrong onion/order, universal Clone, mandatory tail runs after veto, tail panic escapes or derived query changes routing/result |
+| Covered: once and exact removal/cancellation | [event_occurrences.rs](../crates/cordis-core/tests/event_occurrences.rs): `duplicate_occurrences_are_independent_and_registration_drop_is_inert`, `remove_before_snapshot_claim_skips_but_claim_before_remove_finishes_owned_work`, `cancelling_dispatch_before_once_claim_leaves_the_occurrence_registered`, `cancelling_dispatch_after_once_claim_does_not_restore_the_occurrence`, `registration_racing_generation_close_never_strands_an_occurrence` | Drop unregisters, duplicates collapse, remove revokes claimed work, once restores after cancellation or generation race strands ownership |
+| Covered: completed invocation destructor containment | event_occurrences.rs: `parallel_once_listener_capture_destruction_does_not_skip_claimed_sibling`, `once_around_capture_destruction_is_correlated_invocation_failure`, `callback_drop_panic_discards_an_answer_even_if_its_drop_also_panics` | Last capture Drop panic skips claimed siblings, loses correlation or returns an answer despite destructor failure |
+| Covered: early exits preserve primary result and completion | [event_early_return.rs](../crates/cordis-core/tests/event_early_return.rs): `emit_failure_survives_unclaimed_removed_listener_drop_and_reports_completion`, `query_answer_survives_unclaimed_removed_listener_drop_and_reports_completion`, `waterfall_skipped_mapper_drop_preserves_tail_result_and_completion` | Unclaimed snapshot Drop replaces error/answer/tail or suppresses DispatchCompleted |
+| Covered: unused tail and each uncalled snapshot are contained | event_waterfall.rs: `mapper_failure_survives_uncalled_tail_destructor_and_publishes_completion`, `preflight_failure_survives_unused_tail_destructor_and_publishes_completion`; [event_waterfall_uncalled_chain.rs](../crates/cordis-core/tests/event_waterfall_uncalled_chain.rs): `mapper_error_contains_each_uncalled_listener_destructor` | Unused continuation Drop replaces primary error, containment covers only one capture, or completion narration is lost |
+
+These destructor regressions are reachable through ordinary public dispatch,
+removal and observation APIs; the recent #196 fix is already in the production
+baseline. Known documentation deviation resolved: the specialist inventory
+omitted exported `event::with_state` although its body contract described it.
+Accepted boundary: operation futures remain caller-owned. Pending-callback
+cancellation does not promise detached completion; completed-invocation Drop
+containment does not extend to every cancellation, unclaimed-removal or
+Around-owned Next destruction. No remaining material evidence gap or supported
+production defect was found. Usage: [rule 7](consumer-guide.md#7-select-an-event-role-and-routing-then-await-the-intended-completion),
+[gateway](../examples/gateway/src/main.rs), [chat_capstone](../examples/chat_capstone/src/main.rs).
