@@ -240,3 +240,35 @@ used retired internal Event narration and historical exclusive-consumer descript
 it now describes the current six sources. No material evidence gap or production
 defect was identified. Usage: [rule 8](consumer-guide.md#8-observe-committed-facts-and-install-explicit-logger-exporters)
 and [logging_exporters](../examples/logging_exporters/src/main.rs).
+
+## Loader plan execution and handoff
+
+Delivery: [#207](https://github.com/dshbox/cordis-rs/issues/207).
+Contract: [plan/source](v3-public-interface.md#loader-plan-and-source-schema),
+[resolver/outcomes](v3-public-interface.md#loader-resolver-execution-and-outcomes),
+[ADR 0036](adr/0036-module-and-crate-seams-are-semantic.md),
+[sibling policy](compatibility-policy.md).
+Production: [plan/execution](../crates/cordis-loader/src/plan.rs),
+[resolver boundary](../crates/cordis-loader/src/resolver.rs),
+[outcomes](../crates/cordis-loader/src/outcome.rs),
+[handoff owner](../crates/cordis-loader/src/handoff.rs).
+
+| Status / scenario | Discriminating evidence | Nearest rival excluded |
+| --- | --- | --- |
+| Covered: atomic construction, lineage and wire form | [plan.rs](../crates/cordis-loader/tests/plan.rs): `builder_accepts_only_already_admitted_same_lineage_parents_and_freezes_ids`, `failed_add_is_atomic_and_its_id_is_not_an_admitted_parent`, `validation_rejects_missing_identity_and_duplicate_axes_but_keeps_axes_orthogonal`, `source_schema_has_explicit_stable_wire_forms_and_required_plugin_config` | Failed add admits a parent, finish renumbers, foreign IDs join lineage, axes conflict or missing config silently defaults |
+| Covered: resolver adaptation before admission and normalization boundary | [resolver.rs](../crates/cordis-loader/tests/resolver.rs): `plugin_json_prepares_then_seals_synchronously`, `json_helpers_distinguish_deserialization_from_typed_preparation_without_panics`, `direct_json_helper_panics_remain_ordinary_pre_lifecycle_unwinds`; [resolver unit tests](../crates/cordis-loader/src/resolver.rs): `returned_error_normalizes_once_to_opaque_resolver_failure`, `resolver_panic_normalizes_once_without_crossing_lifecycle`, `configured_service_prepare_error_normalizes_before_any_admission`, `helper_panic_inside_resolver_normalizes_at_the_resolver_boundary` | Raw JSON enters lifecycle, helper erases typed errors/contains direct panic, resolver panic escapes, normalization repeats or adaptation failure admits residency |
+| Covered: execution-local exact realms and repeated plan correlation | [realm_policy.rs](../crates/cordis-loader/tests/realm_policy.rs): `realm_policy_is_execution_local_service_exact_and_independent_of_structure`, `shared_placement_collision_fails_only_that_row_and_later_rows_continue`, `cloned_plan_reuse_preserves_entry_correlation_but_refreshes_runtime_identity` | Shared labels rendezvous across executions, structure changes placement, collision globally aborts, cloned plan loses EntryId or reuses Fiber/realm/publication identity |
+| Covered: complete partial outcomes and disabled pruning | [outcome.rs](../crates/cordis-loader/tests/outcome.rs): `outcomes_are_complete_depth_first_and_pruning_names_the_disabling_plugin`, `independent_failures_do_not_prune_descendants_or_stop_later_reachable_entries`, `duplicate_resolve_keys_remain_distinct_occurrences_by_entry_order_and_fiber_handle`, `inactive_context_reports_each_reachable_plugin_and_leaves_no_runtime_residue`, `resolver_can_reenter_runtime_observation_before_lifecycle_admission` | Missing/reordered rows, ordinary failure prunes, duplicate keys collapse, inactive execution leaves residue or resolver runs under a lifecycle lock |
+| Covered: rollback belongs to undelivered handoff, not ordinary row failure | [handoff.rs](../crates/cordis-loader/tests/handoff.rs): `abandonment_rolls_back_reverse_success_order_attempt_all_across_cleanup_failure_and_panic`, `abandonment_continues_after_last_input_drop_panics_between_members`, `ordinary_entry_failure_keeps_prior_success_caller_owned_and_load_remains_partial`, `delivered_outcome_drop_is_inert_and_caller_retains_fiber_handle_ownership`, `abandoned_handoff_survives_runtime_shutdown` | Abandonment strands success, first cleanup/Drop failure stops rollback, ordinary row failure rolls everything back, delivered outcome Drop disposes or origin loss cancels owner |
+| Covered: no mutable topology, async resolver or key lookup API | [plan UI](../crates/cordis-loader/tests/plan_ui.rs): pass `ui-plan/pass/canonical_surface.rs`; fail `ui-plan/fail/load_plan_mutation.rs`, `load_plan_navigation.rs`, `entry_id_constructor.rs`; [resolver UI](../crates/cordis-loader/tests/resolver_ui.rs): fail `ui-resolver/fail/async_resolver.rs`, `request_representation.rs`, `resolver_failure_is_opaque.rs`; [outcome UI](../crates/cordis-loader/tests/outcome_ui.rs): fail `ui-outcome/fail/by_resolve_key.rs`, `old_split_vectors.rs` | Unapproved tree mutation/navigation, public identity construction, async adaptation, raw request/error internals or resolve-key index are usable |
+
+Resolver unit tests exercise the production normalization boundary with private
+invocation helpers; public Loader execution verifies admission and partial results.
+The feature-unification consumer probes in the creation path establish actual
+sibling reachability and facade exclusion. [ADR 0040](adr/0040-published-sibling-seams-are-compatibility-obligations.md)
+keeps published-sibling compile obligations separate from unsupported downstream
+use. Accepted boundaries: partial load, synchronous resolver, structural sequencing
+without Fiber ownership, repeatable keys, correlation-only EntryId, is_ok not
+universal Active, and inert post-delivery Drop. No material evidence gap, known
+deviation or production defect was found. Usage: [rule 9](consumer-guide.md#9-freeze-a-loader-plan-inspect-every-outcome-and-retain-delivered-handles)
+and [gateway](../examples/gateway/src/main.rs).

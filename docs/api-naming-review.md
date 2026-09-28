@@ -180,3 +180,31 @@ Delivery: [#206](https://github.com/dshbox/cordis-rs/issues/206).
 
 The observation and Logger names remain accurate with these boundaries. No new
 public spelling, observation Event or collection API is justified.
+
+## Loader plan, adaptation and handoff
+
+Delivery: [#207](https://github.com/dshbox/cordis-rs/issues/207).
+[Evidence](api-freeze-evidence.md#loader-plan-execution-and-handoff) and
+[usage](consumer-guide.md#9-freeze-a-loader-plan-inspect-every-outcome-and-retain-delivered-handles).
+
+| Names / members | Conclusion | Semantic assessment |
+| --- | --- | --- |
+| `cordis_loader::{plan, resolver, outcome}`; root conveniences `LoadPlanBuilder`, `LoadPlan`, `EntryId`, `PluginEntry`, `EntryGroup`, `PluginResolver`, `LoadOutcome` | Retain | Canonical semantic leaf modules and curated root paths; application facade does not re-export the leaf |
+| `LoadPlanBuilder`; `new`, `add_plugin`, `add_group`, `finish` | Clarify | Failure-atomic source admission followed by immutable freeze, not a live Fiber tree or patchable Runtime |
+| `LoadPlan`; `load` | Clarify | Reusable frozen sequencing plan, executing partial outcomes with separate final handoff ownership |
+| `EntryId` | Clarify | Opaque plan-lineage correlation, not numeric index, path, resolve key or Fiber control |
+| `PluginEntry`; `key`, `name`, `config`, `disabled`, `inject`, `isolate` | Clarify | Mutable serialized source; key/name choose repeatable resolve metadata, config is required, disable prunes descendants, inject and placement are independent |
+| `EntryGroup`; `name` | Clarify | Structural sequencing source syntax; name is not retained as frozen-plan/outcome identity |
+| `InjectEntry`; `Required`, `Configured { service, config }` | Retain | Source dependency declarations, with optional target-specific typed configuration preparation |
+| `IsolateEntry`; `service`, `policy`; `RealmPolicy::{Private, Shared { label }}` | Clarify | Execution-local source placement policy; labels never become core identity or cross-execution rendezvous |
+| `PlanError`; `ForeignParent { parent }`, `MissingResolveIdentity { entry }`, `DuplicateInjectService { entry, service }`, `DuplicateIsolateService { entry, service }` | Retain | Failure-atomic parent/identity/axis validation with exact rejected-source correlation |
+| `PluginResolver`; `Error`, `resolve` | Clarify | Externally implementable synchronous typed adaptation before admission; closure blanket implementation has the same meaning |
+| `PluginRequest`; `resolve_key`, `config`, `inject` | Clarify | Borrowed source adaptation inputs; no entry identity, Runtime, placement or topology authority |
+| `prepare_plugin_json`, `prepare_service_json`; `JsonPrepareError::prepare_error` | Clarify | Deserialize then typed preparation; helper preserves concrete preparation failure, resolver alone normalizes later; Error::source does not expose arbitrary non-static preparation errors |
+| `ResolverFailure`, `ResolverFailureKind`; `kind`, `diagnostic`; `ReturnedError`, `Panic` | Retain | Once-normalized opaque resolver cause/text, not original error/downcast identity |
+| `LoaderFailure`; `UnresolvedKey { key }`, `Resolver`, `Spawn` | Retain | Unknown valid key, normalized adaptation failure or intact core creation failure for one outcome |
+| `EntryOutcome`; `Group { id }`, `Disabled { id }`, `Pruned { id, disabled_ancestor }`, `Spawned { id, resolve_key, fiber_handle }`, `Failed { id, resolve_key, failure }`; `id` | Clarify | One complete ordered result per source entry; pruning is disable-driven, row failure does not abort descendants |
+| `LoadOutcome`; `entries`, `entry`, `fiber_handles`, `is_ok` | Clarify | Delivered partial results and caller-owned controls; is_ok means no Failed entry, not universal Active; Drop is inert |
+
+No tree, async resolver, key-index alias or public rename is needed. Published
+sibling compatibility remains distinct from unsupported downstream __internal use.

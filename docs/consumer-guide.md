@@ -216,3 +216,36 @@ Run `cargo run --locked -p logging_exporters`; its
 [source](../examples/logging_exporters/src/main.rs) checks filtering, bounded
 buffering, exact removal, record accessors, snapshot correlation and source success
 despite a failing observer. It does not demonstrate a reliable observation journal.
+
+## 9. Freeze a Loader plan, inspect every outcome and retain delivered handles
+
+Build with `LoadPlanBuilder`, using only already-admitted same-lineage parent
+EntryIds, then `finish`. Structural parents order execution; they do not own
+Fibers. Config is required in the JSON source schema (unit is null). Resolve keys
+prefer key over name and may repeat. Correlate by EntryId, which survives plan
+clones/reuse; each execution creates fresh lifecycle and realm occurrences.
+Private/Shared source policy allocates opaque Runtime-local Service realms;
+text labels never rendezvous across executions or enter core.
+
+A synchronous `PluginResolver` recognizes a request, prepares typed Plugin and
+configured-Service inputs and returns sealed PreparedPlugin, None for unknown
+key, or a typed error. Direct JSON helpers retain preparation errors and allow
+ordinary pre-lifecycle panic unwind; the Loader resolver boundary normalizes
+returned errors and panics once. Resolver requests have no Context or placement
+control. Loader then performs the complete core spawn.
+
+Inspect all ordered entries: disabled entries prune descendants, ordinary failure
+does not. Load is partial; `is_ok` means no Failed entry, not all Fibers Active.
+Use `fiber_handles` to retain delivered controls in your application roster.
+Before final handoff, abandonment causes reverse-success-order attempt-all
+framework rollback; ordinary row failure keeps earlier successes caller-owned.
+After delivery, dropping LoadOutcome is inert. Teardown remains explicit.
+
+Authority: [plan/source](v3-public-interface.md#loader-plan-and-source-schema),
+[resolver/outcomes](v3-public-interface.md#loader-resolver-execution-and-outcomes),
+[ADR 0036](adr/0036-module-and-crate-seams-are-semantic.md),
+[application teardown](application-teardown.md).
+Run `cargo run --locked -p gateway`; its
+[source](../examples/gateway/src/main.rs) boots a frozen plan from
+the embedded `GATEWAY_JSON`, adapts typed inputs and reports deliberate
+failed rows alongside successful handles before explicit teardown.
