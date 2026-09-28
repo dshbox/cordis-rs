@@ -19,8 +19,14 @@ historical material.
 | [CONTEXT.md](../CONTEXT.md) | Canonical domain and protocol vocabulary | Normative glossary |
 | This document | Present-tense target composition, invariants, internal interactions, concurrency, and seams | Normative architecture |
 | [docs/v3-public-interface.md](v3-public-interface.md) | The exhaustive approved public surface and every caller-visible contract | Normative interface inventory |
-| ADRs 0028–0038 (see the [decision index](#decision-index)) | The eleven independent hard-to-reverse rules and their complete rationale | Normative decisions |
+| ADRs 0028–0039 (see the [decision index](#decision-index)) | The twelve independent hard-to-reverse rules and their complete rationale | Normative decisions |
 | [docs/v3-upstream-parity-ledger.md](v3-upstream-parity-ledger.md) | The relationship of every pinned-upstream fact to its v3 disposition, with direct evidence | Normative parity record |
+
+The separate [compatibility policy](compatibility-policy.md) owns release and
+package compatibility promises, including the published-sibling obligation in
+[ADR 0040](adr/0040-published-sibling-seams-are-compatibility-obligations.md).
+That policy does not add a thirteenth architecture decision or another home for
+the public declarations.
 
 [docs/v3-migration.md](v3-migration.md) is **optional and
 non-normative**: it records compatibility impact, historical

@@ -1,8 +1,14 @@
 # ADR index and historical labels
 
-The public, normative Cordis v3 ADR set is **0028 through 0039**. Read it
+The normative Cordis v3 architecture ADR set is **0028 through 0039**. Read it
 through [`docs/v3-architecture.md`](../v3-architecture.md#decision-index),
 which is the architecture entry point and owns the current decision index.
+
+[ADR 0040](0040-published-sibling-seams-are-compatibility-obligations.md) is an
+accepted package-compatibility decision under the separate
+[compatibility policy](../compatibility-policy.md). It distinguishes unsupported
+downstream internals from the obligation to keep already-published sibling
+crates compatible; it does not extend the architecture decision index.
 
 Source comments may also mention **ADR 0001 through ADR 0027**. Those numbers
 are historical provenance labels from the pre-promotion v3 research repository;
