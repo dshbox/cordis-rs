@@ -190,3 +190,29 @@ Run `cargo run --locked -p gateway` for
 [roles, registration Context and invocation-local state](../examples/chat_capstone/src/main.rs).
 The [evidence](api-freeze-evidence.md#event-dispatch-and-exact-claims) covers
 cancellation, failure correlation and destructor boundaries separately.
+
+## 8. Observe committed facts and install explicit Logger exporters
+
+Use `observe_runtime` with an Observer adapter for best-effort postcommit
+Runtime records. Delivery is detached, parallel and attempt-all; observer failure
+or a missing executor cannot veto the source operation. Ownership and callback
+Context come from the registering generation. Recover current facts with
+`runtime_snapshot` after a delivery gap. Its records are individually consistent;
+the combined collections are neither a globally linearizable instant nor ordered
+or referentially closed. Correlation IDs grant no control, replay or audit history.
+
+Use a named `Logger` channel and explicitly install exporters. Filtering uses
+`min_level(channel).unwrap_or(default_level())`; None means fallback, not disabled.
+Panic-contained exporter attempts run outside locks. Exact removal affects future
+snapshots but cannot revoke an in-flight one; registration Drop is inert.
+`LogRecord::sequence` orders Runtime-local assignment, not callback receipt or
+persistence. `BufferExporter` is an opt-in bounded adapter in receipt order,
+with nonzero-capacity construction, snapshot and clear.
+
+Authority: [observation](v3-public-interface.md#runtime-snapshots-and-observations),
+[Logger](v3-public-interface.md#logger),
+[ADR 0035](adr/0035-runtime-observation-follows-protocol-truth.md).
+Run `cargo run --locked -p logging_exporters`; its
+[source](../examples/logging_exporters/src/main.rs) checks filtering, bounded
+buffering, exact removal, record accessors, snapshot correlation and source success
+despite a failing observer. It does not demonstrate a reliable observation journal.

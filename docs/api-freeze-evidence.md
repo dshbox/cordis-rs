@@ -207,3 +207,36 @@ containment does not extend to every cancellation, unclaimed-removal or
 Around-owned Next destruction. No remaining material evidence gap or supported
 production defect was found. Usage: [rule 7](consumer-guide.md#7-select-an-event-role-and-routing-then-await-the-intended-completion),
 [gateway](../examples/gateway/src/main.rs), [chat_capstone](../examples/chat_capstone/src/main.rs).
+
+## Runtime observations and Logger
+
+Delivery: [#206](https://github.com/dshbox/cordis-rs/issues/206).
+Contract: [observations/snapshots](v3-public-interface.md#runtime-snapshots-and-observations),
+[Logger](v3-public-interface.md#logger),
+[ADR 0035](adr/0035-runtime-observation-follows-protocol-truth.md).
+Production: [observation hub/records](../crates/cordis-core/src/observation.rs),
+[snapshot selection](../crates/cordis-core/src/context.rs),
+[Logger/exporters](../crates/cordis-core/src/logger.rs).
+
+| Status / scenario | Discriminating evidence | Nearest rival excluded |
+| --- | --- | --- |
+| Covered: detached parallel attempt-all and generation ownership | [runtime_observation_delivery.rs](../crates/cordis-core/tests/runtime_observation_delivery.rs): `blocked_observers_run_in_parallel_without_delaying_source_and_keep_attribution`, `failing_and_panicking_observers_do_not_veto_and_later_observers_are_attempted`, `missing_executor_drops_delivery_without_changing_listener_truth`, `registering_generation_close_stops_future_delivery` | Source waits/vetoes, one observer blocks later attempts, missing executor alters listener truth or closed generation receives future delivery |
+| Covered with private record capture: five committed families and outcome vocabulary | [observation unit tests](../crates/cordis-core/src/observation.rs): `loading_install_is_not_visibility_but_active_and_unlink_are_committed_records`, `exact_listener_and_primitive_completion_use_semantic_vocabulary`, `restart_preserves_residency_while_era_swap_replaces_it_and_manual_withdraw_is_exact`, `all_primitive_operations_report_semantic_outcomes` | Loading occupation narrated as visible, listener/primitive facts conflated, restart changes residency or outcome vocabulary follows representation |
+| Covered: current snapshot selection and delivery-gap recovery | [runtime_snapshot.rs](../crates/cordis-core/tests/runtime_snapshot.rs): `empty_runtime_snapshot_is_exactly_the_permanent_root`, `snapshot_is_flat_current_residency_with_per_record_semantics`, `loading_publication_is_current_but_invisible_then_becomes_visible`, `closed_generation_physical_service_row_is_not_current_snapshot_state`, `later_snapshot_recovers_current_state_after_an_unobserved_gap_only`; observation unit: `disposed_record_remains_visible_until_exact_residency_unlink` | Snapshot omits root/resident Disposed rows, exposes stale closed rows, conflates occupied/visible or recovers replay history rather than current state |
+| Covered: severity, channel fallback and foundation availability | [logger.rs](../crates/cordis-core/tests/logger.rs): `level_order_is_semantic_low_to_high_severity`, `min_level_routes_per_channel_name`, `log_record_accessors_are_semantic`, `logging_does_not_create_service_visibility_or_missing_edges`, `logger_remains_foundation_available_across_generation_phases` | Numeric/storage ordering drives severity, None disables, fields expose mutable storage or Logger becomes a Service prerequisite |
+| Covered: isolated reentrancy/panic and exact removal | logger.rs: `reentrant_exporter_does_not_recurse_and_later_exporter_is_attempted`, `reentrant_filter_does_not_recurse_through_logging`, `panicking_exporter_does_not_block_later_occurrence`, `exporter_registration_removes_one_exact_duplicate_occurrence`, `remove_after_snapshot_affects_only_future_records`, `exporter_removal_drops_the_exporter_outside_the_list_lock` | Recursive logging/deadlock, failure stops siblings, duplicates collapse, removal revokes retained snapshot or Drop holds list lock |
+| Covered: assignment versus receipt and explicit buffer | logger.rs: `sequence_numbers_are_monotonic`, `buffer_retains_exporter_receipt_order_not_sequence_order`, `no_default_buffer_exporter_pre_registration_logs_are_dropped`, `buffer_exporter_rejects_zero_capacity`, `buffer_exporter_keeps_last_records`, `buffer_exporter_clear_empties_the_ring` | Sequence dictates concurrent receipt order, hidden default retention, zero-capacity acceptance or unbounded/wrong eviction |
+
+Private record capture verifies production commit narration without treating its
+test-only storage as a replay journal. Source review also checks that observation
+registration/delivery directly uses an Observer callback rather than registering
+or dispatching an observation Event: its own bookkeeping/delivery adds no recursive
+Event narration. This does not suppress ordinary application operations explicitly
+performed by an observer. Accepted boundaries: delivery gaps, no replay or global
+order; snapshots are not globally linearizable or referentially closed; IDs grant
+no control; Logger assignment sequence differs from exporter receipt order.
+Known documentation deviation resolved: [example navigation](../examples/README.md)
+used retired internal Event narration and historical exclusive-consumer descriptions;
+it now describes the current six sources. No material evidence gap or production
+defect was identified. Usage: [rule 8](consumer-guide.md#8-observe-committed-facts-and-install-explicit-logger-exporters)
+and [logging_exporters](../examples/logging_exporters/src/main.rs).

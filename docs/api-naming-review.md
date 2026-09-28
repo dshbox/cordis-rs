@@ -150,3 +150,33 @@ Delivery: [#205](https://github.com/dshbox/cordis-rs/issues/205).
 
 The inventory now includes existing canonical `event::with_state`; its public
 export and body contract already existed. No new operation, alias or rename is added.
+
+## Runtime observations, snapshots and Logger
+
+Delivery: [#206](https://github.com/dshbox/cordis-rs/issues/206).
+[Evidence](api-freeze-evidence.md#runtime-observations-and-logger) and
+[usage](consumer-guide.md#8-observe-committed-facts-and-install-explicit-logger-exporters).
+
+| Names / members | Conclusion | Semantic assessment |
+| --- | --- | --- |
+| `Context::observe_runtime`; `RuntimeObserver` | Clarify | Sealed Observer capability for detached postcommit subscription; not an Event, replay channel or source-operation completion dependency |
+| `Context::runtime_snapshot`; `RuntimeSnapshot::fibers`, `services` | Clarify | Flat current records, without globally atomic cross-collection or semantic ordering promises |
+| `FiberSnapshot`; `id`, `role`, `name`, `state`, `missing_services` | Retain | Read-only correlation, root/ordinary role, diagnostic name, lifecycle publication and missing prerequisite projection |
+| `ServiceSnapshot`; `id`, `service`, `realm`, `provider`, `visible` | Clarify | Read-only current occupied occurrence, exact slot/provider correlation and visibility; occupied Loading is not visible |
+| `FiberRole`; `Root`, `Ordinary` | Retain | Permanent root versus ordinary Fiber; no representation or tree topology implied |
+| `ServicePublicationId`, `ScopeId` | Retain | Opaque Runtime-local correlation only, with no occurrence mutation or Scope routing capability |
+| `ObservationRouting`; `Unscoped`, `Scoped` | Clarify | Reports eligibility correlation; its ScopeId does not grant a Scope |
+| `ResidencyChange::{Admitted, Removed}`; `ListenerChange::{Registered, Unregistered}` | Retain | Postcommit exact residency/listener occurrence facts |
+| `RuntimeObservation::FiberResidency { change, fiber }`, `FiberState { fiber, previous, current }` | Retain | Admitted/removed residency and state transitions, distinct from handle ownership |
+| `RuntimeObservation::ServiceVisibility { service, realm, previous, current }` | Retain | Exact slot visibility occurrence transition, not same-occurrence payload mutation |
+| `RuntimeObservation::ListenerRegistration { change, listener, event, role, scope, options }` | Retain | Exact listener correlation and semantic registration metadata, not storage/claim controls |
+| `RuntimeObservation::DispatchCompleted { operation, event, routing, outcome }` | Clarify | Completed primitive narration; best-effort delivery does not establish audit or callback receipt order |
+| `Context::logger`; `Logger::with_name`, `name`, `log`, `debug`, `info`, `warn`, `error` | Clarify | Named Runtime foundation channel; not a Service or durable journal |
+| `Level`; associated constants `Debug`, `Info`, `Warn`, `Error`; `as_str` | Retain | Opaque semantic severity with low-to-high order and wire names, no numeric enum contract |
+| `LogRecord`; `sequence`, `timestamp`, `channel`, `level`, `text` | Clarify | Immutable assignment sequence, wall-clock timestamp and semantic fields; sequence is not receipt order or persistent identity |
+| `Exporter`; `export`, `min_level`, `default_level` | Clarify | Record callback and channel threshold/default; None means no override, not disable |
+| `Context::add_exporter`; `ExporterRegistration::remove` | Clarify | Exact generation-owned occurrence with inert Drop; consuming removal does not revoke retained in-flight snapshots |
+| `BufferExporter`; `new`, `snapshot`, `clear`; `BufferSizeZero` | Retain | Explicit bounded nonzero-capacity receipt-order adapter, not automatically installed |
+
+The observation and Logger names remain accurate with these boundaries. No new
+public spelling, observation Event or collection API is justified.
