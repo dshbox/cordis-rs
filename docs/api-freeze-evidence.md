@@ -138,3 +138,39 @@ mutation is not publicly expressible. These bounded tests do not prove every
 schedule. No material evidence gap, deviation or defect was found.
 Usage: [rule 4](consumer-guide.md#4-choose-same-fiber-control-or-replace-the-era-then-retain-the-right-handle)
 and [chat_capstone](../examples/chat_capstone/src/main.rs).
+
+## Generation ownership and consumer teardown
+
+Delivery: [#204](https://github.com/dshbox/cordis-rs/issues/204).
+Contract: [effects/tasks](v3-public-interface.md#effects-and-tasks),
+[lifecycle/removal](v3-public-interface.md#fiber-identity-lifecycle-and-typed-group-removal),
+[application teardown](application-teardown.md), ADRs
+[0028](adr/0028-fiber-generations-own-cleanup-runtime-owns-residency.md) and
+[0029](adr/0029-lifecycle-commits-complete-and-critical-sections-are-closed.md).
+Production: [effects/completion](../crates/cordis-core/src/effect.rs),
+[Fiber drain/tasks](../crates/cordis-core/src/fiber/mod.rs),
+[attribution](../crates/cordis-core/src/fiber/settle_ctx.rs),
+[Registry](../crates/cordis-core/src/registry.rs),
+[Roster](../examples/common/src/lib.rs).
+
+| Status / scenario | Discriminating evidence | Nearest rival excluded |
+| --- | --- | --- |
+| Covered: all retained core families share admission/ownership law | [generation_ownership.rs](../crates/cordis-core/tests/generation_ownership.rs): `loading_active_and_permanent_root_admit_and_own_their_core_resources`, `pending_failed_closing_and_disposed_refuse_every_core_retained_family`, `every_core_family_publish_versus_close_has_only_refusal_or_owned_commit`, `cross_fiber_use_does_not_transfer_owner_restart_replaces_and_spawn_is_not_parenthood` | Service, ordinary/update listeners, observers, exporters, effects or run tasks bypass the generation gate; published-but-unowned residue; use transfers ownership; origin disposal cascades |
+| Covered: exact manual claim and cancellation boundary | [effects.rs](../crates/cordis-core/tests/effects.rs): `winning_dispose_completes_after_caller_cancellation`, `dispose_cancelled_before_the_claim_changes_nothing`, `winning_disarm_beats_an_in_flight_drain`, `stale_control_reports_false_after_the_drain_won`, `dispose_reports_returned_error_and_consumes_the_occurrence`, `dispose_reports_panic_and_consumes_the_occurrence` | Preclaim cancellation consumes cleanup, postclaim cancellation strands it, double execution, or failure restores an occurrence |
+| Covered: sequential reverse-order attempt-all and task join | effects.rs: `effect_sync_holds_lifo_position_against_async_effects`, `cross_resource_cleanup_holds_reverse_commit_positions`, `failing_and_panicking_cleanups_do_not_block_the_drain`, `run_drain_joins_after_the_tasks_own_effects_lifo`, `run_drain_join_contains_a_panicking_task`, `run_task_polling_and_output_destruction_stay_outside_framework_locks` | Sync bypasses LIFO, cleanup runs concurrently/stops on failure, drain skips task join or user polling/Drop holds framework locks |
+| Covered: exact attribution transfer/refusal/expiry | [settle_guard.rs](../crates/cordis-core/tests/settle_guard.rs): `attributed_spawn_from_apply_refuses_every_lifecycle_self_wait`, `manual_dispose_from_apply_keeps_settle_attribution_across_cleanup_task`, `external_manual_dispose_does_not_invent_settle_attribution`; [private settle_ctx tests](../crates/cordis-core/src/fiber/settle_ctx.rs): `transferred_attribution_expires_with_its_source_scope`, `scopes_start_clean_and_raw_tokio_spawn_does_not_inherit_attribution` | Attributed task self-wait deadlocks, detached cleanup loses live frame, external cleanup gains false refusal, expired frames remain active or raw Tokio spawn inherits attribution |
+| Covered: origin executor loss and task refusal | effects.rs: `async_cleanup_timer_outlives_origin_runtime_shutdown`, `run_off_the_runtime_refuses_and_starts_nothing`, `run_on_a_disposed_fiber_refuses_and_starts_nothing`; [lifecycle_barriers.rs](../crates/cordis-core/tests/lifecycle_barriers.rs): `committed_dispose_survives_origin_runtime_shutdown`, `dropping_context_handles_never_runs_root_cleanup_and_surviving_runtime_keeps_it_claimable` | Committed cleanup binds to lost origin executor; refused run starts work; Context Drop silently drains root |
+| Covered: residency and no parent cascade | [residency.rs](../crates/cordis-core/tests/residency.rs): `admitted_child_outlives_disposed_spawn_origin`, `admission_first_child_finishes_after_its_origin_is_disposed`, `dropping_every_fiber_handle_does_not_end_a_resident_fiber` | Origin owns spawned Fiber, origin disposal aborts admitted child creation, or handle Drop unlinks residency |
+| Covered: typed removal freezes one allocation | [registry_removal.rs](../crates/cordis-core/tests/registry_removal.rs): `typed_removal_freezes_the_detached_allocation_and_repeated_absence_succeeds`, `cancelling_typed_removal_before_detach_leaves_the_allocation_live`, `detach_commits_removal_and_caller_cancellation_cannot_stop_the_frozen_drain`, `cleanup_failure_and_panic_do_not_stop_other_frozen_members`, `self_wait_recursion_is_refused_before_typed_group_detach`, `committed_removal_survives_runtime_shutdown` | Removal absorbs later allocation, changes state before detach, loses members on cancellation/failure, or recursion detaches before refusal |
+| Covered: explicit consumer policy | [boot.rs](../examples/common/tests/boot.rs): `teardown_disposes_in_reverse_spawn_order_attempt_all`, `teardown_attempts_later_handles_after_one_dispose_refusal`, `teardown_is_idempotent_across_repeat_calls`, `roster_push_returns_the_same_handle_it_records`, `roster_holds_spawn_order_across_a_mid_flow_report` | First refusal stops unrelated cleanup, delivered control is replaced, or report/repeated teardown reorders/repeats disposal |
+
+Private attribution tests directly exercise the production frame protocol;
+public self-wait tests cover reachable apply/manual-cleanup task boundaries.
+Timer admission is assessed in its leaf path. Accepted boundaries: no Runtime
+shutdown, parent cascade, Registry inter-Fiber order or process-exit drain.
+Framework completion cannot extend an earlier captured external IO/timer driver's
+lifetime. `spawn_attributed` grants attribution, not cleanup ownership. Ordinary
+Event/Timer future cancellation remains caller-owned; winning manual cleanup
+claim instead transfers completion to the framework. No material evidence gap,
+known deviation or production defect was found. Usage: [rules 5–6](consumer-guide.md#5-register-resources-with-their-generation-and-separate-ownership-from-attribution)
+and [worker_daemon](../examples/worker_daemon/src/main.rs).

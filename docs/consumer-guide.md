@@ -110,3 +110,54 @@ Run `cargo run --locked -p chat_capstone`; its
 [source](../examples/chat_capstone/src/main.rs) asserts same-ID update, fresh-ID
 era replacement and dependent convergence, then explicitly disposes the successor.
 See [application teardown](application-teardown.md) for delivered-handle ownership.
+
+## 5. Register resources with their generation and separate ownership from attribution
+
+Register cleanup with `effect`/`effect_sync`, and generation-owned tasks with
+`run`, using the intended apply Context. Admission either refuses without residue
+or commits an owned occurrence; use from another Fiber does not transfer ownership.
+Manual `EffectRegistration::dispose` competes with drain for one exact claim and,
+after winning, completes independently of the caller. `disarm` suppresses that
+cleanup. Registration Drop is inert. Drain closes admission and executes remaining
+obligations sequentially in reverse commit order, continuing after error or panic.
+Use synchronous cleanup for short bookkeeping; move blocking work into async
+cleanup with `tokio::task::spawn_blocking`.
+
+`spawn_attributed` returns a user-owned Tokio JoinHandle and carries live settle
+attribution for recursion checks; it adds no generation cleanup or join ownership.
+Inherited attribution expires with its source settle scope. Framework-owned async
+completion survives loss of the origin executor while the process remains alive;
+it cannot extend the lifetime of an external driver captured earlier or drain at
+process exit. Root registrations require their own explicit controls.
+
+Authority: [effects and tasks](v3-public-interface.md#effects-and-tasks),
+[ADR 0028](adr/0028-fiber-generations-own-cleanup-runtime-owns-residency.md),
+[ADR 0029](adr/0029-lifecycle-commits-complete-and-critical-sections-are-closed.md).
+Run `cargo run --locked -p worker_daemon`; its
+[source](../examples/worker_daemon/src/main.rs) registers cleanup and a `run` task
+that owns interval polling. Attribution expiry and manual-claim cancellation are
+covered by the [evidence](api-freeze-evidence.md#generation-ownership-and-consumer-teardown),
+not asserted as behaviors exercised by that example.
+
+## 6. End delivered Fibers with an explicit application teardown policy
+
+Retain every delivered handle whose Fiber your application intends to end.
+Call `dispose().await` for a terminal barrier through cleanup, Disposed publication
+and exact residency unlink. Dropping Context, FiberHandle or LoadOutcome does not
+end a Fiber. Spawn origin is provenance: a child can outlive its origin, with no
+parent cascade. There is no Runtime-wide shutdown operation.
+
+Compose ordering in the application. The examples' Roster records delivered
+handles in spawn order, disposes in reverse order and attempts every handle even
+when one disposal is refused. This is a demonstrated consumer policy.
+`remove_plugins::<P>` separately selects one current typed allocation, detaches
+it atomically and drains its frozen members; later same-type spawns are outside
+that removal, absence succeeds, and no inter-Fiber disposal order is promised.
+
+Authority: [application teardown](application-teardown.md),
+[lifecycle/removal](v3-public-interface.md#fiber-identity-lifecycle-and-typed-group-removal).
+Run `cargo run --locked -p worker_daemon`; its
+[source](../examples/worker_daemon/src/main.rs) and shared
+[Roster](../examples/common/src/lib.rs) demonstrate explicit teardown.
+The [Roster tests](../examples/common/tests/boot.rs) separately verify reverse
+order, attempt-all after refusal and repeat-call idempotence.

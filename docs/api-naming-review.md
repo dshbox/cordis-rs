@@ -99,3 +99,25 @@ Delivery: [#203](https://github.com/dshbox/cordis-rs/issues/203).
 
 Accepted Input/FiberHandle spelling remains unchanged. Explanation of commit
 phase and identity continuity addresses the ambiguity without a rename ticket.
+
+## Generation resources and explicit teardown
+
+Delivery: [#204](https://github.com/dshbox/cordis-rs/issues/204).
+[Evidence](api-freeze-evidence.md#generation-ownership-and-consumer-teardown) and
+[usage](consumer-guide.md#5-register-resources-with-their-generation-and-separate-ownership-from-attribution).
+
+| Names / members | Conclusion | Semantic assessment |
+| --- | --- | --- |
+| `Context::effect`, `effect_sync` | Clarify | Register async/synchronous at-most-once generation cleanup; sync means short immediate work, not infallible work |
+| `CleanupResult`; `into_outcome` | Retain | Sealed adaptation of unit or typed Result into normalized cleanup outcome; not an extensible transport protocol |
+| `EffectRegistration`; `dispose`, `disarm` | Clarify | Exact consuming cleanup claim or suppression; inert Drop, winning dispose independently completes, false means another claim won |
+| `EffectFailure`, `EffectFailureKind`; `kind`, `diagnostic`; `ReturnedError`, `Panic` | Retain | Normalized cleanup cause and owned diagnostic; no original error type/downcast authority |
+| `EffectRegistrationError`; `InactiveContext` | Retain | Current generation refuses retained cleanup admission |
+| `Context::run` | Clarify | Registers generation-owned task abort/join cleanup; no returned user task handle |
+| `Context::spawn_attributed` | Clarify | User-owned Tokio task with transferred live recursion attribution; does not register generation cleanup |
+| `TaskRegistrationError`; `InactiveContext`, `ExecutorUnavailable` | Retain | Generation refusal versus no available executor; failure starts no task |
+| `FiberHandle::dispose` | Clarify | Awaits full terminal barrier for this Fiber; does not end spawn descendants or root registrations |
+| `Context::remove_plugins` | Clarify | Typed current-allocation removal, not diagnostic-name lookup, parent cascade or application shutdown |
+
+The names retain their established ownership and exact-claim meanings. Consumer
+ordering does not warrant a core shutdown/tree API or a new public rename.
