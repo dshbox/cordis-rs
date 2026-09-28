@@ -229,3 +229,24 @@ Delivery: [#208](https://github.com/dshbox/cordis-rs/issues/208).
 Standard Future/Stream `poll`/`poll_next`, Output/Item and associated pinning
 contracts remain owned by those traits and the Timer authority. No public reset,
 cancel, raw handle, timer Service, alias or rename is justified.
+
+## Aggregate naming disposition
+
+The eight path sections cover the supported default-feature core inventory,
+application facade and explicit Loader/Timer leaves. Integration checks all 80
+canonical core specialist names against the normative table and all public method
+spellings in the supported source families; field/variant assessments are grouped
+explicitly above. Lexical presence is a completeness backstop, not semantic proof:
+the per-path source/contract reviews supply the meaning and usage assessment.
+
+**Propose rename: none.** No concrete misleading risk survives the established
+glossary, accepted ADR constraints and the clarification above. There is therefore
+no new public rename ticket or queued deliberate break for this candidate. Existing
+Input/FiberHandle decisions are retained. A later justified proposal must become
+its own ticket with risk, one canonical alternative, migration impact and real
+dependencies; no public compatibility alias is the default migration path here.
+
+[Spec #200](https://github.com/dshbox/cordis-rs/issues/200) and the
+[freeze recommendation](api-freeze-recommendation.md) retain the final scope and
+blocker disposition. This naming review introduces no declarations or new domain
+meaning and requires no new glossary entry or ADR.

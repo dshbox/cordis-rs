@@ -4,7 +4,11 @@ This is practical, non-normative guidance for composing the supported Cordis v3
 API. The [glossary](../CONTEXT.md), [architecture](v3-architecture.md),
 [public interface](v3-public-interface.md) and accepted ADRs own the contract;
 the [compatibility policy](compatibility-policy.md) owns package promises.
-Follow those authorities if a summary here is ambiguous.
+Follow those authorities if a summary here is ambiguous. These ten rules explain
+consumer choices; they do not add stability promises. For the reviewed baseline,
+see the [conformance evidence](api-freeze-evidence.md),
+[public naming review](api-naming-review.md) and
+[freeze candidate recommendation](api-freeze-recommendation.md).
 
 ## 1. Prepare input, seal it, then spawn and retain the handle
 

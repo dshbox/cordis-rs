@@ -305,3 +305,44 @@ unwind, pinned deadlines/phase, distinct cancellation, one-shot repoll panic and
 fused post-cancellation Interval. No material evidence gap, known deviation or
 production defect was found. Usage: [rule 10](consumer-guide.md#10-check-timer-registration-then-distinguish-elapsed-from-cancellation),
 [worker_daemon](../examples/worker_daemon/src/main.rs), [gateway](../examples/gateway/src/main.rs).
+
+## Aggregate disposition and assurance limits
+
+Integration: [#209](https://github.com/dshbox/cordis-rs/issues/209) depended on the
+eight path deliveries above (#201–#208), coordinated under
+[spec #200](https://github.com/dshbox/cordis-rs/issues/200). Each path was delivered
+against its own fixed baseline, independently reviewed on Standards and Spec,
+and ran all eight local gates. The
+[recommendation](api-freeze-recommendation.md) records the candidate provenance,
+validation receipt and blocker dispositions.
+
+The supported inventory is covered by the eight paths above: core default-feature
+semantics, seven semantic modules, the curated core/application facade, and the
+explicit Loader/Timer leaves. The naming review accounts for every canonical
+specialist item, source field, operation, accessor and semantic error variant;
+standard Rust trait contracts retain their ordinary meanings. Supported features
+and separate published-sibling obligations remain owned by the compatibility
+policy. No unsupported feature-unified __internal recipe is consumer guidance.
+
+Current findings: no confirmed supported-contract production defect, material
+missing discriminator or queued deliberate public break. Evidence is insufficient
+for universal equivalence, all scheduling permutations or unbounded progress;
+the [concurrency record](lifecycle-concurrency-modeling.md) explicitly owns the
+bounded models and public-execution evidence. Optional broader exploration does
+not strengthen the contract by implication. A future actual gap or defect must
+name its authority, reachable path and nearest rival and reopen candidate review.
+
+Documentation deviations D1–D3 are resolved: architecture decision navigation
+now agrees on ADRs 0028–0039 (compatibility ADR 0040 remains separate); exported
+with_state appears in the canonical specialist inventory; examples describe
+current observation/snapshot paths. Integration also repairs current architecture
+navigation in the parity ledger and migration introduction. Historical migration
+rows, audit revisions/counts and research provenance remain evidence of their
+original review, not new open actions or proof for a different revision.
+
+Accepted boundaries remain explicit in each path: independent axes, exact slots,
+forward-only commit, inert Drop, explicit teardown, caller-owned Event/Timeout
+work, best-effort diagnostic delivery and bounded assurance. The author excluded
+[draft Wasm experiment #145](https://github.com/dshbox/cordis-rs/pull/145) from this
+supported-surface review. Performance expansion measurements remain independent
+follow-up; the existing benchmark baseline and review policy are not changed.
