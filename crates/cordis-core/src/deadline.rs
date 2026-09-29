@@ -34,12 +34,21 @@ struct Schedule {
 /// the worker recomputes its next wake from the map under the same lock before
 /// every wait, so neither an insertion nor a cancellation can be lost. Due
 /// senders are fired after the lock is released, so waking a task never runs
-/// under scheduler synchronization.
+/// under scheduler synchronization, and each wake is contained on its own: a
+/// caller's panicking `Waker` loses only that caller's wake. The worker also
+/// survives any other unexpected panic, and a lost worker is replaced at once
+/// whenever deadlines are still armed.
 pub(crate) struct DeadlineScheduler {
     schedule: Mutex<Schedule>,
     changed: Condvar,
     #[cfg(test)]
     refuse_spawn: std::sync::atomic::AtomicBool,
+    /// Test hook: the serving loop panics once outside delivery containment.
+    #[cfg(test)]
+    panic_serving_once: std::sync::atomic::AtomicBool,
+    /// Test hook: the worker thread exits once as if it had been lost.
+    #[cfg(test)]
+    exit_worker_once: std::sync::atomic::AtomicBool,
 }
 
 static SCHEDULER: DeadlineScheduler = DeadlineScheduler::new();
@@ -55,6 +64,10 @@ impl DeadlineScheduler {
             changed: Condvar::new(),
             #[cfg(test)]
             refuse_spawn: std::sync::atomic::AtomicBool::new(false),
+            #[cfg(test)]
+            panic_serving_once: std::sync::atomic::AtomicBool::new(false),
+            #[cfg(test)]
+            exit_worker_once: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -79,6 +92,22 @@ impl DeadlineScheduler {
             });
         }
 
+        let key = self.insert(deadline, sender)?;
+        Ok(Watchdog {
+            receiver,
+            slot: Slot::Armed {
+                scheduler: self,
+                key,
+            },
+        })
+    }
+
+    /// Schedule one sender, starting the worker first if none is running.
+    fn insert(
+        &'static self,
+        deadline: Instant,
+        sender: oneshot::Sender<()>,
+    ) -> std::result::Result<DeadlineKey, DeadlineUnavailable> {
         let (key, earliest) = {
             let mut schedule = self.schedule.lock();
             if !schedule.worker_running {
@@ -100,20 +129,14 @@ impl DeadlineScheduler {
         if earliest {
             self.changed.notify_one();
         }
-        Ok(Watchdog {
-            receiver,
-            slot: Slot::Armed {
-                scheduler: self,
-                key,
-            },
-        })
+        Ok(key)
     }
 
     /// Remove a cancelled deadline exactly. The worker may still wake at the
     /// removed instant; it then finds nothing due and recomputes.
     fn disarm(&self, key: &DeadlineKey) {
         let removed = self.schedule.lock().armed.remove(key);
-        // Dropping the sender wakes its receiver's task: outside the lock.
+        // Released outside the lock; the owning receiver is already closed.
         drop(removed);
     }
 
@@ -124,25 +147,61 @@ impl DeadlineScheduler {
         }
         std::thread::Builder::new()
             .name("cordis-deadline".into())
-            .spawn(move || self.run())
+            .spawn(move || self.worker_main())
             .map(drop)
             .map_err(|_| DeadlineUnavailable)
     }
 
-    fn run(&self) {
-        // If this worker ever unwinds, the next arm starts a replacement that
-        // inherits every entry still armed; none is dropped as elapsed.
-        struct Retire<'a>(&'a DeadlineScheduler);
-        impl Drop for Retire<'_> {
+    /// The worker thread body. Delivery wakes are contained one by one inside
+    /// [`Self::serve`]; any other unexpected panic is contained here and
+    /// serving resumes on the same thread, so armed deadlines keep firing.
+    fn worker_main(&'static self) {
+        // Last resort if the thread exits anyway: hand every still-armed
+        // entry to a replacement now instead of waiting for a future arm.
+        struct Retire(&'static DeadlineScheduler);
+        impl Drop for Retire {
             fn drop(&mut self) {
-                self.0.schedule.lock().worker_running = false;
+                let mut schedule = self.0.schedule.lock();
+                schedule.worker_running = false;
+                // Spawning under the lock is the same choreography as `arm`:
+                // the replacement blocks on this lock until it is released.
+                // If the OS refuses, the entries stay armed (never dropped as
+                // elapsed) and the next arm retries the spawn.
+                if !schedule.armed.is_empty() && self.0.spawn_worker().is_ok() {
+                    schedule.worker_running = true;
+                }
             }
         }
         let _retire = Retire(self);
 
+        loop {
+            let mut exited = false;
+            crate::contained::contain("deadline scheduler", None, || {
+                self.serve();
+                exited = true;
+            });
+            if exited {
+                return;
+            }
+        }
+    }
+
+    /// Fire due deadlines until the process ends. Returns only through the
+    /// test-only worker-exit hook.
+    fn serve(&self) {
         let mut due = Vec::new();
         let mut schedule = self.schedule.lock();
         loop {
+            #[cfg(test)]
+            {
+                use std::sync::atomic::Ordering;
+                if self.exit_worker_once.swap(false, Ordering::SeqCst) {
+                    return;
+                }
+                if self.panic_serving_once.swap(false, Ordering::SeqCst) {
+                    panic!("injected deadline scheduler fault");
+                }
+            }
             let now = Instant::now();
             while let Some(entry) = schedule.armed.first_entry() {
                 if entry.key().0 > now {
@@ -153,7 +212,12 @@ impl DeadlineScheduler {
             if !due.is_empty() {
                 drop(schedule);
                 for sender in due.drain(..) {
-                    let _ = sender.send(());
+                    // Sending wakes the waiting task through its caller-supplied
+                    // Waker, which may panic. Contain each wake on its own so one
+                    // panicking Waker cannot stop delivery to the others.
+                    crate::contained::contain("wait_state deadline wake", None, || {
+                        let _ = sender.send(());
+                    });
                 }
                 schedule = self.schedule.lock();
                 continue;
@@ -206,6 +270,9 @@ impl std::future::Future for Watchdog {
 
 impl Drop for Watchdog {
     fn drop(&mut self) {
+        // Close first: dropping the removed sender then cannot invoke this
+        // waiter's own Waker, so cancellation runs no caller wake at all.
+        self.receiver.close();
         if let Slot::Armed { scheduler, key } = &self.slot {
             scheduler.disarm(key);
         }
@@ -281,8 +348,11 @@ mod tests {
         let scheduler = scheduler();
         let armed_at = Instant::now();
         let mut watchdog = scheduler.arm(Duration::from_millis(60)).unwrap();
-        assert!(!fired(&mut watchdog));
-        assert!(wait_fired(&mut watchdog, Duration::from_secs(5)));
+        // Load-independent: read the firing before the clock, so an early
+        // fire is caught even if this thread stalls past the deadline.
+        let fired_early = fired(&mut watchdog);
+        assert!(!fired_early || armed_at.elapsed() >= Duration::from_millis(60));
+        assert!(fired_early || wait_fired(&mut watchdog, Duration::from_secs(5)));
         assert!(armed_at.elapsed() >= Duration::from_millis(60));
         assert_eq!(scheduler.armed_len(), 0);
     }
@@ -403,5 +473,101 @@ mod tests {
             kept.iter_mut()
                 .all(|watchdog| wait_fired(watchdog, Duration::from_secs(5)))
         );
+    }
+
+    struct PanickingWake;
+    impl std::task::Wake for PanickingWake {
+        fn wake(self: Arc<Self>) {
+            panic!("caller waker panicked");
+        }
+    }
+
+    /// Arm `timeout` with a Waker that panics on delivery. The Waker is
+    /// registered before the entry is scheduled, so no stall can let the
+    /// deadline fire first.
+    fn arm_with_panicking_waker(
+        scheduler: &'static DeadlineScheduler,
+        timeout: Duration,
+    ) -> Watchdog {
+        let (sender, mut receiver) = oneshot::channel();
+        let waker = std::task::Waker::from(Arc::new(PanickingWake));
+        let mut cx = std::task::Context::from_waker(&waker);
+        assert!(std::pin::Pin::new(&mut receiver).poll(&mut cx).is_pending());
+        let key = scheduler.insert(Instant::now() + timeout, sender).unwrap();
+        Watchdog {
+            receiver,
+            slot: Slot::Armed { scheduler, key },
+        }
+    }
+
+    #[test]
+    fn a_panicking_wake_does_not_stop_delivery_to_other_arms() {
+        let scheduler = scheduler();
+        let mut poisoned = arm_with_panicking_waker(scheduler, Duration::from_millis(20));
+        // Due in the same batch as the poisoned wake, and in a later batch.
+        let mut same_batch = scheduler.arm(Duration::from_millis(20)).unwrap();
+        let mut later = scheduler.arm(Duration::from_millis(80)).unwrap();
+        assert!(wait_fired(&mut same_batch, Duration::from_secs(5)));
+        assert!(wait_fired(&mut later, Duration::from_secs(5)));
+        assert!(
+            fired(&mut poisoned),
+            "the value is delivered even though its wake panicked"
+        );
+        assert!(scheduler.schedule.lock().worker_running);
+    }
+
+    #[test]
+    fn cancelling_an_arm_runs_no_wake() {
+        let scheduler = scheduler();
+        let cancelled = arm_with_panicking_waker(scheduler, Duration::from_secs(600));
+        // Would panic here if dropping the removed sender woke the receiver.
+        drop(cancelled);
+        assert_eq!(scheduler.armed_len(), 0);
+    }
+
+    #[test]
+    fn an_unexpected_serving_panic_resumes_without_a_new_arm() {
+        let scheduler = scheduler();
+        let mut armed = scheduler.arm(Duration::from_millis(60)).unwrap();
+        scheduler.panic_serving_once.store(true, Ordering::SeqCst);
+        // Wake the worker without arming anything: it panics on this pass.
+        scheduler.changed.notify_one();
+        assert!(wait_fired(&mut armed, Duration::from_secs(5)));
+        assert!(!scheduler.panic_serving_once.load(Ordering::SeqCst));
+        assert!(scheduler.schedule.lock().worker_running);
+    }
+
+    #[test]
+    fn a_lost_worker_is_replaced_for_already_armed_deadlines() {
+        let scheduler = scheduler();
+        let mut armed = scheduler.arm(Duration::from_millis(60)).unwrap();
+        scheduler.exit_worker_once.store(true, Ordering::SeqCst);
+        scheduler.changed.notify_one();
+        assert!(wait_fired(&mut armed, Duration::from_secs(5)));
+        assert!(!scheduler.exit_worker_once.load(Ordering::SeqCst));
+        assert!(scheduler.schedule.lock().worker_running);
+    }
+
+    #[test]
+    fn a_refused_replacement_keeps_deadlines_armed_until_the_next_arm() {
+        let scheduler = scheduler();
+        let mut armed = scheduler.arm(Duration::from_millis(40)).unwrap();
+        scheduler.refuse_spawn.store(true, Ordering::SeqCst);
+        scheduler.exit_worker_once.store(true, Ordering::SeqCst);
+        scheduler.changed.notify_one();
+        assert!(wait_until(Duration::from_secs(5), || {
+            !scheduler.schedule.lock().worker_running
+        }));
+        std::thread::sleep(Duration::from_millis(80));
+        // Past its deadline but never dropped: no premature or false Elapsed.
+        assert!(matches!(
+            armed.receiver.try_recv(),
+            Err(oneshot::error::TryRecvError::Empty)
+        ));
+        assert_eq!(scheduler.armed_len(), 1);
+
+        scheduler.refuse_spawn.store(false, Ordering::SeqCst);
+        let _next = scheduler.arm(Duration::from_secs(600)).unwrap();
+        assert!(wait_fired(&mut armed, Duration::from_secs(5)));
     }
 }
