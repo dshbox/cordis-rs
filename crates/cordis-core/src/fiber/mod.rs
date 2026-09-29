@@ -123,6 +123,10 @@ impl FiberState {
 struct StatePublicationInner {
     current: FiberState,
     revisions: [u64; 6],
+    /// Total number of committed publications. Unlike a per-state revision,
+    /// any transition advances it, so a reader can prove that no publication
+    /// landed between two points in time.
+    sequence: u64,
 }
 
 /// Reliable state-publication cell. `Notify` is only a wake hint; per-state
@@ -142,6 +146,7 @@ impl StatePublication {
             inner: Mutex::new(StatePublicationInner {
                 current: initial,
                 revisions,
+                sequence: 0,
             }),
             changed: tokio::sync::Notify::new(),
         }
@@ -163,6 +168,10 @@ impl StatePublication {
             *revision = revision
                 .checked_add(1)
                 .expect("state publication revision overflow");
+            inner.sequence = inner
+                .sequence
+                .checked_add(1)
+                .expect("state publication sequence overflow");
             old
         };
         Some(old)
@@ -170,6 +179,16 @@ impl StatePublication {
 
     fn notify(&self) {
         self.changed.notify_waiters();
+    }
+
+    /// Current state together with the total publication sequence.
+    fn observe(&self) -> (FiberState, u64) {
+        let inner = self.inner.lock();
+        (inner.current, inner.sequence)
+    }
+
+    fn sequence(&self) -> u64 {
+        self.inner.lock().sequence
     }
 
     fn snapshot(&self, target: FiberState) -> (FiberState, u64) {
@@ -1466,6 +1485,43 @@ fn probe_ready_failure(fiber: &FiberId) {
     }
 }
 
+#[cfg(test)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ReadyTransientPhase {
+    AfterIdle,
+    AfterObserve,
+}
+
+/// Review probe: pause one `ready()` at the two points where OS preemption can
+/// interleave a complete racing lifecycle pass between its idle wait, its state
+/// read, and its idle recheck. Each phase fires once.
+#[cfg(test)]
+struct ReadyTransientProbe {
+    fiber: FiberId,
+    idle_armed: AtomicBool,
+    observe_armed: AtomicBool,
+    reached: Arc<std::sync::Barrier>,
+    resume: Arc<std::sync::Barrier>,
+}
+
+#[cfg(test)]
+static READY_TRANSIENT_PROBE: Mutex<Option<Arc<ReadyTransientProbe>>> = Mutex::new(None);
+
+#[cfg(test)]
+fn probe_ready_transient(fiber: &FiberId, phase: ReadyTransientPhase) {
+    let probe = READY_TRANSIENT_PROBE.lock().clone();
+    if let Some(probe) = probe.filter(|probe| &probe.fiber == fiber) {
+        let armed = match phase {
+            ReadyTransientPhase::AfterIdle => &probe.idle_armed,
+            ReadyTransientPhase::AfterObserve => &probe.observe_armed,
+        };
+        if armed.swap(false, Ordering::SeqCst) {
+            probe.reached.wait();
+            probe.resume.wait();
+        }
+    }
+}
+
 impl FiberHandle {
     pub(crate) fn new(fiber: Arc<Fiber>) -> Self {
         Self { fiber }
@@ -1525,8 +1581,19 @@ impl FiberHandle {
                 fiber.slot.kick(fiber, &root);
             }
             fiber.slot.wait_idle().await;
-            let observed = fiber.state();
+            #[cfg(test)]
+            probe_ready_transient(fiber.id(), ReadyTransientPhase::AfterIdle);
+            let (observed, sequence) = fiber.state.observe();
+            #[cfg(test)]
+            probe_ready_transient(fiber.id(), ReadyTransientPhase::AfterObserve);
             if !fiber.slot.is_idle() || fiber.slot.has_committed_recheck() {
+                continue;
+            }
+            // A complete racing lifecycle pass can claim the slot, publish, and
+            // release it again between the state read and the idle recheck. Only
+            // an observation that stayed current across the idle recheck may
+            // answer; otherwise it describes an older transaction.
+            if fiber.state.sequence() != sequence {
                 continue;
             }
             match observed {
@@ -1706,6 +1773,104 @@ mod ready_failure_race_tests {
         resume.wait();
         *READY_FAILURE_PROBE.lock() = None;
         assert!(waiter.await.expect("ready must not panic").is_ok());
+        handle.dispose().await.unwrap();
+    }
+}
+
+#[cfg(test)]
+mod ready_transient_race_tests {
+    use super::*;
+    use std::convert::Infallible;
+    use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+
+    /// First apply completes; the restart's apply parks until released so the
+    /// Fiber publishes the transient `Loading` state while the slot is held.
+    struct ParkSecondApply {
+        applies: Arc<AtomicUsize>,
+        entered: Arc<tokio::sync::Notify>,
+        release: Arc<tokio::sync::Notify>,
+    }
+
+    impl crate::Plugin for ParkSecondApply {
+        type Config = ();
+        type Input = ();
+        type PrepareError = Infallible;
+        type ApplyError = Infallible;
+        fn prepare(&self, _: ()) -> Result<(), Infallible> {
+            Ok(())
+        }
+        async fn apply(&self, _: Context, _: &()) -> Result<(), Infallible> {
+            if self.applies.fetch_add(1, AtomicOrdering::SeqCst) == 1 {
+                self.entered.notify_one();
+                self.release.notified().await;
+            }
+            Ok(())
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 3)]
+    async fn ready_transient_state_racing_complete_restart_never_panics() {
+        let ctx = Context::new();
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Notify::new());
+        let handle = ctx
+            .spawn(crate::PreparedPlugin::from_input(
+                ParkSecondApply {
+                    applies: Arc::new(AtomicUsize::new(0)),
+                    entered: entered.clone(),
+                    release: release.clone(),
+                },
+                (),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(handle.state(), FiberState::Active);
+
+        let reached = Arc::new(std::sync::Barrier::new(2));
+        let resume = Arc::new(std::sync::Barrier::new(2));
+        *READY_TRANSIENT_PROBE.lock() = Some(Arc::new(ReadyTransientProbe {
+            fiber: handle.id(),
+            idle_armed: AtomicBool::new(true),
+            observe_armed: AtomicBool::new(true),
+            reached: reached.clone(),
+            resume: resume.clone(),
+        }));
+
+        // 1. ready() has observed an idle slot and is about to read the state.
+        let waiter = tokio::spawn({
+            let handle = handle.clone();
+            async move { handle.ready().await }
+        });
+        reached.wait();
+
+        // 2. A restart claims the slot and publishes transient Loading.
+        let restart = tokio::spawn({
+            let handle = handle.clone();
+            async move { handle.restart().await }
+        });
+        entered.notified().await;
+        assert_eq!(handle.state(), FiberState::Loading);
+
+        // 3. ready() reads Loading, then pauses before its idle recheck.
+        resume.wait();
+        reached.wait();
+
+        // 4. The restart completes: Active, slot idle, no outstanding recheck.
+        release.notify_one();
+        restart.await.unwrap().unwrap();
+        assert_eq!(handle.state(), FiberState::Active);
+
+        // 5. ready() resumes with a stale transient observation.
+        resume.wait();
+        *READY_TRANSIENT_PROBE.lock() = None;
+        let outcome = waiter.await;
+        assert!(
+            outcome
+                .as_ref()
+                .is_ok_and(|ready| matches!(ready, Ok(FiberState::Active))),
+            "ready must retry a stale transient observation, got {:?}",
+            outcome.map_err(|error| error.is_panic())
+        );
         handle.dispose().await.unwrap();
     }
 }
