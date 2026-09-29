@@ -859,7 +859,13 @@ pub enum RealmPolicy {
 ```
 
 These source-schema types are `Debug + Clone + Serialize + Deserialize`; enum wire
-syntax is explicit and independent of Rust variant layout. `EntryGroup::name`
+syntax is explicit and independent of Rust variant layout. Deserialization is
+strict: every schema object and tagged variant rejects fields it does not
+define, including a `label` on `private` and a `config` on `required`, so a
+misspelled `disabled` or `isolate` fails to parse instead of silently executing
+with the default. `Serialize` output is unchanged. This is an intentional
+`Deserialize` compatibility change made before 1.0: rows that previously parsed
+with ignored fields are now errors. `EntryGroup::name`
 is human-readable source syntax only: structural group names are not retained by
 the frozen plan or copied into execution outcomes. Plugin config
 is required; unit is JSON null. `key.or(name)` chooses the resolve key;

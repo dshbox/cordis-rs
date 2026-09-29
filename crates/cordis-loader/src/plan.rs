@@ -64,7 +64,10 @@ impl Hash for EntryId {
 /// Mutable serialized source for one Plugin declaration.
 ///
 /// `config` is required in the wire form. Unit configuration is JSON `null`.
+/// Unknown fields are rejected: a misspelled declaration such as `disable` or
+/// `isolated` would otherwise fall back to a default and change what executes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PluginEntry {
     /// Explicit Plugin resolution key, preferred over [`PluginEntry::name`].
     pub key: Option<String>,
@@ -84,7 +87,10 @@ pub struct PluginEntry {
 }
 
 /// Mutable serialized source for one structural sequencing group.
+///
+/// Unknown fields are rejected.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct EntryGroup {
     /// Human-readable source-only group name.
     ///
@@ -97,7 +103,8 @@ pub struct EntryGroup {
 /// One declarative Service dependency in a [`PluginEntry`].
 ///
 /// Wire syntax is explicitly tagged as `required` or `configured` and does not
-/// depend on Rust enum layout.
+/// depend on Rust enum layout. Fields the tagged form does not define, such as
+/// a `config` on `required`, are rejected.
 #[derive(Debug, Clone)]
 pub enum InjectEntry {
     /// Require a Service by semantic name.
@@ -119,7 +126,7 @@ enum InjectEntryRef<'a> {
 }
 
 #[derive(Deserialize)]
-#[serde(tag = "kind", rename_all = "camelCase")]
+#[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
 enum InjectEntryWire {
     Required { service: String },
     Configured { service: String, config: Value },
@@ -160,7 +167,10 @@ impl InjectEntry {
 }
 
 /// One declarative Service realm-selection row in a [`PluginEntry`].
+///
+/// Unknown fields are rejected.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct IsolateEntry {
     /// Semantic Service name whose placement this row selects.
     pub service: String,
@@ -171,9 +181,10 @@ pub struct IsolateEntry {
 /// Loader-local declarative Service realm policy.
 ///
 /// Wire syntax is explicitly tagged; shared labels rendezvous only within one
-/// future plan execution and are never core realm identities.
+/// future plan execution and are never core realm identities. Fields that the
+/// tagged variant does not define, such as a `label` on `private`, are rejected.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "camelCase")]
+#[serde(tag = "kind", rename_all = "camelCase", from = "RealmPolicyWire")]
 pub enum RealmPolicy {
     /// Select a fresh private realm when the plan is executed.
     Private,
@@ -182,6 +193,25 @@ pub enum RealmPolicy {
         /// Declarative per-execution rendezvous label.
         label: String,
     },
+}
+
+// Strict deserialization form. An internally tagged *unit* variant ignores
+// `deny_unknown_fields`, so `Private` is an empty struct variant here; the
+// public enum keeps its unit variant and unchanged serialization.
+#[derive(Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
+enum RealmPolicyWire {
+    Private {},
+    Shared { label: String },
+}
+
+impl From<RealmPolicyWire> for RealmPolicy {
+    fn from(wire: RealmPolicyWire) -> Self {
+        match wire {
+            RealmPolicyWire::Private {} => Self::Private,
+            RealmPolicyWire::Shared { label } => Self::Shared { label },
+        }
+    }
 }
 
 /// Validation failure while constructing an immutable [`LoadPlan`].
