@@ -776,7 +776,7 @@ impl Fiber {
         if async_cleanup {
             crate::effect::detach_cleanup(work);
         } else {
-            crate::effect::detach(work);
+            crate::effect::CallerDriven::new(work).await;
         }
         // `Err` means the framework task ended before publishing an outcome;
         // the exact cleanup claim remains consumed either way.
@@ -979,8 +979,9 @@ impl Fiber {
     }
 
     /// Complete the terminal disposal transaction. The first caller commits
-    /// Open-to-Closing while holding the lifecycle slot, then transfers the
-    /// remainder to framework-owned detached work. Every racing/later caller
+    /// Open-to-Closing while holding the lifecycle slot, then drives the
+    /// remainder inline as caller-driven framework work that is handed to
+    /// framework completion if the caller abandons its wait. Every racing/later caller
     /// waits for the same full cleanup + Disposed + exact-unlink barrier.
     pub(crate) async fn dispose(self: &Arc<Self>) {
         if self.dispose_complete.load(Ordering::SeqCst) {
@@ -1004,12 +1005,13 @@ impl Fiber {
         }
 
         // Open-to-Closing is committed. No await occurs between the claim and
-        // detaching the owner, so caller cancellation can abandon only the wait.
+        // the caller-driven owner, so caller cancellation can only hand the
+        // pending owner to framework completion; it can never stop it.
         let fiber = self.clone();
-        crate::effect::detach(async move {
+        crate::effect::CallerDriven::new(async move {
             fiber.complete_claimed_dispose().await;
-        });
-        self.wait_dispose_complete().await;
+        })
+        .await;
     }
 
     /// Finish a terminal disposal after the caller has won `disposing` and
@@ -1871,6 +1873,75 @@ mod ready_transient_race_tests {
             "ready must retry a stale transient observation, got {:?}",
             outcome.map_err(|error| error.is_panic())
         );
+        handle.dispose().await.unwrap();
+    }
+}
+
+#[cfg(test)]
+mod terminal_claim_tests {
+    use super::*;
+    use crate::service::{Service, ServiceControlError, ServicePublication};
+    use std::convert::Infallible;
+
+    #[derive(Debug)]
+    struct Counter;
+    impl Service for Counter {
+        const NAME: &'static str = "terminal-claim-counter";
+    }
+
+    struct CapturingProvider(Arc<Mutex<Option<ServicePublication<Counter>>>>);
+
+    impl crate::Plugin for CapturingProvider {
+        type Config = ();
+        type Input = ();
+        type PrepareError = Infallible;
+        type ApplyError = Infallible;
+        fn prepare(&self, _: ()) -> Result<(), Infallible> {
+            Ok(())
+        }
+        async fn apply(&self, ctx: Context, _: &()) -> Result<(), Infallible> {
+            *self.0.lock() = Some(ctx.provide(Arc::new(Counter)).unwrap());
+            Ok(())
+        }
+    }
+
+    /// The committed dispose owner runs inline with no suspension point between
+    /// the terminal claim and `Unloading`, so the claim-to-Unloading window is
+    /// not publicly observable. Split the owner at that boundary exactly as
+    /// `Fiber::dispose` does and prove the claim alone closes exact mutation
+    /// while the Fiber is still Active.
+    #[tokio::test(flavor = "current_thread")]
+    async fn terminal_claim_closes_exact_service_mutation_before_unloading() {
+        let ctx = Context::new();
+        let publication = Arc::new(Mutex::new(None));
+        let handle = ctx
+            .spawn(crate::PreparedPlugin::from_input(
+                CapturingProvider(publication.clone()),
+                (),
+            ))
+            .await
+            .unwrap();
+        let occurrence = publication.lock().take().unwrap();
+        let fiber = handle.fiber.clone();
+
+        fiber.slot.claim().await;
+        assert!(!fiber.claim_terminal(), "first terminal claim");
+        assert_eq!(fiber.state(), FiberState::Active);
+        assert_eq!(
+            occurrence.set(Arc::new(Counter)),
+            Err(ServiceControlError::MutationClosed {
+                service: Counter::NAME,
+            })
+        );
+        assert_eq!(
+            occurrence.remove(),
+            Err(ServiceControlError::MutationClosed {
+                service: Counter::NAME,
+            })
+        );
+
+        fiber.complete_claimed_dispose().await;
+        assert_eq!(handle.state(), FiberState::Disposed);
         handle.dispose().await.unwrap();
     }
 }

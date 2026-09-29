@@ -8,9 +8,13 @@ configuration, gate, claim, allocation, publication, or observation
 changes. Cancellation after that commit abandons only the caller's wait;
 framework-owned work continues independently of caller polling until it
 reaches the operation's documented barrier. Runtime-agnostic Cordis lifecycle
-work normally stays on the current Tokio executor; if shutdown drops it after a
-normal `Pending`, the same pinned future transfers to a shared Cordis completion
-runtime. Arbitrary async effect cleanup is different: it is first polled on that
+work is driven inline by the committing caller while it polls. When that caller
+abandons its wait, the same pinned future is handed off: on a multi-thread Tokio
+runtime it continues as a task on that executor, and if shutdown drops it after
+a normal `Pending` it transfers to a shared Cordis completion runtime. On a
+`current_thread` runtime, or off-runtime, it goes to the completion runtime
+directly, because a current-thread runtime runs spawned tasks only while someone
+drives it. Arbitrary async effect cleanup is different: it is first polled on that
 completion runtime, so Tokio time/IO work created by the cleanup never migrates
 between runtime drivers. A poll unwind is a failure, never a transfer signal.
 This uniform law covers

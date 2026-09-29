@@ -319,5 +319,15 @@ async fn observer_capture_destruction_can_reenter_observer_registration() {
         .await
         .expect("observer capture destruction deadlocked")
         .unwrap();
+    // Observer delivery is detached and outside the terminal barrier: an
+    // in-flight delivery task may hold the last callback clone past dispose,
+    // so the capture's destruction is awaited rather than assumed.
+    common::bounded(5_000, async {
+        while reentered.load(Ordering::SeqCst) == 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("observer capture destruction deadlocked");
     assert_eq!(reentered.load(Ordering::SeqCst), 1);
 }
