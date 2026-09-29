@@ -738,7 +738,8 @@ mod tests {
 
         let dispose = registration.dispose();
         tokio::pin!(dispose);
-        let watchdog = crate::deadline::watchdog(Duration::from_secs(2));
+        let watchdog =
+            crate::deadline::watchdog(Duration::from_secs(2)).expect("test deadline arms");
         tokio::pin!(watchdog);
         tokio::select! {
             result = &mut dispose => assert_eq!(result.unwrap(), true),
@@ -782,7 +783,8 @@ mod tests {
 
         let dispose = registration.dispose();
         tokio::pin!(dispose);
-        let watchdog = crate::deadline::watchdog(Duration::from_secs(2));
+        let watchdog =
+            crate::deadline::watchdog(Duration::from_secs(2)).expect("test deadline arms");
         tokio::pin!(watchdog);
         let failure = tokio::select! {
             result = &mut dispose => result.expect_err("cleanup returns the probe error"),

@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- *(core)* `FiberHandle::wait_state` no longer holds one OS thread per pending
+  wait: every armed deadline is served by one lazily started, process-wide
+  `cordis-deadline` thread, and cancelled waits remove their entry immediately.
+  A refused thread spawn no longer panics inside `wait_state`.
+
+### Added
+
+- *(core)* `WaitStateError::DeadlineUnavailable`, returned when a wait needs a
+  deadline but the process refuses to start the shared deadline thread. The
+  enum is `#[non_exhaustive]`, so existing matches keep compiling.
+
 ## [0.3.27](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.3.26...cordis-core-v0.3.27) - 2026-09-27
 
 ### Fixed

@@ -384,7 +384,11 @@ it has no default, numeric representation, ordering, or serde contract.
 
 All lifecycle controls are async: `ready(&self) -> Result<FiberState, ReadyError>`;
 `wait_state(&self, state: FiberState, timeout: std::time::Duration)` returns
-`Result<(), WaitStateError>`;
+`Result<(), WaitStateError>` (its deadline is monotonic; a timeout beyond the
+representable monotonic clock never elapses; pending waits share one lazily
+started Cordis deadline thread rather than holding a thread each, and if the
+process refuses to start that thread the wait reports
+`WaitStateError::DeadlineUnavailable` instead of panicking);
 `restart(&self) -> Result<(), RestartError>`; `update(&self, change: PreparedChange)`
 `-> Result<UpdateOutcome, UpdateError>`; `era_swap(&self, change: PreparedChange)`
 `-> Result<FiberHandle, EraSwapError>`; and `dispose(&self)`
@@ -1158,6 +1162,7 @@ pub enum RestartError {
 pub enum WaitStateError {
     Elapsed,
     Recursion(LifecycleRecursion),
+    DeadlineUnavailable,
 }
 
 #[non_exhaustive]
