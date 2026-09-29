@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.3.28](https://github.com/dshbox/cordis-rs/compare/cordis-loader-v0.3.27...cordis-loader-v0.3.28) - 2026-09-29
+
+### Fixed
+
+- *(loader)* reject unknown source-schema fields
+
 ### Changed
 
 - *(loader)* **Breaking `Deserialize` behaviour:** the source schema

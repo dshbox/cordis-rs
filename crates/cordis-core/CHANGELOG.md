@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [0.3.28](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.3.27...cordis-core-v0.3.28) - 2026-09-29
+
+### Fixed
+
+- *(core)* contain deadline wakes and replace a lost scheduler worker
+- *(core)* serve wait_state deadlines from one shared thread
+- *(core)* isolate settle attribution of caller-driven owners
+- *(core)* complete committed lifecycle work on idle current-thread runtimes
+- *(core)* retry stale transient ready observation
+
 ### Fixed
 
 - *(core)* `FiberHandle::wait_state` no longer holds one OS thread per pending
