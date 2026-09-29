@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [0.4.1](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.4.0...cordis-core-v0.4.1) - 2026-09-29
+
+### Other
+
+- keep apply placement out of the frozen surface
+- align apply execution and driver boundaries with ADR 0029
+- refresh freeze evidence after correctness follow-ups
+
 ## [0.4.0](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.3.27...cordis-core-v0.4.0) - 2026-09-29
 
 ### Changed
