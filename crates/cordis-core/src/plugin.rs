@@ -140,6 +140,15 @@ pub trait Plugin: Send + 'static {
 
     /// Apply one Plugin input to `ctx`.
     ///
+    /// Keep each poll non-blocking; offload blocking work with
+    /// `tokio::task::spawn_blocking`. Ordinary spawn drives its initial settle
+    /// inline in the caller's task, including any drift recheck before handoff.
+    /// Restart, update, background convergence and era-successor apply run on
+    /// Cordis's shared completion runtime. Do not assume affinity to the
+    /// spawning runtime: `tokio::spawn` and `Handle::current()` use the runtime
+    /// polling apply. The completion runtime currently has two workers; blocking
+    /// both can stall unrelated Fibers' lifecycle work and async cleanup.
+    ///
     /// A returned error or a panic is normalized exactly once into the
     /// opaque [`PluginFailure`](crate::lifecycle::PluginFailure) (kind plus owned
     /// diagnostic text) at the framework boundary: for the initial apply

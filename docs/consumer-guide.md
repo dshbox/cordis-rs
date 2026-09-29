@@ -20,6 +20,14 @@ proves the Plugin/Input type association, not which particular Plugin object
 produced the input. Use concrete Plugin error types; `BoxError` is useful at an
 outer application boundary such as `main`, not as the canonical associated error.
 
+Keep apply non-blocking and offload blocking work with `tokio::task::spawn_blocking`.
+Ordinary spawn drives its initial settle in the caller's task; restart, update,
+background convergence and era-successor apply use Cordis's shared completion
+runtime. Do not rely on spawning-runtime affinity: `tokio::spawn` and
+`Handle::current()` inside apply target the runtime polling it. Currently two
+completion workers serve the process; blocking both can stall unrelated Fibers'
+async cleanup and lifecycle completion.
+
 Successful spawn hands off a live, quiescent `FiberHandle`: Active means apply
 succeeded; Pending means a required Service is unavailable and apply has not
 run. Keep the delivered handle for explicit lifecycle control. Dropping it does
@@ -91,6 +99,11 @@ Use `ready` to drive the latest target to quiescence, including Pending;
 the same Fiber and input. For new input, prepare and seal one
 `PreparedChange::from_input::<P>`, then consume it through `update` or `era_swap`.
 Every candidate permits one attempt, including mismatch, veto and failure.
+
+Handle `WaitStateError::Elapsed`, `Recursion` and `DeadlineUnavailable` separately.
+The last means the process refused to start the shared deadline thread, not that
+the timeout elapsed. Existing matches on this non-exhaustive enum still need a
+wildcard. Satisfied waits and unrepresentable monotonic deadlines need no thread.
 
 `on_update` installs typed precommit Mapper/Around policy. Tail acceptance is
 provisional until outer callbacks return and admission is revalidated. Veto,
@@ -230,6 +243,12 @@ prefer key over name and may repeat. Correlate by EntryId, which survives plan
 clones/reuse; each execution creates fresh lifecycle and realm occurrences.
 Private/Shared source policy allocates opaque Runtime-local Service realms;
 text labels never rendezvous across executions or enter core.
+
+Parse source rows strictly: every source-schema object and tagged variant rejects unknown or
+misplaced fields, so `disable` is an error rather than an ignored `disabled` typo.
+Remove unsupported fields before loading; this intentional pre-1.0 Deserialize
+change is recorded in the [Loader changelog](../crates/cordis-loader/CHANGELOG.md).
+Valid wire forms and Serialize output are unchanged.
 
 A synchronous `PluginResolver` recognizes a request, prepares typed Plugin and
 configured-Service inputs and returns sealed PreparedPlugin, None for unknown

@@ -1,7 +1,7 @@
 # Public API naming review
 
 Non-normative review of the supported v3 inventory against production baseline
-`ed07d3149a5711541eaabd34633122e6eb3c52bd`, under
+`680b3b058659a6318e51ec174537a424118f2927`, fetched on 2026-09-29, under
 [spec #200](https://github.com/dshbox/cordis-rs/issues/200).
 The [public inventory](v3-public-interface.md) owns exact declarations and paths;
 this review lists names to record their semantic assessment, not to define another API.
@@ -30,7 +30,8 @@ Delivery: [#201](https://github.com/dshbox/cordis-rs/issues/201).
 | Names / members | Conclusion | Semantic assessment |
 | --- | --- | --- |
 | `Context::new`; `Context` | Clarify | Creates one root Context into a new Cordis Runtime; Context is a view, not an independent owner or a general hierarchy |
-| `Plugin`; `Config`, `Input`, `PrepareError`, `ApplyError`; `prepare`, `apply` | Retain | Source configuration, complete runtime input and each operation's typed failure are distinct. Input names role, preparation names adaptation; Arc<P> delegates the same contract for P: Plugin + Sync |
+| `Plugin`; `Config`, `Input`, `PrepareError`, `ApplyError`; `prepare` | Retain | Source configuration, complete runtime input and each operation's typed failure are distinct. Input names role, preparation names adaptation; Arc<P> delegates the same contract for P: Plugin + Sync |
+| `Plugin::apply` | Clarify | Applies one typed input without promising origin-runtime affinity. Initial ordinary spawn is caller-driven; restart/update/background convergence and era-successor apply use the shared completion runtime. Keep polls non-blocking; a rename would not communicate these scheduling boundaries |
 | `Plugin::name`, `inject` | Clarify | Name is diagnostic, never lookup identity; inject declares lifecycle requirements. Sealing materializes both before lifecycle; it does not call them repeatedly during settlement |
 | `PreparedPlugin`; `from_input` | Clarify | The wrapper names prepared stage and seals type association, not running state or the identity of the object that prepared the value |
 | `PreparedPlugin::with_inject_overlay` | Clarify | Completes a dependency-declaration overlay before spawn; no Service-realm selection or dynamic lifecycle mutation |
@@ -90,7 +91,7 @@ Delivery: [#203](https://github.com/dshbox/cordis-rs/issues/203).
 | `UpdateOutcome`; `Committed`, `Vetoed` | Clarify | Committed input can settle Pending; Vetoed is normal precommit policy and does not return a reusable candidate |
 | `Context::on_update`; `UpdateListener`; `UpdateNext::call` | Clarify | Sealed methodless policy subscription and consuming remaining-chain capability; framework invokes it only before update commit, not for era swap or postcommit recovery |
 | `ReadyError`; `Recursion`, `Apply` | Retain | Exact self-wait refusal or normalized current-target apply failure |
-| `WaitStateError`; `Elapsed`, `Recursion` | Retain | Passive wait timeout or self-wait refusal |
+| `WaitStateError`; `Elapsed`, `Recursion`, `DeadlineUnavailable` | Retain | Passive wait timeout, self-wait refusal or refusal to start the shared deadline thread. DeadlineUnavailable accurately names unavailable deadline infrastructure rather than falsely reporting elapsed time; added by #218 on the non-exhaustive enum, with no rename or alias migration |
 | `RestartError`; `Closed`, `Recursion`, `Apply` | Retain | Admission/liveness refusal, self-wait refusal or committed retry failure |
 | `UpdateError`; `PluginContractMismatch`, `Closed`, `Recursion`, `Control`, `AdmissionLost`, `Apply` | Clarify | Precommit type/liveness/recursion/control/revalidation failures versus postcommit Apply, which retains the new input |
 | `EraSwapError`; `PluginContractMismatch`, `Closed`, `Recursion`, `Incomplete` | Clarify | Three preclaim refusals versus a committed replacement that cannot deliver a successor after final cleanup/convergence |
