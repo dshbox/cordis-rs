@@ -84,13 +84,28 @@ shutdown does not drop that rollback. Dropping a delivered outcome is inert.
 ## Consequences of the rule
 
 **Completion executor posture.** One lazily initialized process-wide Tokio
-runtime with two worker threads is shared by executor-shutdown transfers and by
-async effect cleanup. This is a fixed process-lifetime cost, not one OS
-thread/runtime per pending task or shutdown transfer. Runtime-bound resources
-created by async cleanup bind to this completion runtime. Resources captured
-earlier from an external runtime remain owned by that runtime; Cordis completion
+runtime with two worker threads is shared by executor-shutdown transfers,
+current-thread/off-runtime completion handoffs, async effect cleanup, committed
+restart/update apply, background Service convergence and era-successor creation.
+Ordinary `Context::spawn` instead drives initial settlement in the caller's task,
+including drift rechecks before handoff. Plugin apply has no affinity guarantee
+to the spawning runtime: `Handle::current()` and `tokio::spawn` use the runtime
+polling that apply. This is a fixed process-lifetime cost, not one OS
+thread/runtime per pending task or shutdown transfer. Tokio tasks and time/IO
+operations created during later apply or async cleanup use the completion runtime.
+A paused clock on the caller's test runtime does not control completion-runtime
+time. Resources captured earlier from an external runtime remain owned by that runtime; Cordis completion
 ownership cannot keep an unrelated runtime's timer/IO driver alive after it
-shuts down. Synchronous effect cleanup must not block indefinitely: it can
+shuts down.
+
+Each apply poll must remain non-blocking. Move synchronous blocking sections to
+`tokio::task::spawn_blocking` and await the returned JoinHandle asynchronously
+within apply. Blocking both current completion workers can stall async cleanup
+and lifecycle work for unrelated Fibers, even when the caller's runtime has idle
+workers. This is a disclosed execution/progress boundary, not a guarantee of
+executor isolation against arbitrary blocking Plugin code; worker sizing and
+stronger isolation require a separate contract/design review.
+Synchronous effect cleanup must not block indefinitely: it can
 stall its lifecycle executor, or a shared completion worker when off-runtime or
 shutdown-resilient completion reaches it. Blocking work belongs behind an async
 cleanup and `tokio::task::spawn_blocking`. This guarantee covers executor loss while the

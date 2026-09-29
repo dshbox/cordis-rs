@@ -140,9 +140,10 @@ pub trait Plugin: Send + 'static {
 
     /// Apply one Plugin input to `ctx`.
     ///
-    /// Keep each poll non-blocking; offload blocking work with
-    /// `tokio::task::spawn_blocking`. Ordinary spawn drives its initial settle
-    /// inline in the caller's task, including any drift recheck before handoff.
+    /// Keep each poll non-blocking. Move synchronous blocking sections to
+    /// `tokio::task::spawn_blocking` and await its JoinHandle asynchronously.
+    /// Ordinary spawn drives its initial settle inline in the caller's task,
+    /// including any drift recheck before handoff.
     /// Restart, update, background convergence and era-successor apply run on
     /// Cordis's shared completion runtime. Do not assume affinity to the
     /// spawning runtime: `tokio::spawn` and `Handle::current()` use the runtime

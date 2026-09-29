@@ -20,7 +20,8 @@ proves the Plugin/Input type association, not which particular Plugin object
 produced the input. Use concrete Plugin error types; `BoxError` is useful at an
 outer application boundary such as `main`, not as the canonical associated error.
 
-Keep apply non-blocking and offload blocking work with `tokio::task::spawn_blocking`.
+Keep each apply poll non-blocking. Move synchronous blocking sections to
+`tokio::task::spawn_blocking` and await the returned JoinHandle asynchronously.
 Ordinary spawn drives its initial settle in the caller's task; restart, update,
 background convergence and era-successor apply use Cordis's shared completion
 runtime. Do not rely on spawning-runtime affinity: `tokio::spawn` and

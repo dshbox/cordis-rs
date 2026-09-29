@@ -257,8 +257,9 @@ delegates the complete contract. `name()` is diagnostic only and
 defaults to `type_name`; `inject()` defaults to `InjectSpec::none()`.
 There is no declaration-only `Plugin::provide`.
 
-`Plugin::apply` must keep each poll non-blocking; offload blocking work with
-`tokio::task::spawn_blocking`. Ordinary `Context::spawn` drives its initial settle
+`Plugin::apply` must keep each poll non-blocking. Move synchronous blocking
+sections to `tokio::task::spawn_blocking` and await the returned JoinHandle
+asynchronously within apply. Ordinary `Context::spawn` drives its initial settle
 inline in the caller's task, including drift rechecks before handoff. Restart,
 update, background convergence and the era successor's initial apply run on
 Cordis's shared completion runtime. Apply therefore has no affinity guarantee
@@ -267,6 +268,12 @@ the runtime polling it. The current completion runtime has two workers shared
 process-wide; blocking both can stall async cleanup, restart, update and
 convergence for unrelated Fibers. Worker count and runtime placement are not
 consumer configuration controls.
+
+Tokio tasks and time/IO operations created during later apply use the completion
+runtime; a paused clock on the caller's test runtime does not control their time.
+Resources captured earlier from the caller's runtime still depend on its original
+driver, which Cordis cannot keep alive after that runtime shuts down. See
+[ADR 0029's completion executor posture](adr/0029-lifecycle-commits-complete-and-critical-sections-are-closed.md#consequences-of-the-rule).
 
 `PrepareError` and `ApplyError` are concrete Plugin-authoring error types, not
 application-erasure slots. `BoxError` remains an optional outer application boundary

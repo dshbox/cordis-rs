@@ -75,7 +75,7 @@ The current source baseline includes the four merged follow-up PRs below.
 | Supported-contract defects: identified → fixed → reviewed (F1, F2, F4) | [#214](https://github.com/dshbox/cordis-rs/pull/214): stale ready/restart race; [#216](https://github.com/dshbox/cordis-rs/pull/216): ADR 0029 idle-current-thread completion; [#218](https://github.com/dshbox/cordis-rs/pull/218): shared deadlines, contained wakes and spawn-refusal error. Added named regressions are in the [evidence](api-freeze-evidence.md#findings-since-the-original-review) | Maintainer; the three defect-fix PRs are merged into the source baseline, affected claims rechecked here; any new proven defect blocks selection until fixed and reviewed |
 | Strict Loader schema: accepted pre-1.0 change → implemented and reviewed (F3) | [#217](https://github.com/dshbox/cordis-rs/pull/217), interface, migration note and [Loader changelog](../crates/cordis-loader/CHANGELOG.md); unknown source-schema fields now fail Deserialize, valid wire forms and Serialize unchanged | Author/maintainer; already accepted and merged, with public parsing/execution controls; not an unresolved break or a retrospective promise about unspecified former behavior |
 | DeadlineUnavailable inventory: additive variant → reconciled | #218 adds `WaitStateError::DeadlineUnavailable` on a non-exhaustive enum; interface/error inventory, naming review and guide now account for it | Maintainer; #218 merged first, no alias or rename migration; consumers retain wildcard matching |
-| Apply-placement disclosure: identified → documented (F5) | Plugin::apply rustdoc, interface and guide rule 1; initial ordinary settle is caller-driven, later framework passes use shared completion workers | Maintainer/consumer; disclosure resolved in this follow-up. Apply must not block; no origin-runtime affinity or progress while consumers block both current completion workers is promised |
+| Apply-placement disclosure: identified → documented (F5) | ADR 0029 completion executor posture, Plugin::apply rustdoc, interface and guide rule 1; initial ordinary settle is caller-driven, later framework passes use shared completion workers | Maintainer/consumer; disclosure resolved in this follow-up. Apply polls must not block; offload synchronous blocking sections and await them asynchronously. Earlier captured resources depend on their original driver; the caller's paused clock does not control later apply. No origin-runtime affinity or progress while consumers block both current completion workers is promised |
 | Material missing discriminators: original omissions remedied; none currently open | Added stale-transient, idle-origin, strict-schema and deadline/waker discriminators; private scheduling/refusal seams explicitly bounded in the evidence | Maintainer; updated local gates and exact-head CI must validate the revised record; an actual new gap needs its reachable rival and a blocking ticket |
 | Queued deliberate public breaks / accepted new renames: none currently identified | F3 and the F4 additive variant are already incorporated; current member-level naming review retains accepted ADRs and proposes no new rename | Author; a future approved rename gets its own ticket, migration impact and true blocking edges |
 | D1–D3 documentation drift: resolved | Decision index/count and navigation; existing with_state export; six current runnable example sources | #201, #205, #206 and #209; retained after rebase |
@@ -118,8 +118,10 @@ These pre-rebase commit IDs and receipts preserve the original review history. T
 are not the new rebased commits or evidence of a gate run on the updated candidate.
 The follow-up reviews the complete current preparation diff against fixed source
 baseline `680b3b0` on Standards and Spec axes, then runs eight updated local gates
-under `freeze-210-review-20260929-01`. Results and exact-head CI belong in the
-updated PR #210 receipt.
+under `freeze-210-review-20260929-01`. ADR alignment and blocking-section/driver
+clarifications then use follow-up run `freeze-210-f5-20260929-01`. Results and
+exact-head CI for the final updated commit belong in the PR #210 receipt;
+the intermediate `b3b8210` checks do not validate that later revision.
 
 Each run covers toolchain, fmt, clippy, vocabulary, tests, docs, examples and
 floating-latest compatibility. Cached dependencies were used with

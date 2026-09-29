@@ -36,7 +36,7 @@ finding, preserves the discovered history and cites the added discriminators.
 | F2: committed work stranded on an idle current_thread origin, identified → fixed → reviewed in [#216](https://github.com/dshbox/cordis-rs/pull/216) | ADR 0029; public dispose, typed removal and abandoned creation regressions leave the origin alive but idle | Framework completion still needs the process and completion executor to run; it cannot keep an earlier external driver alive |
 | F3: ignored unknown Loader source fields, identified → accepted behavior change → implemented and reviewed in [#217](https://github.com/dshbox/cordis-rs/pull/217) | Interface/source schema and Loader changelog now explicitly require strict Deserialize; public parse/load controls distinguish typos from valid disabled/private rows | This is a deliberate pre-1.0 Deserialize compatibility change, not a demonstrated violation of the former unspecified unknown-field contract; arbitrary Plugin config remains governed by its own schema |
 | F4: wait_state deadline thread cost and spawn-refusal panic, identified → fixed → reviewed in [#218](https://github.com/dshbox/cordis-rs/pull/218) | Shared monotonic scheduler, cancellation/removal and contained wakes; public thread-count/waker tests plus isolated refusal injection | DeadlineUnavailable is a new variant on a non-exhaustive enum; private injection proves the scheduler refusal/retry seam, while production maps that refusal to the public error |
-| F5: apply placement disclosure, identified → documented in this follow-up | Plugin rustdoc, interface and guide rule 1 now state non-blocking polls and shared completion-runtime placement | Ordinary spawn's pre-handoff drift rechecks remain caller-driven; no origin-runtime affinity, dedicated per-Fiber executor or progress guarantee while consumers block both completion workers |
+| F5: apply placement disclosure, identified → documented in this follow-up | ADR 0029, Plugin rustdoc, interface and guide rule 1 now state non-blocking polls and shared completion-runtime placement | Ordinary spawn's pre-handoff drift rechecks remain caller-driven; no origin-runtime affinity, dedicated per-Fiber executor or progress guarantee while consumers block both completion workers; earlier captured resources retain their original driver and the caller's paused clock does not control completion-runtime time |
 
 ## Prepare, seal and spawn
 
@@ -73,6 +73,10 @@ rechecks. Restart/update/background convergence and era-successor initial apply
 run on the shared two-worker completion runtime. Blocking both workers can stall
 unrelated lifecycle work and async cleanup. This source review establishes current
 placement, not a new permanent worker-count promise or an unbounded-progress proof.
+F5 discloses an execution-location/progress boundary under non-blocking apply polls;
+it does not establish a framework invariant violation when Plugin code blocks
+the workers. The review's intentionally failing saturation probe illustrates that boundary;
+it is not promoted to normal-suite conformance coverage or an executor change.
 
 The Interrupted discriminator pauses a yield-free handoff window using a private
 probe, then invokes public typed removal. It verifies a reachable safe-API race,
