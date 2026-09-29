@@ -354,7 +354,11 @@ What they demonstrate:
 | `chat_capstone` | the full composition, including Pending convergence, update, and era replacement |
 
 Start with `hello_plugin`; use the other examples as focused tours of the public
-surface.
+surface. For practical composition, follow the ten-rule
+[consumer guide](docs/consumer-guide.md), which links the normative authorities,
+runnable sources and baseline-specific evidence. The guide is non-normative;
+the [freeze recommendation](docs/api-freeze-recommendation.md) records readiness
+conditions without declaring API freeze or 1.0.
 
 ## Design boundaries worth knowing
 

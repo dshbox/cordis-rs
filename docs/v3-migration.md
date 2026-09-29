@@ -13,7 +13,7 @@ statement in this document becomes normative by being stated here.
 Every conclusion cited below has exactly one normative owner:
 [CONTEXT.md](../CONTEXT.md) for canonical vocabulary,
 [docs/v3-architecture.md](v3-architecture.md) for the target composition and
-[the eleven ADRs](v3-architecture.md#decision-index) for hard-to-reverse decisions and their rationales,
+[the architecture decision index](v3-architecture.md#decision-index) for hard-to-reverse decisions and their rationales,
 [docs/v3-public-interface.md](v3-public-interface.md) for the exhaustive
 caller-visible contract, and
 [docs/v3-upstream-parity-ledger.md](v3-upstream-parity-ledger.md) for

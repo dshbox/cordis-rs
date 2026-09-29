@@ -125,7 +125,7 @@ one canonical semantic module path:
 | `plugin` | `Plugin`, `PreparedPlugin`, `PreparedChange`, `InjectSpec` |
 | `lifecycle` | `FiberHandle`, `FiberId`, `FiberState`, `FiberRole`, `UpdateOutcome`, `PluginFailure`, `PluginFailureKind`, `LifecycleRecursion`, `LifecycleOperation`, `SpawnError`, `ReadyError`, `RestartError`, `WaitStateError`, `UpdateError`, `EraSwapError`, `EraSwapFailure`, `UpdateListener`, `UpdateNext` |
 | `service` | `Service`, `ConfigurableService`, `ServiceRealm`, `ServicePublication`, `RealmMappingError`, `ServiceLookupError`, `ServicePublishError`, `ServiceControlError`, `ConfigResolutionError` |
-| `event` | `Event`, `Scope`, `Routing`, `QueryOutcome`, `Listener`, `ListenerOptions`, `ListenerRegistration`, `ListenerRegistrationId`, `Next`, `StatefulCallback`, `observer`, `observer_sync`, `responder`, `responder_sync`, `mapper`, `mapper_sync`, `around`, `ListenerRole`, `EventOperation`, `DispatchOutcomeKind`, `InvocationFailure`, `InvocationFailureKind`, `ParallelFailures`, `ListenerRegistrationError`, `DispatchError` |
+| `event` | `Event`, `Scope`, `Routing`, `QueryOutcome`, `Listener`, `ListenerOptions`, `ListenerRegistration`, `ListenerRegistrationId`, `Next`, `StatefulCallback`, `with_state`, `observer`, `observer_sync`, `responder`, `responder_sync`, `mapper`, `mapper_sync`, `around`, `ListenerRole`, `EventOperation`, `DispatchOutcomeKind`, `InvocationFailure`, `InvocationFailureKind`, `ParallelFailures`, `ListenerRegistrationError`, `DispatchError` |
 | `effect` | `CleanupResult`, `EffectRegistration`, `EffectRegistrationError`, `EffectFailure`, `EffectFailureKind`, `TaskRegistrationError` |
 | `logger` | `Level`, `LogRecord`, `Logger`, `Exporter`, `ExporterRegistration`, `BufferExporter`, `BufferSizeZero` |
 | `observation` | `RuntimeSnapshot`, `FiberSnapshot`, `ServiceSnapshot`, `ServicePublicationId`, `ScopeId`, `ObservationRouting`, `RuntimeObservation`, `ResidencyChange`, `ListenerChange`, `RuntimeObserver` |
@@ -256,6 +256,23 @@ actually retains or erases them. `Plugin` has no `Sync` supertrait.
 delegates the complete contract. `name()` is diagnostic only and
 defaults to `type_name`; `inject()` defaults to `InjectSpec::none()`.
 There is no declaration-only `Plugin::provide`.
+
+`Plugin::apply` must keep each poll non-blocking. Move synchronous blocking
+sections to `tokio::task::spawn_blocking` and await the returned JoinHandle
+asynchronously within apply. Apply has no affinity guarantee to the spawning
+runtime and may run on a Cordis-owned runtime: `tokio::spawn`,
+`Handle::current()` and `Context::run` inside apply use the runtime polling it.
+A blocked poll can stall async cleanup, restart, update and convergence for
+unrelated Fibers. Which runtime polls a given apply, and the size of any
+Cordis-owned runtime, are neither consumer configuration controls nor
+compatibility promises.
+
+Tokio tasks and time/IO operations created during apply bind to the runtime
+polling it. When that is a Cordis-owned runtime, a paused clock on the caller's
+test runtime does not control their time. Resources captured earlier from the
+caller's runtime still depend on its original driver, which Cordis cannot keep
+alive after that runtime shuts down. Current placement and sizing are recorded in
+[ADR 0029's completion executor posture](adr/0029-lifecycle-commits-complete-and-critical-sections-are-closed.md#consequences-of-the-rule).
 
 `PrepareError` and `ApplyError` are concrete Plugin-authoring error types, not
 application-erasure slots. `BoxError` remains an optional outer application boundary

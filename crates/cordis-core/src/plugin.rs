@@ -140,6 +140,14 @@ pub trait Plugin: Send + 'static {
 
     /// Apply one Plugin input to `ctx`.
     ///
+    /// Keep each poll non-blocking. Move synchronous blocking sections to
+    /// `tokio::task::spawn_blocking` and await its JoinHandle asynchronously.
+    /// Do not assume affinity to the spawning runtime: apply may be polled on
+    /// a Cordis-owned runtime, and `tokio::spawn`, `Handle::current()` and
+    /// [`Context::run`](crate::Context::run) inside apply use whichever runtime
+    /// polls it. A blocked poll can stall unrelated Fibers' lifecycle work and
+    /// async cleanup.
+    ///
     /// A returned error or a panic is normalized exactly once into the
     /// opaque [`PluginFailure`](crate::lifecycle::PluginFailure) (kind plus owned
     /// diagnostic text) at the framework boundary: for the initial apply
