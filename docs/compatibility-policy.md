@@ -118,8 +118,8 @@ and cross-crate APIs unusable together.
 
 When a sibling-facing core seam must break, coordinate the semantic packages so
 the new leaf and core requirements describe a genuinely incompatible line. For
-the current `0.4.x` semantic line, that means a break cannot masquerade as
-another `0.4.x` patch. Once the stable line is `1.x`, the corresponding
+the current `0.5.x` semantic line, that means a break cannot masquerade as
+another `0.5.x` patch. Once the stable line is `1.x`, the corresponding
 incompatible change requires the next major line.
 
 The `cordis-rs` facade may release independently, but each facade release must

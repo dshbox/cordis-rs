@@ -12,11 +12,11 @@ than the application-facing compatibility facade.
 
 ```toml
 [dependencies]
-cordis-core = "0.4"
+cordis-core = "0.5"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 
-Application authors can instead depend on `cordis-rs = "0.9"`. That package
+Application authors can instead depend on `cordis-rs = "0.10"`. That package
 keeps the historical Rust import path `use cordis::...` and re-exports the
 `cordis-core` public surface.
 
@@ -108,15 +108,15 @@ build on the same semantic contract.
 
 | Crate | Role |
 |---|---|
-| `cordis-rs` `0.9.x` | application-facing facade; Rust crate name remains `cordis` |
-| `cordis-timer` `0.4.x` | generation-owned sleep, interval, and timeout operations |
-| `cordis-loader` `0.4.x` | immutable declarative load plans and typed resolution |
+| `cordis-rs` `0.10.x` | application-facing facade; Rust crate name remains `cordis` |
+| `cordis-timer` `0.5.x` | generation-owned sleep, interval, and timeout operations |
+| `cordis-loader` `0.5.x` | immutable declarative load plans and typed resolution |
 
 ## Compatibility and MSRV
 
-The v3 semantic crates began at `0.1.x` and now publish on `0.4.x`. The
+The v3 semantic crates began at `0.1.x` and now publish on `0.5.x`. The
 application-facing `cordis-rs` line entered v3 at `0.7.x` and now publishes on
-`0.9.x`. Cordis v3 requires **Rust 1.88 or newer** and uses
+`0.10.x`. Cordis v3 requires **Rust 1.88 or newer** and uses
 Rust edition 2024.
 
 Cordis is pre-1.0. Semantic compatibility is documented explicitly, but minor
