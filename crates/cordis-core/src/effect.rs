@@ -540,30 +540,30 @@ where
 /// this future while the work is still pending, the same pinned future is handed
 /// to [`detach`], so completion never depends on the abandoned caller or on a
 /// runtime nobody drives. A poll unwind is a failure, never a transfer signal.
-pub(crate) struct CallerDriven<F>
-where
-    F: Future<Output = ()> + Send + 'static,
-{
-    work: Option<Pin<Box<F>>>,
+///
+/// The owner runs in its own empty settle-attribution scope, carried inside the
+/// transferable future. Settle frames it pushes therefore never land on the
+/// caller's task-local stack, where a transfer would strand them as a false
+/// recursion refusal for the caller; and the caller's frames never leak into
+/// the owner, matching work that starts on a freshly spawned task.
+pub(crate) struct CallerDriven {
+    work: Option<Pin<Box<dyn Future<Output = ()> + Send + 'static>>>,
     transfer_on_drop: bool,
 }
 
-impl<F> CallerDriven<F>
-where
-    F: Future<Output = ()> + Send + 'static,
-{
-    pub(crate) fn new(work: F) -> Self {
+impl CallerDriven {
+    pub(crate) fn new(work: impl Future<Output = ()> + Send + 'static) -> Self {
         Self {
-            work: Some(Box::pin(work)),
+            work: Some(Box::pin(crate::fiber::with_settle_attribution(
+                Default::default(),
+                work,
+            ))),
             transfer_on_drop: true,
         }
     }
 }
 
-impl<F> Future for CallerDriven<F>
-where
-    F: Future<Output = ()> + Send + 'static,
-{
+impl Future for CallerDriven {
     type Output = ();
 
     fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<()> {
@@ -585,10 +585,7 @@ where
     }
 }
 
-impl<F> Drop for CallerDriven<F>
-where
-    F: Future<Output = ()> + Send + 'static,
-{
+impl Drop for CallerDriven {
     fn drop(&mut self) {
         if self.transfer_on_drop
             && let Some(work) = self.work.take()
