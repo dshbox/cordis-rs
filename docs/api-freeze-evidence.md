@@ -75,8 +75,21 @@ unrelated lifecycle work and async cleanup. This source review establishes curre
 placement, not a new permanent worker-count promise or an unbounded-progress proof.
 F5 discloses an execution-location/progress boundary under non-blocking apply polls;
 it does not establish a framework invariant violation when Plugin code blocks
-the workers. The review's intentionally failing saturation probe illustrates that boundary;
-it is not promoted to normal-suite conformance coverage or an executor change.
+the workers. Historical saturation observation at `ed07d31`: on an eight-worker caller Tokio
+runtime, two Plugins were spawned, then restarted. Their restart applies each
+blocked a completion worker on a synchronous condition-variable gate. After both
+had entered the gate, an unrelated Fiber with a trivial `effect(|| async {})`
+cleanup was disposed. Its dispose barrier did not complete within a two-second
+caller-runtime timeout. The gate was then opened, both restarts were joined and
+all Fibers were explicitly disposed. The probe's assertion expected disposal
+within that bound and therefore failed intentionally; it characterized saturation,
+not a supported non-blocking Plugin failing its lifecycle contract.
+
+The original observation used Rust 1.95.0 and dependencies vendored from upstream
+tags, rather than the canonical Rust 1.98.1 and locked registry artifacts. It is
+not a current-head gate result, a universal progress proof or normal-suite
+conformance coverage. Current apply placement is separately source-reviewed above;
+the freeze recommendation requires its own exact-head validation.
 
 The Interrupted discriminator pauses a yield-free handoff window using a private
 probe, then invokes public typed removal. It verifies a reachable safe-API race,
