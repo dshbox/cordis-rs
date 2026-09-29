@@ -217,7 +217,10 @@ impl StatePublication {
             return Ok(());
         }
 
-        let deadline = crate::deadline::watchdog(timeout);
+        // Armed only once the wait must actually park: satisfied waits and
+        // unrepresentable deadlines never need the scheduler thread.
+        let deadline = crate::deadline::watchdog(timeout)
+            .map_err(|crate::deadline::DeadlineUnavailable| WaitStateError::DeadlineUnavailable)?;
         tokio::pin!(deadline);
         loop {
             let notified = self.changed.notified();
@@ -265,55 +268,59 @@ mod state_publication_tests {
     }
 
     #[tokio::test]
-    async fn completed_waits_do_not_hold_watchdogs_until_timeout() {
-        let timeout = crate::deadline::tracked_watchdog_timeout();
-        let before = crate::deadline::live_watchdog_threads();
+    async fn unbounded_waits_resolve_on_publication_without_a_deadline() {
+        // An unrepresentable deadline never elapses and arms no scheduler
+        // entry; satisfied and pending waits must both still resolve.
+        let timeout = Duration::MAX;
         let immediate = StatePublication::new(FiberState::Active);
-
         for _ in 0..20 {
             immediate
                 .wait_for(FiberState::Active, timeout)
                 .await
                 .expect("the already-published target resolves immediately");
         }
-        assert_eq!(
-            crate::deadline::live_watchdog_threads(),
-            before,
-            "immediately-satisfied waits must not leave watchdog threads",
-        );
 
         let state = Arc::new(StatePublication::new(FiberState::Pending));
         let waiter = {
             let state = state.clone();
             tokio::spawn(async move { state.wait_for(FiberState::Active, timeout).await })
         };
-
-        for _ in 0..100 {
-            if crate::deadline::live_watchdog_threads() == before + 1 {
-                break;
-            }
+        for _ in 0..10 {
             tokio::task::yield_now().await;
         }
-        assert_eq!(crate::deadline::live_watchdog_threads(), before + 1);
+        assert!(!waiter.is_finished(), "an unbounded wait stays pending");
 
         state.publish(FiberState::Active);
         state.notify();
         waiter
             .await
             .expect("waiter task stays alive")
-            .expect("the publication satisfies the wait");
+            .expect("the publication satisfies an unbounded wait");
+    }
 
-        for _ in 0..25 {
-            if crate::deadline::live_watchdog_threads() == before {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        }
-        assert_eq!(
-            crate::deadline::live_watchdog_threads(),
-            before,
-            "an armed watchdog must exit when the wait resolves early",
-        );
+    #[tokio::test]
+    async fn early_publication_resolves_an_armed_wait() {
+        let state = Arc::new(StatePublication::new(FiberState::Pending));
+        let (entered_tx, entered_rx) = tokio::sync::oneshot::channel();
+        let waiter = {
+            let state = state.clone();
+            tokio::spawn(async move {
+                let wait = state.wait_for(FiberState::Active, Duration::from_secs(600));
+                tokio::pin!(wait);
+                assert!(futures::poll!(&mut wait).is_pending());
+                entered_tx.send(()).unwrap();
+                wait.await
+            })
+        };
+        entered_rx.await.unwrap();
+        state.publish(FiberState::Active);
+        state.notify();
+        waiter
+            .await
+            .expect("waiter task stays alive")
+            .expect("the publication satisfies the wait");
+        // Dropping the resolved wait's arm removes its scheduler entry
+        // exactly; `deadline::tests` proves that on an isolated scheduler.
     }
 }
 
@@ -1466,6 +1473,11 @@ pub enum WaitStateError {
     /// The call would synchronously wait on its own settle context.
     #[error("{0}")]
     Recursion(LifecycleRecursion),
+    /// The wait needed a deadline, but the process refused to start Cordis's
+    /// single shared deadline thread. The target state was not observed;
+    /// a later call retries starting that thread.
+    #[error("wait_state could not arm its deadline: the deadline thread could not be started")]
+    DeadlineUnavailable,
 }
 
 #[cfg(test)]
