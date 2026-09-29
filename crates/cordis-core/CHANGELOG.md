@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+## [0.5.0](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.4.1...cordis-core-v0.5.0) - 2026-09-29
+
+### Changed
+
+- *(core)* **Breaking contract narrowing:** user destructor panics follow one
+  best-effort rule ([ADR 0041](https://github.com/dshbox/cordis-rs/blob/main/docs/adr/0041-user-destructor-panics-are-best-effort.md)).
+  Values supplied to Cordis must not panic when dropped; containment and
+  reporting of such a panic is best-effort only, and the earlier Event and
+  era-swap destructor promises are withdrawn. API spellings, runtime behavior
+  and existing containment are unchanged.
+- *(core)* Coordinate the semantic crates on the `0.5` line. Update direct core,
+  timer and loader dependency requirements together.
+
 ## [0.4.1](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.4.0...cordis-core-v0.4.1) - 2026-09-29
 
 ### Other

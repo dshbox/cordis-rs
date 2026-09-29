@@ -19,7 +19,7 @@ For applications, keep the historical package and import identity:
 
 ```toml
 [dependencies]
-cordis-rs = "0.9"
+cordis-rs = "0.10"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 ```
 
@@ -32,29 +32,31 @@ Framework and plugin authors may depend on that contract directly:
 
 ```toml
 [dependencies]
-cordis-core = "0.4"
+cordis-core = "0.5"
 ```
 
 Optional capabilities stay explicit semantic dependencies:
 
 ```toml
-cordis-timer = "0.4"
-cordis-loader = "0.4"
+cordis-timer = "0.5"
+cordis-loader = "0.5"
 ```
 
 Cordis v3 requires Rust **1.88** or newer and uses Rust 2024 Edition.
 
-When upgrading from semantic `0.3` / facade `0.8`, update core, timer and loader
-requirements together to `0.4` and the facade to `0.9`. The facade re-exports
-core types; mixing `0.3` and `0.4` core types causes type mismatches. Loader
-`0.4` rejects unknown source fields: correct misspelled keys, remove fields
-belonging to another tagged variant, and put Plugin-specific data in that Plugin
-entry's `config`. See the [Loader release notes](crates/cordis-loader/CHANGELOG.md)
-and [facade release notes](crates/cordis/CHANGELOG.md).
+When upgrading from semantic `0.4` / facade `0.9`, update core, timer and loader
+requirements together to `0.5` and the facade to `0.10`. The facade re-exports
+core types; mixing `0.4` and `0.5` core types causes type mismatches. No API
+spelling or runtime behavior changes: `0.5` narrows user destructor panics to one
+best-effort rule ([ADR 0041](docs/adr/0041-user-destructor-panics-are-best-effort.md)),
+so keep the `Drop` of values you pass to Cordis panic-free. For earlier upgrades,
+including Loader's strict source schema in `0.4`, see [MIGRATION.md](MIGRATION.md),
+the [core release notes](crates/cordis-core/CHANGELOG.md) and the
+[facade release notes](crates/cordis/CHANGELOG.md).
 
 ## Migrating from 0.6.x
 
-`cordis-rs 0.9.x` is the current application-facing v3 release line. The v3
+`cordis-rs 0.10.x` is the current application-facing v3 release line. The v3
 architecture first shipped on the `0.7.x` line. The `0.6.x` implementation remains
 on the `legacy/0.6` maintenance branch for
 critical bug and security fixes. The v3 transition is intentionally breaking;
@@ -378,9 +380,9 @@ independent instead of letting one hidden tree control all three.
 
 ## Project status
 
-The v3 semantic crates began at `0.1.0` and now publish on the `0.4.x` line; the
+The v3 semantic crates began at `0.1.0` and now publish on the `0.5.x` line; the
 historical application package entered v3 at `cordis-rs 0.7.0` and now publishes
-on `0.9.x`. The workspace uses Rust 2024 Edition with MSRV 1.88.
+on `0.10.x`. The workspace uses Rust 2024 Edition with MSRV 1.88.
 As a pre-1.0 project, the public API may still evolve before the freeze candidate.
 The intended stable rules are documented in the
 [`1.0 compatibility policy`](docs/compatibility-policy.md), and the normative

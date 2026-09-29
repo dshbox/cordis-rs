@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+## [0.5.0](https://github.com/dshbox/cordis-rs/compare/cordis-loader-v0.4.1...cordis-loader-v0.5.0) - 2026-09-29
+
+### Changed
+
+- *(loader)* Coordinate with `cordis-core 0.5`; update semantic-crate dependency
+  requirements together. User destructor panics now follow the best-effort rule
+  of ADR 0041; Loader's public operations are unchanged by this release
+  coordination.
+
 ## [0.4.0](https://github.com/dshbox/cordis-rs/compare/cordis-loader-v0.3.27...cordis-loader-v0.4.0) - 2026-09-29
 
 ### Changed
