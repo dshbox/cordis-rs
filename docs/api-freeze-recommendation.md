@@ -20,14 +20,18 @@ All ten consumer rules and the updated naming inventory are delivered. Freeze
 remains the author's explicit subsequent decision.
 
 Production source baseline is
-`680b3b058659a6318e51ec174537a424118f2927`, fetched on 2026-09-29 after
+`4824196bbff6dada178ed230c344e12ad164919e`, fetched on 2026-09-29. It includes
 [#214](https://github.com/dshbox/cordis-rs/pull/214),
 [#216](https://github.com/dshbox/cordis-rs/pull/216),
-[#217](https://github.com/dshbox/cordis-rs/pull/217) and
-[#218](https://github.com/dshbox/cordis-rs/pull/218) merged. PR #210 is rebased onto
-that revision; affected conformance, naming, schema and scheduling claims are
-rechecked against it. The original `ed07d31` investigation and `060c33b` candidate
-receipt below remain historical. Their green checks do not validate this candidate.
+[#217](https://github.com/dshbox/cordis-rs/pull/217),
+[#218](https://github.com/dshbox/cordis-rs/pull/218) and the coordinated release
+merged in [#215](https://github.com/dshbox/cordis-rs/pull/215). PR #210 is rebased
+onto that revision. The release changes versions and migration documentation,
+not production Rust source or tests; affected conformance, naming, schema and
+scheduling claims remain rechecked against the current baseline. Earlier
+follow-ups at `680b3b0`, the original `ed07d31` investigation and `060c33b`
+candidate receipt remain historical. Their green checks do not validate this
+candidate.
 The preparation diff adds documentation, including Plugin apply rustdoc; it does
 not change production behavior, dependencies, toolchain, features or golden stderr.
 The with_state correction still records an already-exported item.
@@ -83,16 +87,18 @@ The current source baseline includes the four merged follow-up PRs below.
 | Draft Wasm #145: excluded, not a queued break | [Experiment/wasm components](https://github.com/dshbox/cordis-rs/pull/145); author confirmed independent scope during planning | Author/experiment owner; no dependency on this candidate, future workspace/MSRV decisions remain separate |
 | Broader state-space/performance expansion: independent follow-up | [Bounded concurrency evidence](lifecycle-concurrency-modeling.md), [performance baseline/policy](performance-benchmarking.md), ROADMAP confidence goals | Maintainer; outside this preparation, no newly invented semver gate |
 
-Tracker inspection on 2026-09-29 found parent spec #200 open, this PR,
-[release PR #215](https://github.com/dshbox/cordis-rs/pull/215) and the excluded
-Wasm draft. The pending release PR targets semantic packages `0.4.0` and the
-independently versioned facade `0.9.0`. It preserves F3's breaking Deserialize
-note and F4's additive variant note. The new semantic line records the accepted
-input behavior change; the facade line coordinates the identity of its public
-core re-exports with `cordis-core 0.4`. Consumers must upgrade direct core/timer/loader
-requirements together to `0.4` and the facade to `0.9`, as documented in that
-release PR. This pending release plan does not replace the exact candidate's
-review and CI receipt.
+Tracker inspection on 2026-09-29 found parent spec #200 and this PR open,
+[release PR #215](https://github.com/dshbox/cordis-rs/pull/215) merged and the
+excluded Wasm draft still independent. The merged release preparation selects
+semantic packages `0.4.0` and the independently versioned facade `0.9.0`. It
+preserves F3's breaking Deserialize note and F4's additive variant note. The
+new semantic line records the accepted input behavior change; the facade line
+coordinates the identity of its public core re-exports with `cordis-core 0.4`.
+Consumers must upgrade direct core/timer/loader requirements together to `0.4`
+and the facade to `0.9`, as documented in that release PR and the current
+[migration guide](../MIGRATION.md). Merging a release preparation does not
+replace the exact candidate's review and CI receipt or establish package
+publication status.
 Merged tracker state alone does not prove correctness or absence of further defects.
 The updated source-to-contract review and named regressions support the current
 finding; the original "none identified" statement is superseded, not preserved as
@@ -122,12 +128,17 @@ ticket completion records.
 
 These pre-rebase commit IDs and receipts preserve the original review history. They
 are not the new rebased commits or evidence of a gate run on the updated candidate.
-The follow-up reviews the complete current preparation diff against fixed source
+The earlier follow-up reviewed the complete preparation diff against fixed source
 baseline `680b3b0` on Standards and Spec axes, then runs eight updated local gates
 under `freeze-210-review-20260929-01`. ADR alignment and blocking-section/driver
-clarifications then use follow-up run `freeze-210-f5-20260929-01`. Results and
+clarifications then used follow-up run `freeze-210-f5-20260929-01`. Results and
 exact-head CI for the final updated commit belong in the PR #210 receipt;
 the intermediate `b3b8210` checks do not validate that later revision.
+
+After #215 merged, the current full preparation diff is reviewed against fixed
+baseline `4824196` on both axes and uses run
+`freeze-210-post-release-20260929-01`. Its exact-head results belong in the PR
+receipt; earlier `a3f182a` and `da50734` results remain historical.
 
 Each run covers toolchain, fmt, clippy, vocabulary, tests, docs, examples and
 floating-latest compatibility. Cached dependencies were used with

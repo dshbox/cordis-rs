@@ -1,10 +1,12 @@
 # API freeze conformance evidence
 
 This is a non-normative contract-to-production review. Production source baseline:
-`680b3b058659a6318e51ec174537a424118f2927`, fetched on 2026-09-29. The original
+`4824196bbff6dada178ed230c344e12ad164919e`, fetched on 2026-09-29. The original
 2026-09-28 deliveries reviewed `ed07d31`; their receipts are historical, not
 validation of this later revision. The PR #210 follow-up rechecks affected claims
-after #214, #216, #217 and #218 landed. The delivery spec is [#200](https://github.com/dshbox/cordis-rs/issues/200). Each path's completion
+after #214, #216, #217 and #218 landed, then rebases onto the coordinated
+semantic `0.4.0` / facade `0.9.0` release merged in #215. That release changes
+versions and migration documentation, not production Rust source or tests. The delivery spec is [#200](https://github.com/dshbox/cordis-rs/issues/200). Each path's completion
 record identifies its fixed review point, resulting commit, two review axes and
 eight local gates. A final candidate recommendation is a separate delivery.
 

@@ -1,7 +1,7 @@
 # Public API naming review
 
 Non-normative review of the supported v3 inventory against production baseline
-`680b3b058659a6318e51ec174537a424118f2927`, fetched on 2026-09-29, under
+`4824196bbff6dada178ed230c344e12ad164919e`, fetched on 2026-09-29, under
 [spec #200](https://github.com/dshbox/cordis-rs/issues/200).
 The [public inventory](v3-public-interface.md) owns exact declarations and paths;
 this review lists names to record their semantic assessment, not to define another API.
