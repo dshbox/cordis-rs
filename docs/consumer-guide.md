@@ -154,6 +154,13 @@ completion survives loss of the origin executor while the process remains alive;
 it cannot extend the lifetime of an external driver captured earlier or drain at
 process exit. Root registrations require their own explicit controls.
 
+Keep the `Drop` of every value you hand to Cordis panic-free: Plugin inputs,
+Service values, closures and their captures, Event values and exporters. Cordis
+still drops them outside its locks, but it contains a destructor panic only on a
+best-effort basis and promises no specific outcome; see the
+[user destructor rule](v3-public-interface.md#user-destructor-panics) and
+[ADR 0041](adr/0041-user-destructor-panics-are-best-effort.md).
+
 Authority: [effects and tasks](v3-public-interface.md#effects-and-tasks),
 [ADR 0028](adr/0028-fiber-generations-own-cleanup-runtime-owns-residency.md),
 [ADR 0029](adr/0029-lifecycle-commits-complete-and-critical-sections-are-closed.md).
@@ -213,7 +220,8 @@ Run `cargo run --locked -p gateway` for
 `cargo run --locked -p chat_capstone` for
 [roles, registration Context and invocation-local state](../examples/chat_capstone/src/main.rs).
 The [evidence](api-freeze-evidence.md#event-dispatch-and-exact-claims) covers
-cancellation, failure correlation and destructor boundaries separately.
+cancellation and failure correlation separately; destructor panics follow the
+best-effort rule in rule 5.
 
 ## 8. Observe committed facts and install explicit Logger exporters
 

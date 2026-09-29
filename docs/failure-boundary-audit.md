@@ -152,3 +152,57 @@ following evidence, authority, and discoverability gaps:
 
 No Runtime shutdown API, global error, ownership abstraction, Loader overlay
 helper, or published-sibling seam redesign was introduced.
+
+## Addendum: user destructor panics (2026-09-29)
+
+Recorded on 2026-09-29 against `main` at
+`30c96e3 Merge pull request #210 from dshbox/docs/api-freeze-preparation`. The
+matrices above keep their original `bada4ca` baseline and are not rewritten.
+
+The original matrix had no axis for a user-supplied value whose destructor panics
+while Cordis drops it. From 2026-09-25, a series of findings on that axis showed
+that such a panic could break normative contracts of that time: lifecycle
+completion barriers, attempt-all removal and rollback, and Event completion.
+Each fix added containment, and some added destructor clauses to the public
+interface and ADR 0033. Under the ROADMAP [exit rule](../ROADMAP.md#exit-rule),
+those findings reopened the required criterion **Close a 1.0 failure-boundary
+audit**.
+[ADR 0041](adr/0041-user-destructor-panics-are-best-effort.md) and this addendum
+close it again. The axis is classified below, so the ROADMAP checkbox stays
+checked and unchanged.
+
+**User destructor panic — Unsupported as a contract (ADR 0041).** The
+[general rule](v3-public-interface.md#user-destructor-panics) requires values
+supplied to Cordis not to panic when dropped. Cordis contains and reports such a
+panic on a best-effort basis only and promises no specific outcome. The
+containment added by the fixes below is kept. Its tests are retained as
+best-effort robustness regressions, not contract discriminators:
+
+| Fix | Retained regression |
+| --- | --- |
+| [#170](https://github.com/dshbox/cordis-rs/pull/170) superseded input Drop across update and era swap | `crates/cordis-core/tests/owner_panic_barriers.rs`: `panicking_superseded_input_after_update_commit_does_not_strand_ready`, `panicking_superseded_input_during_era_swap_leaves_source_terminal` |
+| [#172](https://github.com/dshbox/cordis-rs/pull/172) era dependent barrier after input Drop panic | `crates/cordis-core/tests/era_input_drop_terminal.rs`: `input_drop_panic_waits_for_final_dependent_convergence`, `canceled_caller_still_reports_original_drop_panic_after_final_barrier` |
+| [#174](https://github.com/dshbox/cordis-rs/pull/174) panic payload destruction during convergence | `crates/cordis-core/tests/service_convergence_owner.rs`: `payload_drop_panic_cannot_orphan_service_convergence_owner`, `exporter_payload_drop_panic_cannot_orphan_cleanup_convergence_owner`; unit test `contained.rs::async_containment_consumes_a_panicking_panic_payload` |
+| [#177](https://github.com/dshbox/cordis-rs/pull/177) exporter Drop during Service convergence logging | `service_convergence_owner.rs`: `exporter_object_drop_after_self_removal_cannot_orphan_convergence` |
+| [#179](https://github.com/dshbox/cordis-rs/pull/179) dependent destruction during Service drift kick | unit test `service.rs::disposed_dependent_last_arc_does_not_orphan_provider_restart` |
+| [#181](https://github.com/dshbox/cordis-rs/pull/181) dependent destruction during era convergence | unit tests in `fiber/era.rs`: `entry_convergence_contains_a_disposed_dependent_last_arc`, `cancelled_swap_cleanup_contains_the_successor_input_destruction`, `undelivered_cleanup_converges_past_a_dependent_destructor_panic`, `final_convergence_contains_a_disposed_dependent_last_arc` |
+| [#185](https://github.com/dshbox/cordis-rs/pull/185), [#187](https://github.com/dshbox/cordis-rs/pull/187) typed group removal member destruction | `crates/cordis-core/tests/registry_group_drop.rs`: `group_removal_continues_after_a_members_final_input_drop_panics` |
+| [#189](https://github.com/dshbox/cordis-rs/pull/189) Loader rollback member input destruction | `crates/cordis-loader/tests/handoff.rs`: `abandonment_continues_after_last_input_drop_panics_between_members` |
+| [#191](https://github.com/dshbox/cordis-rs/pull/191) once listener callback destruction | `crates/cordis-core/tests/event_occurrences.rs`: `parallel_once_listener_capture_destruction_does_not_skip_claimed_sibling`, `once_around_capture_destruction_is_correlated_invocation_failure`, `callback_drop_panic_discards_an_answer_even_if_its_drop_also_panics` |
+| [#193](https://github.com/dshbox/cordis-rs/pull/193) unused waterfall tail destruction | `crates/cordis-core/tests/event_waterfall.rs`: `mapper_failure_survives_uncalled_tail_destructor_and_publishes_completion`, `preflight_failure_survives_unused_tail_destructor_and_publishes_completion` |
+| [#195](https://github.com/dshbox/cordis-rs/pull/195) unclaimed Event snapshots on early return | `crates/cordis-core/tests/event_early_return.rs`: `emit_failure_survives_unclaimed_removed_listener_drop_and_reports_completion`, `query_answer_survives_unclaimed_removed_listener_drop_and_reports_completion`, `waterfall_skipped_mapper_drop_preserves_tail_result_and_completion` |
+| [#198](https://github.com/dshbox/cordis-rs/pull/198) each uncalled waterfall snapshot | `crates/cordis-core/tests/event_waterfall_uncalled_chain.rs`: `mapper_error_contains_each_uncalled_listener_destructor` |
+
+Some neighboring tests check that Cordis destroys user values outside framework
+synchronization, for example
+`logger.rs::exporter_removal_drops_the_exporter_outside_the_list_lock` and
+`effects.rs::run_task_polling_and_output_destruction_stay_outside_framework_locks`.
+They cover the ADR 0029 lock discipline, not destructor panics, and they remain
+contract discriminators. The #170 test
+`owner_panic_barriers.rs::new_update_apply_waits_until_superseded_input_drop_finishes`
+involves no panic: it checks that a superseded input's Drop finishes before the
+new apply starts. This addendum does not reclassify it; that ordering is an
+implementation property that the public interface does not currently state. Inert Drop of Cordis handles and registrations is
+likewise unchanged. A future destructor-panic finding is a best-effort
+robustness fix. It does not reopen this audit unless it also contradicts one of
+those unchanged contracts.
