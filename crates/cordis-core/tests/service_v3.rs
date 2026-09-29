@@ -751,26 +751,31 @@ impl Plugin for CapturingProvider {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn terminal_claim_closes_exact_service_mutation_before_unloading() {
+async fn committed_dispose_closes_exact_service_mutation_while_its_publication_remains() {
     let root = Context::new();
     let publication = Arc::new(parking_lot::Mutex::new(None));
+    let cleanup_started = Arc::new(tokio::sync::Notify::new());
+    let release_cleanup = Arc::new(tokio::sync::Notify::new());
     let provider = root
         .spawn(prepared(CapturingProvider {
             publication: publication.clone(),
-            block_cleanup: false,
-            cleanup_started: Arc::new(tokio::sync::Notify::new()),
-            release_cleanup: Arc::new(tokio::sync::Notify::new()),
+            block_cleanup: true,
+            cleanup_started: cleanup_started.clone(),
+            release_cleanup: release_cleanup.clone(),
         }))
         .await
         .unwrap();
     assert_eq!(provider.state(), FiberState::Active);
 
-    // Poll through the synchronous terminal claim. The detached teardown cannot
-    // run on this thread before we check the still-Active publication.
+    // The first poll commits the terminal claim and drives the owner inline
+    // until it parks in the LIFO cleanup registered after the publication.
+    // The exact occurrence is still present (a withdrawn slot would report
+    // StalePublication) but refuses mutation. The claim-to-Unloading ordering
+    // itself is covered by the crate-internal terminal-claim unit test.
     let dispose = provider.dispose();
     tokio::pin!(dispose);
     assert!(futures::poll!(&mut dispose).is_pending());
-    assert_eq!(provider.state(), FiberState::Active);
+    cleanup_started.notified().await;
 
     let occurrence = publication.lock().take().unwrap();
     assert_eq!(
@@ -785,7 +790,9 @@ async fn terminal_claim_closes_exact_service_mutation_before_unloading() {
             service: Counter::NAME,
         })
     );
+    release_cleanup.notify_one();
     dispose.await.unwrap();
+    assert_eq!(provider.state(), FiberState::Disposed);
 }
 
 #[tokio::test(flavor = "current_thread")]

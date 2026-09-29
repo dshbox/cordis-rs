@@ -63,9 +63,10 @@ pub mod __internal {
         ctx.fiber().assert_can_register().is_ok()
     }
 
-    /// Detach runtime-agnostic framework work from caller polling. Normal progress
-    /// stays on the current executor; shutdown transfers pending work to Cordis's
-    /// shared completion runtime.
+    /// Detach runtime-agnostic framework work from caller polling. From a
+    /// multi-thread runtime, progress stays on that executor and shutdown
+    /// transfers pending work to Cordis's shared completion runtime; from a
+    /// `current_thread` runtime or off-runtime it starts on the completion runtime.
     pub fn detach_completion(work: impl std::future::Future<Output = ()> + Send + 'static) {
         crate::effect::detach(work);
     }

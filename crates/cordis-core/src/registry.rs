@@ -184,14 +184,11 @@ impl crate::Context {
             return Ok(());
         };
 
-        let (tx, rx) = tokio::sync::oneshot::channel();
         let root = self.root.clone();
-        crate::effect::detach(async move {
+        crate::effect::CallerDriven::new(async move {
             detached.dispose_all(&root).await;
-            let _ = tx.send(());
-        });
-        rx.await
-            .expect("framework-owned group removal always publishes completion");
+        })
+        .await;
         Ok(())
     }
 }

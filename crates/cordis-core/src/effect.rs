@@ -533,19 +533,84 @@ where
     }
 }
 
-/// Detach Cordis-owned runtime-agnostic lifecycle work. Normal execution stays
-/// on the current Tokio runtime to preserve scheduling semantics; if that
-/// runtime shuts down while the task is pending, the same pinned future moves
-/// to the shared completion runtime. Off-runtime callers start there directly.
+/// Framework-owned committed work driven inline by the caller that committed it.
+///
+/// While the caller polls, the work runs in the caller's task, so ordinary
+/// scheduling (including a paused Tokio clock) is unchanged. If the caller drops
+/// this future while the work is still pending, the same pinned future is handed
+/// to [`detach`], so completion never depends on the abandoned caller or on a
+/// runtime nobody drives. A poll unwind is a failure, never a transfer signal.
+///
+/// The owner runs in its own empty settle-attribution scope, carried inside the
+/// transferable future. Settle frames it pushes therefore never land on the
+/// caller's task-local stack, where a transfer would strand them as a false
+/// recursion refusal for the caller; and the caller's frames never leak into
+/// the owner, matching work that starts on a freshly spawned task.
+pub(crate) struct CallerDriven {
+    work: Option<Pin<Box<dyn Future<Output = ()> + Send + 'static>>>,
+    transfer_on_drop: bool,
+}
+
+impl CallerDriven {
+    pub(crate) fn new(work: impl Future<Output = ()> + Send + 'static) -> Self {
+        Self {
+            work: Some(Box::pin(crate::fiber::with_settle_attribution(
+                Default::default(),
+                work,
+            ))),
+            transfer_on_drop: true,
+        }
+    }
+}
+
+impl Future for CallerDriven {
+    type Output = ();
+
+    fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<()> {
+        let this = self.get_mut();
+        this.transfer_on_drop = false;
+        let Some(work) = this.work.as_mut() else {
+            return std::task::Poll::Ready(());
+        };
+        match work.as_mut().poll(cx) {
+            std::task::Poll::Pending => {
+                this.transfer_on_drop = true;
+                std::task::Poll::Pending
+            }
+            std::task::Poll::Ready(()) => {
+                this.work.take();
+                std::task::Poll::Ready(())
+            }
+        }
+    }
+}
+
+impl Drop for CallerDriven {
+    fn drop(&mut self) {
+        if self.transfer_on_drop
+            && let Some(work) = self.work.take()
+        {
+            detach(work);
+        }
+    }
+}
+
+/// Detach Cordis-owned runtime-agnostic lifecycle work whose caller is gone.
+/// On a multi-thread runtime it stays on that executor to preserve scheduling
+/// semantics; if that runtime shuts down while the task is pending, the same
+/// pinned future moves to the shared completion runtime. Off-runtime and
+/// current-thread callers start there directly: a current-thread runtime runs
+/// spawned tasks only while some caller drives it, so parking abandoned
+/// committed work there would make completion depend on caller polling.
 pub(crate) fn detach(work: impl Future<Output = ()> + Send + 'static) {
     match tokio::runtime::Handle::try_current() {
-        Ok(handle) => {
+        Ok(handle) if handle.runtime_flavor() != tokio::runtime::RuntimeFlavor::CurrentThread => {
             let _join = handle.spawn(DetachedWork {
                 work: Some(Box::pin(work)),
                 transfer_on_drop: true,
             });
         }
-        Err(_) => {
+        Ok(_) | Err(_) => {
             let _join = completion_runtime().spawn(work);
         }
     }

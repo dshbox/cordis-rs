@@ -419,9 +419,11 @@ configuration, gate, claim, allocation, publication, or observation.
 Cancellation after it abandons only the caller's wait while
 framework-owned work continues independently of caller polling until it
 reaches the operation's documented barrier. Runtime-agnostic lifecycle work
-normally stays on the current executor and transfers its same pinned future to
-Cordis's shared completion runtime only if executor shutdown drops it after a
-normal `Pending`; arbitrary async effect cleanup starts on that completion
+is driven inline by the committing caller; an abandoned wait hands the same
+pinned future to the current multi-thread executor (moving to Cordis's shared
+completion runtime only if executor shutdown drops it after a normal `Pending`),
+or straight to the completion runtime from a `current_thread` runtime or
+off-runtime; arbitrary async effect cleanup starts on that completion
 runtime from its first poll. This uniform law and its supporting rules are the decision of
 [ADR 0029](adr/0029-lifecycle-commits-complete-and-critical-sections-are-closed.md).
 

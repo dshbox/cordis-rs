@@ -877,3 +877,137 @@ async fn unrelated_fiber_apply_may_ready_update_and_era_swap_another_allocation(
     assert_eq!(*seen.lock(), vec![1, 2, 3]);
     assert_eq!(caller.state(), FiberState::Active);
 }
+
+/// Registers one async cleanup that parks until released, so a committed
+/// terminal owner stays pending after its caller's first poll.
+struct ParkedTarget {
+    release: Arc<Notify>,
+}
+
+impl Plugin for ParkedTarget {
+    type Config = ();
+    type Input = ();
+    type PrepareError = Infallible;
+    type ApplyError = Infallible;
+
+    fn prepare(&self, (): ()) -> Result<(), Infallible> {
+        Ok(())
+    }
+
+    async fn apply(&self, ctx: Context, _: &()) -> Result<(), Infallible> {
+        let release = self.release.clone();
+        let _cleanup = ctx
+            .effect(move || async move { release.notified().await })
+            .unwrap();
+        Ok(())
+    }
+}
+
+type JoinOutcome = Arc<Mutex<Option<Option<Result<(), LifecycleRecursion>>>>>;
+
+/// From its own apply, commits the target's disposal (directly or through group
+/// removal), abandons that wait after one poll, then joins the framework-owned
+/// owner with a second `dispose()` from the same task.
+struct AbandonThenJoin {
+    target: FiberHandle,
+    release: Arc<Notify>,
+    via_removal: bool,
+    outcome: JoinOutcome,
+}
+
+impl Plugin for AbandonThenJoin {
+    type Config = ();
+    type Input = ();
+    type PrepareError = Infallible;
+    type ApplyError = Infallible;
+
+    fn prepare(&self, (): ()) -> Result<(), Infallible> {
+        Ok(())
+    }
+
+    async fn apply(&self, ctx: Context, _: &()) -> Result<(), Infallible> {
+        use futures::FutureExt;
+        if self.via_removal {
+            assert!(
+                ctx.remove_plugins::<ParkedTarget>()
+                    .now_or_never()
+                    .is_none(),
+                "group removal must commit and park in the target's cleanup"
+            );
+        } else {
+            assert!(
+                self.target.dispose().now_or_never().is_none(),
+                "dispose must commit and park in the target's cleanup"
+            );
+        }
+        // First-poll the joining dispose while the abandoned owner is still
+        // parked in the unreleased cleanup, so the recursion probe runs against
+        // live framework state instead of racing the owner's completion.
+        let join = self.target.dispose();
+        tokio::pin!(join);
+        if let std::task::Poll::Ready(refused) = futures::poll!(&mut join) {
+            *self.outcome.lock() = Some(Some(refused));
+            return Ok(());
+        }
+        self.release.notify_one();
+        let joined = bounded(3_000, join).await;
+        *self.outcome.lock() = Some(joined);
+        Ok(())
+    }
+}
+
+async fn abandoned_terminal_wait_can_be_joined_from_another_apply(via_removal: bool) {
+    let ctx = Context::new();
+    let release = Arc::new(Notify::new());
+    let target = ctx
+        .spawn(PreparedPlugin::from_input(
+            ParkedTarget {
+                release: release.clone(),
+            },
+            (),
+        ))
+        .await
+        .unwrap();
+    let outcome: JoinOutcome = Arc::new(Mutex::new(None));
+    let caller = ctx
+        .spawn(PreparedPlugin::from_input(
+            AbandonThenJoin {
+                target: target.clone(),
+                release,
+                via_removal,
+                outcome: outcome.clone(),
+            },
+            (),
+        ))
+        .await
+        .unwrap();
+
+    let outcome = outcome.lock().take();
+    assert!(
+        matches!(outcome, Some(Some(Ok(())))),
+        "a second dispose() from an unrelated apply must join the abandoned \
+         committed owner (via_removal={via_removal}), got {outcome:?}"
+    );
+    assert_eq!(target.state(), FiberState::Disposed);
+    assert_eq!(caller.state(), FiberState::Active);
+}
+
+#[tokio::test]
+async fn abandoned_dispose_is_joinable_from_another_apply_on_current_thread() {
+    abandoned_terminal_wait_can_be_joined_from_another_apply(false).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn abandoned_dispose_is_joinable_from_another_apply_on_multi_thread() {
+    abandoned_terminal_wait_can_be_joined_from_another_apply(false).await;
+}
+
+#[tokio::test]
+async fn abandoned_group_removal_is_joinable_from_another_apply_on_current_thread() {
+    abandoned_terminal_wait_can_be_joined_from_another_apply(true).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn abandoned_group_removal_is_joinable_from_another_apply_on_multi_thread() {
+    abandoned_terminal_wait_can_be_joined_from_another_apply(true).await;
+}
