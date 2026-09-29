@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/dshbox/cordis-rs/compare/cordis-timer-v0.3.27...cordis-timer-v0.4.0) - 2026-09-29
+
+### Changed
+
+- *(timer)* Coordinate with `cordis-core 0.4` and `cordis-loader 0.4`; update
+  semantic-crate dependency requirements together. Timer's public operations
+  are unchanged by this release coordination.
+
 ## [0.3.9](https://github.com/dshbox/cordis-rs/compare/cordis-timer-v0.3.8...cordis-timer-v0.3.9) - 2026-09-19
 
 ### Other
