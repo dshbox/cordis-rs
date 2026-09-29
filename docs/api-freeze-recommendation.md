@@ -85,8 +85,14 @@ The current source baseline includes the four merged follow-up PRs below.
 
 Tracker inspection on 2026-09-29 found parent spec #200 open, this PR,
 [release PR #215](https://github.com/dshbox/cordis-rs/pull/215) and the excluded
-Wasm draft. The release PR preserves F3's breaking Deserialize note and F4's
-additive variant note; it introduces no additional supported-surface break.
+Wasm draft. The pending release PR targets semantic packages `0.4.0` and the
+independently versioned facade `0.9.0`. It preserves F3's breaking Deserialize
+note and F4's additive variant note. The new semantic line records the accepted
+input behavior change; the facade line coordinates the identity of its public
+core re-exports with `cordis-core 0.4`. Consumers must upgrade direct core/timer/loader
+requirements together to `0.4` and the facade to `0.9`, as documented in that
+release PR. This pending release plan does not replace the exact candidate's
+review and CI receipt.
 Merged tracker state alone does not prove correctness or absence of further defects.
 The updated source-to-contract review and named regressions support the current
 finding; the original "none identified" statement is superseded, not preserved as
