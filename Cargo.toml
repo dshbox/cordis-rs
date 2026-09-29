@@ -15,17 +15,17 @@ members = [
 ]
 
 [workspace.package]
-version = "0.3.27"
+version = "0.4.0"
 edition = "2024"
 rust-version = "1.88"
 license = "MIT"
 repository = "https://github.com/dshbox/cordis-rs"
 
 [workspace.dependencies]
-cordis-core = { path = "crates/cordis-core", version = "0.3.27" }
-cordis-timer = { path = "crates/cordis-timer", version = "0.3.27" }
-cordis-loader = { path = "crates/cordis-loader", version = "0.3.27" }
-cordis-rs = { path = "crates/cordis", version = "0.8.42" }
+cordis-core = { path = "crates/cordis-core", version = "0.4.0" }
+cordis-timer = { path = "crates/cordis-timer", version = "0.4.0" }
+cordis-loader = { path = "crates/cordis-loader", version = "0.4.0" }
+cordis-rs = { path = "crates/cordis", version = "0.9.0" }
 examples-common = { path = "examples/common" }
 # Core intentionally omits Tokio's `time` feature; time operations belong to
 # cordis-timer, while serde-backed loading belongs to cordis-loader (ADR 0036).

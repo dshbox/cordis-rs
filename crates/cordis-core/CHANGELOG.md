@@ -2,12 +2,25 @@
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.3.27...cordis-core-v0.4.0) - 2026-09-29
+
+### Changed
+
+- *(core)* Coordinate the semantic crates on the `0.4` line for Loader's
+  breaking source-schema validation change. Update direct core, timer and loader
+  dependency requirements together; the published sibling requirements use the
+  normal Cargo-compatible `0.4` line.
+
 ### Fixed
 
+- *(core)* Retry stale transient `ready()` observations instead of panicking.
+- *(core)* Complete committed lifecycle work on idle current-thread runtimes.
+- *(core)* Isolate settle attribution of caller-driven owners.
 - *(core)* `FiberHandle::wait_state` no longer holds one OS thread per pending
   wait: every armed deadline is served by one lazily started, process-wide
   `cordis-deadline` thread, and cancelled waits remove their entry immediately.
-  A refused thread spawn no longer panics inside `wait_state`.
+  A refused thread spawn no longer panics inside `wait_state`. Contain deadline
+  wakes individually and replace a lost scheduler worker.
 
 ### Added
 

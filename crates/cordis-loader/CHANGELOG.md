@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/dshbox/cordis-rs/compare/cordis-loader-v0.3.27...cordis-loader-v0.4.0) - 2026-09-29
+
 ### Changed
 
 - *(loader)* **Breaking `Deserialize` behaviour:** the source schema
@@ -11,6 +13,10 @@
   misspelled `disabled` or `isolate` previously parsed with the default and
   executed the Plugin or placed its Services in the caller's realm; it is now a
   parse error. `Serialize` output is unchanged.
+- *(loader)* Migrate source documents by correcting misspelled keys and removing
+  extra fields, including fields belonging to another tagged variant; relocate
+  Plugin-specific data to that Plugin entry's `config`. Upgrade direct core,
+  timer and loader requirements together to the `0.4` line.
 
 ## [0.3.23](https://github.com/dshbox/cordis-rs/compare/cordis-loader-v0.3.22...cordis-loader-v0.3.23) - 2026-09-26
 

@@ -1,7 +1,7 @@
 # Migrating to Cordis v3
 
 Cordis v3 first shipped on the `cordis-rs 0.7.x` line and currently publishes on
-`0.8.x`. It is an architectural replacement, not a source-compatible update of
+`0.9.x`. It is an architectural replacement, not a source-compatible update of
 `0.6.x`. The old implementation remains maintained on `legacy/0.6` for critical
 bug and security fixes.
 
@@ -10,21 +10,36 @@ bug and security fixes.
 Applications keep the historical package and Rust import names:
 
 ```toml
-cordis-rs = "0.8"
+cordis-rs = "0.9"
 ```
 
 ```rust
 use cordis::Context;
 ```
 
-The `cordis-rs` package is a thin facade over `cordis-core = "0.3"`. Framework
+The `cordis-rs` package is a thin facade over `cordis-core = "0.4"`. Framework
 and plugin crates should normally depend on `cordis-core` directly. Timer and
 loader capabilities are explicit optional crates rather than facade features:
 
 ```toml
-cordis-timer = "0.3"
-cordis-loader = "0.3"
+cordis-timer = "0.4"
+cordis-loader = "0.4"
 ```
+
+## From facade 0.8.x / semantic 0.3.x to 0.9.x / 0.4.x
+
+Update `cordis-rs` dependency requirements to `0.9` and any direct `cordis-core`,
+`cordis-timer` and `cordis-loader` requirements together to `0.4`. The facade
+re-exports core types; a `cordis::Context` backed by core `0.4` is a different
+Rust type from a direct core `0.3` `Context`. The package/import names and API
+spellings remain unchanged, but cross-crate values must use the same core line.
+
+Loader `0.4` rejects unknown source-schema fields, including fields belonging
+to another tagged variant. Correct misspelled keys and remove extra fields;
+put Plugin-specific data in the Plugin entry's `config`. A field such as `label`
+on `private` or `config` on `required` is now a parse error. `Serialize` output
+is unchanged. See the [Loader changelog](crates/cordis-loader/CHANGELOG.md) and
+[facade changelog](crates/cordis/CHANGELOG.md) for the coordinated release notes.
 
 ## From 0.7.x to 0.8.x
 
