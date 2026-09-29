@@ -19,14 +19,14 @@ historical material.
 | [CONTEXT.md](../CONTEXT.md) | Canonical domain and protocol vocabulary | Normative glossary |
 | This document | Present-tense target composition, invariants, internal interactions, concurrency, and seams | Normative architecture |
 | [docs/v3-public-interface.md](v3-public-interface.md) | The exhaustive approved public surface and every caller-visible contract | Normative interface inventory |
-| ADRs 0028–0039 (see the [decision index](#decision-index)) | The twelve independent hard-to-reverse rules and their complete rationale | Normative decisions |
+| ADRs 0028–0039 and 0041 (see the [decision index](#decision-index)) | The thirteen independent hard-to-reverse rules and their complete rationale | Normative decisions |
 | [docs/v3-upstream-parity-ledger.md](v3-upstream-parity-ledger.md) | The relationship of every pinned-upstream fact to its v3 disposition, with direct evidence | Normative parity record |
 
 The separate [compatibility policy](compatibility-policy.md) owns release and
 package compatibility promises, including the published-sibling obligation in
 [ADR 0040](adr/0040-published-sibling-seams-are-compatibility-obligations.md).
-That policy does not add a thirteenth architecture decision or another home for
-the public declarations.
+That policy does not add an architecture decision or another home for the public
+declarations.
 
 [docs/v3-migration.md](v3-migration.md) is **optional and
 non-normative**: it records compatibility impact, historical
@@ -626,7 +626,7 @@ the pinned upstream contains it.
 
 ## Decision index
 
-The twelve independent hard-to-reverse decisions of the v3 architecture,
+The thirteen independent hard-to-reverse decisions of the v3 architecture,
 each in one accepted ADR, linked by title:
 
 1. [Fiber generations own cleanup; Runtime owns residency](adr/0028-fiber-generations-own-cleanup-runtime-owns-residency.md)
@@ -641,10 +641,11 @@ each in one accepted ADR, linked by title:
 10. [Public interfaces expose semantics, not representation](adr/0037-public-interfaces-expose-semantics-not-representation.md)
 11. [Plugin input names role; Prepared wrappers name stage](adr/0038-plugin-input-names-role-prepared-wrappers-name-stage.md)
 12. [Consumer Fiber control is a FiberHandle, not a Fork](adr/0039-consumer-fiber-control-is-a-fiber-handle.md)
+13. [User destructor panics are best-effort](adr/0041-user-destructor-panics-are-best-effort.md)
 
 Each ADR states its rule and rationale self-contained. Its
 non-normative lineage block is historical evidence only: deleting every
 lineage block, together with the optional migration document, leaves
 the required-reading closure above — glossary, this document, the
-interface inventory, these twelve decisions, and the parity ledger —
+interface inventory, these thirteen decisions, and the parity ledger —
 complete, with no historical or current-implementation dependency.

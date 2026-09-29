@@ -439,11 +439,9 @@ disposal, a live quiescent successor, fresh dependent queries and final
 convergence, and FiberHandle handoff. `EraSwapError::Incomplete` means the old
 Fiber is gone, no attempted successor remains resident, and final
 cleanup and convergence completed; it reports successor-specific causes
-and never embeds `SpawnError`. If the old user `Plugin::Input` panics during
-its destruction after the source claim, the owner completes final affected-
-dependent convergence before resuming the original panic in the awaiting
-caller. An unconsumed panic reply records the original diagnostic after
-the same barrier.
+and never embeds `SpawnError`. Destruction of the old user `Plugin::Input`
+after the source claim follows the general
+[user destructor rule](#user-destructor-panics) (ADR 0041).
 
 The Registry has no public presence: there is no public `Registry`, no
 `Runtime`/`RuntimeId`/record types, no `PluginKey` or PluginGroup, no
@@ -693,36 +691,19 @@ Callback error types require only `std::error::Error`. The last adapter
 that knows the concrete error normalizes it exactly once to owned
 Runtime-safe diagnostics; the original object, type identity, `Any`, and
 downcast never escape. Panic containment includes future polling and
-`with_state` factories. A once listener's last callback reference may be
-destroyed after its claim removes the stored occurrence. For an invocation
-polled to completion, a panic in that callback destructor is a correlated
-`Panic` failure; `emit_parallel` still awaits its other claimed listeners.
-The callback's returned answer or mapped value is discarded when its
-destructor panics. If that value also panics during destruction, both
-destructor diagnostics are contained. An earlier invocation failure keeps
-its original kind and adds the destructor diagnostic. Cancelling an
-operation while its callback is pending drops the operation future
-instead of producing an `InvocationFailure`; this completed-invocation
-boundary does not govern destruction during cancellation or removal of
-an unclaimed registration.
+`with_state` factories; a contained panic is a correlated `Panic` failure of
+that invocation, and `emit_parallel` still awaits its other claimed listeners.
+Cancelling an operation while its callback is pending drops the operation
+future instead of producing an `InvocationFailure`.
 During an awaited `emit` or `query`, an earlier callback can remove a later
-unclaimed listener while its snapshot is still held by the operation. If
-dispatch then fails, answers early, or skips that removed occurrence, the
-operation releases each unclaimed snapshot under containment. A panicking
-capture destructor is reported through the Runtime logger; it cannot replace
-the original failure or answer, or suppress `DispatchCompleted`. An awaited
-`emit_parallel` or `waterfall` also contains destruction of a snapshot whose
-invocation claim loses to removal, so later claimed work or the waterfall tail
-can still complete.
-For an awaited `waterfall`, a preflight error can leave the caller's tail
-unused, and a Mapper error can leave its downstream `Next` chain uncalled.
-Destruction of those operation-owned values cannot replace the primary
-error or suppress `DispatchCompleted`: a preflight tail destructor panic
-is reported through the Runtime logger, while a Mapper failure keeps its
-kind and registration identity and adds each uncalled continuation destructor
-diagnostic. Listener snapshots in that uncalled chain are released under
-separate panic boundaries; this does not change cancellation or an
-Around-owned `Next` destructor boundary.
+unclaimed listener while its snapshot is still held by the operation; that
+removed occurrence is skipped. For an awaited `waterfall`, a preflight error
+leaves the caller's tail unused, and a Mapper error leaves its downstream
+`Next` chain uncalled.
+Destruction of callbacks and their captures, listener snapshots, answers,
+mapped values, tails, and `Next` continuations follows the general
+[user destructor rule](#user-destructor-panics) (ADR 0041); Events add no
+destructor-specific promise.
 There are no public shape or payload mismatch errors; contract and role
 failures are the semantic variants above, and remaining representation
 checks are private invariants.
@@ -1264,6 +1245,25 @@ follows the same boundary ownership. Direct calls to `Plugin::prepare`,
 `Plugin::name`, `Plugin::inject`, `ConfigurableService::prepare_config`,
 `ConfigurableService::compose_config`, and `PreparedPlugin::from_input`
 retain ordinary Rust panic behavior; no universal Panic variants exist.
+
+### User destructor panics
+
+Values supplied to Cordis — Plugin values and inputs, Service values,
+listener, cleanup and task closures and their captures, Event arguments
+and answers, exporters, observers, errors, and panic payloads — must not
+panic when dropped. Cordis still destroys such values outside its internal
+synchronization ([ADR 0029](adr/0029-lifecycle-commits-complete-and-critical-sections-are-closed.md)).
+When such a destructor panics while Cordis drops the value, Cordis makes a
+best-effort attempt to contain and report the panic and to continue the
+surrounding framework work. Which operation observes or reports the
+diagnostic, whether an associated answer, value, or result is discarded,
+whether a pending operation still reports success, and whether the panic
+resumes in an awaiting caller are unspecified. A destructor panic during
+another unwind, or in a build using `panic = "abort"`, can abort the
+process. This rule is the complete destructor-panic contract of
+`cordis-core`, `cordis-loader`, and `cordis-timer`; stronger guarantees
+may be added compatibly
+([ADR 0041](adr/0041-user-destructor-panics-are-best-effort.md)).
 
 ## Completeness
 

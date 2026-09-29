@@ -47,13 +47,14 @@ returned error or contained panic propagates outward through the Around
 layers, where an outer Around may replace or recover it; failure never
 rolls back earlier user effects or already committed framework state.
 An unused tail remains operation-owned on preflight failure, and an
-uncalled continuation remains operation-owned when a Mapper fails. Their
-destructors cannot replace the primary failure or prevent the
-`DispatchCompleted` record. Preflight reports a tail destructor panic
-through the Runtime logger; a Mapper failure retains its kind and
-registration identity while appending each uncalled continuation destructor
-panic to its diagnostic. The operation releases each uncalled listener
-snapshot under a separate panic boundary before completing the Mapper failure.
+uncalled continuation remains operation-owned when a Mapper fails.
+
+_Amended by [ADR 0041](0041-user-destructor-panics-are-best-effort.md)._ This
+passage previously promised specific outcomes when the destructor of an unused
+tail or uncalled continuation panicked. ADR 0041 deliberately withdraws those
+promises. Destruction of these operation-owned values now follows its general
+best-effort rule, and the existing containment remains as best-effort
+robustness, not contract.
 
 Listener roles are semantic protocol input, not closure shapes.
 `Listener<E>` is sealed and methodless, and the registration/storage
@@ -112,16 +113,19 @@ are contained at invocation and normalized exactly once into an opaque
 and the exact registration id when applicable — by the last adapter that
 knows the concrete error type; the original object, `Any`, and downcast
 never escape, and panic containment covers future polling and state
-factories. After a claimed invocation runs to completion, destruction of
-its final callback reference is also contained and correlated with that
-occurrence. A destructor panic fails the invocation even if the callback
-returned a value; that undeliverable value is discarded under its own
-unwind boundary. When the invocation already failed, its earlier failure
-remains primary and the destructor diagnostic is appended. Cancellation
-can instead destroy a pending invocation's callback while dropping the
-operation future, without producing an `InvocationFailure`. What happens
-next follows the active primitive's
+factories. Cancellation can instead destroy a pending invocation's callback
+while dropping the operation future, without producing an
+`InvocationFailure`. What happens next follows the active primitive's
 fail-first, attempt-all, or onion rule.
+
+_Amended by [ADR 0041](0041-user-destructor-panics-are-best-effort.md)._ This
+decision previously also promised that destruction of a completed invocation's
+final callback reference was contained and correlated. A destructor panic
+failed the invocation, discarded any returned value, and appended its
+diagnostic to an earlier failure. ADR 0041 deliberately withdraws those
+promises. A destructor panic may still be reported as a `Panic` invocation
+failure on a best-effort basis, but Events make no destructor-specific
+promise.
 
 ## Rationale
 

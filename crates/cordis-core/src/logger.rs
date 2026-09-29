@@ -103,8 +103,9 @@ impl LogRecord {
 ///
 /// `min_level(channel) == None` means use [`Exporter::default_level`].
 /// Logger invokes filtering and export only after releasing its occurrence-store
-/// lock, and contains callback and snapshot-destruction panics per occurrence
-/// so one broken exporter cannot block later attempts.
+/// lock, and contains callback panics per occurrence so one broken exporter
+/// cannot block later attempts. An exporter must not panic when dropped;
+/// containment of such a destructor panic is best-effort only (ADR 0041).
 pub trait Exporter: Send + Sync {
     /// Receive one record that passed this exporter's threshold.
     fn export(&self, record: &LogRecord);
