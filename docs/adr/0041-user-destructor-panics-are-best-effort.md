@@ -14,8 +14,9 @@ still reports success, and whether the panic resumes in an awaiting caller. A
 destructor panic during another unwind, or in a build using `panic = "abort"`,
 can abort the process.
 
-This rule is the complete destructor-panic contract of `cordis-core` and of the
-`cordis-loader` and `cordis-timer` leaves. Stronger guarantees may be added later
+This rule is the complete destructor-panic contract of `cordis-core`, of the
+`cordis-loader` and `cordis-timer` leaves, and of the `cordis-rs` facade through
+its re-exports. Stronger guarantees may be added later
 as compatible, additive promises.
 
 This decision deliberately amends
@@ -42,9 +43,10 @@ Two neighboring rules are unchanged:
 ## Considered options
 
 - **Point promises for each destruction site**: rejected. Before this decision,
-  each containment fix added its own normative clause. The result was uneven:
-  Event destruction was specified in detail, while equivalent lifecycle,
-  Registry and Loader fixes had no contract text. Freezing that set would commit
+  each containment fix could add its own normative clause. The result was
+  uneven: Event destruction was specified in detail and era swap had one
+  clause, while equivalent update, Service convergence, typed group removal and
+  Loader rollback fixes had no contract text. Freezing that set would commit
   to an accidental subset. Destructor defects were still being found at a steady
   rate, so each new site would reopen the API freeze criteria.
 - **Structural wrapping at every entry point**: rejected. Containing every user

@@ -1,6 +1,7 @@
 # Events are typed, completion-aware, and occurrence-claimed
 
-Status: accepted
+Status: accepted; destructor passages amended by
+[ADR 0041](0041-user-destructor-panics-are-best-effort.md)
 
 An Event is one named typed contract: within one Runtime, one name binds
 one compatible Args/Output contract, declared by a marker trait carrying
@@ -113,7 +114,7 @@ are contained at invocation and normalized exactly once into an opaque
 and the exact registration id when applicable — by the last adapter that
 knows the concrete error type; the original object, `Any`, and downcast
 never escape, and panic containment covers future polling and state
-factories. Cancellation can instead destroy a pending invocation's callback
+factories. Cancellation can destroy a pending invocation's callback
 while dropping the operation future, without producing an
 `InvocationFailure`. What happens next follows the active primitive's
 fail-first, attempt-all, or onion rule.

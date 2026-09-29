@@ -111,10 +111,9 @@ pub enum DispatchOutcomeKind {
 pub enum InvocationFailureKind {
     /// The user callback or tail returned an error.
     ReturnedError,
-    /// A state factory, callback, or awaited future panicked, unless an earlier
-    /// returned error remains primary. A user destructor panic may also be
-    /// reported with this kind on a best-effort basis, but that is not
-    /// guaranteed (ADR 0041).
+    /// A state factory, callback, or awaited future panicked. A user
+    /// destructor panic may also be reported with this kind on a best-effort
+    /// basis, but that is not guaranteed (ADR 0041).
     Panic,
 }
 

@@ -180,7 +180,7 @@ best-effort robustness regressions, not contract discriminators:
 
 | Fix | Retained regression |
 | --- | --- |
-| [#170](https://github.com/dshbox/cordis-rs/pull/170) superseded input Drop across update and era swap | `crates/cordis-core/tests/owner_panic_barriers.rs`: `panicking_superseded_input_after_update_commit_does_not_strand_ready`, `panicking_superseded_input_during_era_swap_leaves_source_terminal`, `new_update_apply_waits_until_superseded_input_drop_finishes` |
+| [#170](https://github.com/dshbox/cordis-rs/pull/170) superseded input Drop across update and era swap | `crates/cordis-core/tests/owner_panic_barriers.rs`: `panicking_superseded_input_after_update_commit_does_not_strand_ready`, `panicking_superseded_input_during_era_swap_leaves_source_terminal` |
 | [#172](https://github.com/dshbox/cordis-rs/pull/172) era dependent barrier after input Drop panic | `crates/cordis-core/tests/era_input_drop_terminal.rs`: `input_drop_panic_waits_for_final_dependent_convergence`, `canceled_caller_still_reports_original_drop_panic_after_final_barrier` |
 | [#174](https://github.com/dshbox/cordis-rs/pull/174) panic payload destruction during convergence | `crates/cordis-core/tests/service_convergence_owner.rs`: `payload_drop_panic_cannot_orphan_service_convergence_owner`, `exporter_payload_drop_panic_cannot_orphan_cleanup_convergence_owner`; unit test `contained.rs::async_containment_consumes_a_panicking_panic_payload` |
 | [#177](https://github.com/dshbox/cordis-rs/pull/177) exporter Drop during Service convergence logging | `service_convergence_owner.rs`: `exporter_object_drop_after_self_removal_cannot_orphan_convergence` |
@@ -198,7 +198,11 @@ synchronization, for example
 `logger.rs::exporter_removal_drops_the_exporter_outside_the_list_lock` and
 `effects.rs::run_task_polling_and_output_destruction_stay_outside_framework_locks`.
 They cover the ADR 0029 lock discipline, not destructor panics, and they remain
-contract discriminators. Inert Drop of Cordis handles and registrations is
+contract discriminators. The #170 test
+`owner_panic_barriers.rs::new_update_apply_waits_until_superseded_input_drop_finishes`
+involves no panic: it checks that a superseded input's Drop finishes before the
+new apply starts. This addendum does not reclassify it; that ordering is an
+implementation property that the public interface does not currently state. Inert Drop of Cordis handles and registrations is
 likewise unchanged. A future destructor-panic finding is a best-effort
 robustness fix. It does not reopen this audit unless it also contradicts one of
 those unchanged contracts.

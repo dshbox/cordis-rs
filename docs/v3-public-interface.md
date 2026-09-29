@@ -697,9 +697,11 @@ Cancelling an operation while its callback is pending drops the operation
 future instead of producing an `InvocationFailure`.
 During an awaited `emit` or `query`, an earlier callback can remove a later
 unclaimed listener while its snapshot is still held by the operation; that
-removed occurrence is skipped. For an awaited `waterfall`, a preflight error
-leaves the caller's tail unused, and a Mapper error leaves its downstream
-`Next` chain uncalled.
+removed occurrence is skipped. An awaited `emit_parallel` or `waterfall`
+likewise skips a snapshot whose invocation claim loses to removal, so later
+claimed work or the waterfall tail can still complete. For an awaited
+`waterfall`, a preflight error can leave the caller's tail unused, and a Mapper
+error can leave its downstream `Next` chain uncalled.
 Destruction of callbacks and their captures, listener snapshots, answers,
 mapped values, tails, and `Next` continuations follows the general
 [user destructor rule](#user-destructor-panics) (ADR 0041); Events add no
@@ -1261,8 +1263,8 @@ whether a pending operation still reports success, and whether the panic
 resumes in an awaiting caller are unspecified. A destructor panic during
 another unwind, or in a build using `panic = "abort"`, can abort the
 process. This rule is the complete destructor-panic contract of
-`cordis-core`, `cordis-loader`, and `cordis-timer`; stronger guarantees
-may be added compatibly
+`cordis-core`, `cordis-loader`, and `cordis-timer`, and of the `cordis-rs`
+facade through its re-exports; stronger guarantees may be added compatibly
 ([ADR 0041](adr/0041-user-destructor-panics-are-best-effort.md)).
 
 ## Completeness
