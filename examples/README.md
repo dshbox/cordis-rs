@@ -4,7 +4,7 @@ The examples suite is core's consumer of record (ADR 0002,
 no-consumer-no-API): core API surface lands only with an exercising
 example.
 
-Promise, binding on every seat: each example runs standalone via
+Promise, binding on every consumer path: each example runs standalone via
 `cargo run -p <name>`, needs no TTY, and exits 0. The chat capstone is
 fully scripted as well: its two frontend Plugins drive the scenario without
 reading stdin.
@@ -30,8 +30,8 @@ attempt-all, and no implicit Runtime shutdown — see
 [`docs/application-teardown.md`](../docs/application-teardown.md).
 
 Start here: `cargo run -p hello_plugin`, then `cargo run -p gateway`
-for the declarative boot + runbook seat, then `cargo run -p worker_daemon`
-for the fiber-lifecycle-under-failure seat, then
+for the declarative boot + runbook path, then `cargo run -p worker_daemon`
+for the fiber-lifecycle-under-failure path, then
 `cargo run -p scopes_tenants` for the tenant-realms tour, then
 `cargo run -p logging_exporters` for the observation tour (exporters,
 best-effort Runtime observations and current snapshots), and finish with

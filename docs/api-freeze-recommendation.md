@@ -25,13 +25,11 @@ Production source baseline is
 [#216](https://github.com/dshbox/cordis-rs/pull/216),
 [#217](https://github.com/dshbox/cordis-rs/pull/217),
 [#218](https://github.com/dshbox/cordis-rs/pull/218) and the coordinated release
-merged in [#215](https://github.com/dshbox/cordis-rs/pull/215). PR #210 is rebased
-onto that revision. The release changes versions and migration documentation,
-not production Rust source or tests; affected conformance, naming, schema and
-scheduling claims remain rechecked against the current baseline. Earlier
-follow-ups at `680b3b0`, the original `ed07d31` investigation and `060c33b`
-candidate receipt remain historical. Their green checks do not validate this
-candidate.
+merged in [#215](https://github.com/dshbox/cordis-rs/pull/215). The release
+changes versions and migration documentation, not production Rust source or
+tests; affected conformance, naming, schema and scheduling claims are rechecked
+against this baseline. Validation of an earlier baseline or revision does not
+validate this candidate.
 The preparation diff adds documentation, including Plugin apply rustdoc; it does
 not change production behavior, dependencies, toolchain, features or golden stderr.
 The with_state correction still records an already-exported item.
@@ -79,15 +77,15 @@ The current source baseline includes the four merged follow-up PRs below.
 | Supported-contract defects: identified → fixed → reviewed (F1, F2, F4) | [#214](https://github.com/dshbox/cordis-rs/pull/214): stale ready/restart race; [#216](https://github.com/dshbox/cordis-rs/pull/216): ADR 0029 idle-current-thread completion; [#218](https://github.com/dshbox/cordis-rs/pull/218): shared deadlines, contained wakes and spawn-refusal error. Added named regressions are in the [evidence](api-freeze-evidence.md#findings-since-the-original-review) | Maintainer; the three defect-fix PRs are merged into the source baseline, affected claims rechecked here; any new proven defect blocks selection until fixed and reviewed |
 | Strict Loader schema: accepted pre-1.0 change → implemented and reviewed (F3) | [#217](https://github.com/dshbox/cordis-rs/pull/217), interface, migration note and [Loader changelog](../crates/cordis-loader/CHANGELOG.md); unknown source-schema fields now fail Deserialize, valid wire forms and Serialize unchanged | Author/maintainer; already accepted and merged, with public parsing/execution controls; not an unresolved break or a retrospective promise about unspecified former behavior |
 | DeadlineUnavailable inventory: additive variant → reconciled | #218 adds `WaitStateError::DeadlineUnavailable` on a non-exhaustive enum; interface/error inventory, naming review and guide now account for it | Maintainer; #218 merged first, no alias or rename migration; consumers retain wildcard matching |
-| Apply-placement disclosure: identified → documented (F5) | ADR 0029 completion executor posture, Plugin::apply rustdoc, interface and guide rule 1; initial ordinary settle is caller-driven, later framework passes use shared completion workers | Maintainer/consumer; disclosure resolved in this follow-up. Apply polls must not block; offload synchronous blocking sections and await them asynchronously. Earlier captured resources depend on their original driver; the caller's paused clock does not control later apply. No origin-runtime affinity or progress while consumers block both current completion workers is promised |
+| Apply-placement disclosure: identified → documented (F5) | Plugin::apply rustdoc, interface and guide rules 1 and 5 state the consumer contract; ADR 0029 completion executor posture records current placement and sizing | Maintainer/consumer; disclosure resolved in this follow-up. Apply polls must not block; offload synchronous blocking sections and await them asynchronously. Apply has no origin-runtime affinity and may run on a Cordis-owned runtime; which runtime and its worker count are current ADR 0029 posture, not frozen. Earlier captured resources depend on their original driver; the caller's paused clock does not control apply polled elsewhere. No progress while consumers block Cordis-owned workers is promised |
 | Material missing discriminators: original omissions remedied; none currently open | Added stale-transient, idle-origin, strict-schema and deadline/waker discriminators; private scheduling/refusal seams explicitly bounded in the evidence | Maintainer; updated local gates and exact-head CI must validate the revised record; an actual new gap needs its reachable rival and a blocking ticket |
 | Queued deliberate public breaks / accepted new renames: none currently identified | F3 and the F4 additive variant are already incorporated; current member-level naming review retains accepted ADRs and proposes no new rename | Author; a future approved rename gets its own ticket, migration impact and true blocking edges |
-| D1–D3 documentation drift: resolved | Decision index/count and navigation; existing with_state export; six current runnable example sources | #201, #205, #206 and #209; retained after rebase |
+| D1–D3 documentation drift: resolved | Decision index/count and navigation; existing with_state export; six current runnable example sources | #201, #205, #206 and #209 |
 | Updated exact final-head CI receipt: verification condition | PR #210 receipt, updated eight local gates and CI workflow; historical candidate CI is not final-head CI | CI/maintainer; resolve only when required jobs pass for the recorded new commit/head/run |
 | Draft Wasm #145: excluded, not a queued break | [Experiment/wasm components](https://github.com/dshbox/cordis-rs/pull/145); author confirmed independent scope during planning | Author/experiment owner; no dependency on this candidate, future workspace/MSRV decisions remain separate |
 | Broader state-space/performance expansion: independent follow-up | [Bounded concurrency evidence](lifecycle-concurrency-modeling.md), [performance baseline/policy](performance-benchmarking.md), ROADMAP confidence goals | Maintainer; outside this preparation, no newly invented semver gate |
 
-Tracker inspection on 2026-09-29 found parent spec #200 and this PR open,
+Tracker inspection on 2026-09-29 found parent spec #200 open,
 [release PR #215](https://github.com/dshbox/cordis-rs/pull/215) merged and the
 excluded Wasm draft still independent. The merged release preparation selects
 semantic packages `0.4.0` and the independently versioned facade `0.9.0`. It
@@ -105,57 +103,20 @@ finding; the original "none identified" statement is superseded, not preserved a
 a claim for current main. No known unresolved supported-contract item is deferred
 to make the candidate appear ready.
 
-## Review and local validation chain
+## Review and validation record
 
-The historical 2026-09-28 delivery chain below pinned each starting commit, reviewed
-the complete diff on separate
-Standards and Spec axes, and completed all eight local gates. The two numbers in
-review columns are unresolved findings, not a merger of the axes. Initial findings
-were resolved before commit. Full fixed baselines and review/gate summaries are in the linked
-ticket completion records.
+Each delivery ([#201](https://github.com/dshbox/cordis-rs/issues/201)–[#209](https://github.com/dshbox/cordis-rs/issues/209))
+and each revision of this preparation was reviewed on separate Standards and Spec
+axes and validated by the eight local gates: toolchain, fmt, clippy, vocabulary,
+tests, docs, examples and floating-latest compatibility. Canonical UI snapshots
+use the pinned Rust toolchain and rust-src; floating latest checks compatibility
+only. Local gates do not duplicate the explicit MSRV, audit/policy, Loom or
+release-package CI jobs; none is silently replaced by a local green test.
 
-| Delivery | Fixed point | Result commit | Standards / Spec | Local gates and log directory under target/gates |
-| --- | --- | --- | --- | --- |
-| [#201](https://github.com/dshbox/cordis-rs/issues/201) | `ed07d31` | [`dd53012`](https://github.com/dshbox/cordis-rs/commit/dd530121af77754884296b75c76c69f0e3bc24b6) | 0 / 0 | 8/8 PASS; `freeze-201-20260928-01` |
-| [#202](https://github.com/dshbox/cordis-rs/issues/202) | `dd53012` | [`b02b1cf`](https://github.com/dshbox/cordis-rs/commit/b02b1cf167b741352a5401b681318e05b0ec6de6) | 0 / 0 | 8/8 PASS; `freeze-202-20260928-01` |
-| [#203](https://github.com/dshbox/cordis-rs/issues/203) | `b02b1cf` | [`0363f4b`](https://github.com/dshbox/cordis-rs/commit/0363f4b8b14a8a8c23d89833a5648d94e57d4389) | 0 / 0 | 8/8 PASS; `freeze-203-20260928-01` |
-| [#204](https://github.com/dshbox/cordis-rs/issues/204) | `0363f4b` | [`0f72395`](https://github.com/dshbox/cordis-rs/commit/0f723954db2251e364aab3dc44f6c850698b7bcc) | 0 / 0 | 8/8 PASS; `freeze-204-20260928-01` |
-| [#205](https://github.com/dshbox/cordis-rs/issues/205) | `0f72395` | [`d88129d`](https://github.com/dshbox/cordis-rs/commit/d88129d5cc5794a98978cebc96f6976e6c0789fe) | 0 / 0 | 8/8 PASS; `freeze-205-20260928-01` |
-| [#206](https://github.com/dshbox/cordis-rs/issues/206) | `d88129d` | [`51664d2`](https://github.com/dshbox/cordis-rs/commit/51664d26cc6dd8d7a31dd5a468d4828f1be6bfef) | 0 / 0 | 8/8 PASS; `freeze-206-20260928-01` |
-| [#207](https://github.com/dshbox/cordis-rs/issues/207) | `51664d2` | [`7405989`](https://github.com/dshbox/cordis-rs/commit/740598906c7e730a073da4dd833dc1a647a693fc) | 0 / 0 | 8/8 PASS; `freeze-207-20260928-01` |
-| [#208](https://github.com/dshbox/cordis-rs/issues/208) | `7405989` | [`753f534`](https://github.com/dshbox/cordis-rs/commit/753f534191ad8c4f4c029e02e6dfb68bd3015879) | 0 / 0 | 8/8 PASS; `freeze-208-20260928-01` |
-| [#209](https://github.com/dshbox/cordis-rs/issues/209) | `753f534` | `060c33b` in original completion receipt | Separate original integration reports in receipt | 8/8 PASS; `freeze-209-20260928-01` |
-
-These pre-rebase commit IDs and receipts preserve the original review history. They
-are not the new rebased commits or evidence of a gate run on the updated candidate.
-The earlier follow-up reviewed the complete preparation diff against fixed source
-baseline `680b3b0` on Standards and Spec axes, then runs eight updated local gates
-under `freeze-210-review-20260929-01`. ADR alignment and blocking-section/driver
-clarifications then used follow-up run `freeze-210-f5-20260929-01`. Results and
-exact-head CI for the final updated commit belong in the PR #210 receipt;
-the intermediate `b3b8210` checks do not validate that later revision.
-
-After #215 merged, the current full preparation diff is reviewed against fixed
-baseline `4824196` on both axes and uses run
-`freeze-210-post-release-20260929-01`. Its exact-head results belong in the PR
-receipt; earlier `a3f182a` and `da50734` results remain historical.
-
-Each run covers toolchain, fmt, clippy, vocabulary, tests, docs, examples and
-floating-latest compatibility. Cached dependencies were used with
-CARGO_NET_OFFLINE=true; canonical UI snapshots used the pinned Rust 1.98.1 and
-rust-src. Latest checks compatibility only. Planning's initial DNS failure was
-resolved by rerunning only its failed test gate offline; it was not a code failure.
-No implementation ticket needed that retry. Gate logs are local artifacts; ticket
-receipts retain the summaries even if routine target cleanup removes older logs.
-
-The original source baseline's [CI run](https://github.com/dshbox/cordis-rs/actions/runs/36353799979)
-passed MSRV 1.88, dependency audit/policy, canonical tests on Linux/macOS/Windows,
-Loom models, latest stable, formatting/Clippy/docs/vocabulary, all six examples
-and release-package lanes. The original candidate
-[CI run](https://github.com/dshbox/cordis-rs/actions/runs/36367061979) passed for
-`060c33b`, as recorded in #209. Updated-candidate CI must be read separately from
-the PR #210 receipt. Local gates do not duplicate the explicit MSRV, audit/policy, Loom
-or release-package jobs; none is silently replaced by a local green test.
+Commit-level receipts (fixed points, result commits, review finding counts, gate
+run identifiers and CI runs) live in the delivery tickets and in
+[PR #210](https://github.com/dshbox/cordis-rs/pull/210)'s description and
+comments, not in this document.
 
 ## Residual limits and later 1.0 work
 
@@ -164,9 +125,10 @@ every scheduling permutation or unbounded progress. Best-effort observations
 are not an audit journal, snapshots are not globally linearizable, exact realms
 have no fallback, Drop is inert, teardown is explicit, caller Event/Timeout work
 stays caller-owned and external driver lifetime/process termination limits remain.
-Apply must keep polls non-blocking and cannot assume origin-runtime affinity;
-blocking the shared completion workers can stall unrelated lifecycle work. These
-are disclosed authority boundaries rather than unfinished executor-isolation promises.
+Apply must keep polls non-blocking, cannot assume origin-runtime affinity and may
+run on a Cordis-owned runtime; a blocked poll can stall unrelated lifecycle work.
+These are disclosed authority boundaries rather than unfinished executor-isolation
+promises; current placement and sizing remain ADR 0029 posture, not frozen.
 
 [ROADMAP](../ROADMAP.md#required-before-10) still requires the author to select
 and declare the candidate; then complete a stabilization release without a planned

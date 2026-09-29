@@ -22,12 +22,11 @@ outer application boundary such as `main`, not as the canonical associated error
 
 Keep each apply poll non-blocking. Move synchronous blocking sections to
 `tokio::task::spawn_blocking` and await the returned JoinHandle asynchronously.
-Ordinary spawn drives its initial settle in the caller's task; restart, update,
-background convergence and era-successor apply use Cordis's shared completion
-runtime. Do not rely on spawning-runtime affinity: `tokio::spawn` and
-`Handle::current()` inside apply target the runtime polling it. Currently two
-completion workers serve the process; blocking both can stall unrelated Fibers'
-async cleanup and lifecycle completion.
+Do not rely on spawning-runtime affinity: apply may run on a Cordis-owned
+runtime, and `tokio::spawn` and `Handle::current()` inside apply target the
+runtime polling it. A blocked poll can stall unrelated Fibers' async cleanup and
+lifecycle completion. Current placement is described, not promised, in
+[ADR 0029's completion executor posture](adr/0029-lifecycle-commits-complete-and-critical-sections-are-closed.md#consequences-of-the-rule).
 
 Successful spawn hands off a live, quiescent `FiberHandle`: Active means apply
 succeeded; Pending means a required Service is unavailable and apply has not
@@ -91,8 +90,6 @@ lookups. Configuration, set/remove and convergence boundaries are demonstrated
 by the [Service contracts](../crates/cordis-core/tests/service_v3.rs), rather than
 claimed as behavior exercised by that tour.
 
-
-
 ## 4. Choose same-Fiber control or replace the era, then retain the right handle
 
 Use `ready` to drive the latest target to quiescence, including Pending;
@@ -141,6 +138,15 @@ obligations sequentially in reverse commit order, continuing after error or pani
 Use synchronous cleanup for short bookkeeping; move blocking work into async
 cleanup with `tokio::task::spawn_blocking`.
 
+A `run` task binds to the runtime polling apply. When apply is framework-driven
+(restart, update, background convergence or an era successor), that is currently
+Cordis's completion runtime, so the task and its timers and IO live there. This
+includes a Plugin that spawns Pending and is first applied once its Service is
+published. To keep a long-lived workload on your application runtime, carry that
+runtime's `tokio::runtime::Handle` in `Input` and have the `run` task await work
+spawned through it. That work must still end when the generation's cleanup
+closes its inputs, because drain joins the `run` task cooperatively.
+
 `spawn_attributed` returns a user-owned Tokio JoinHandle and carries live settle
 attribution for recursion checks; it adds no generation cleanup or join ownership.
 Inherited attribution expires with its source settle scope. Framework-owned async
@@ -162,8 +168,8 @@ not asserted as behaviors exercised by that example.
 Retain every delivered handle whose Fiber your application intends to end.
 Call `dispose().await` for a terminal barrier through cleanup, Disposed publication
 and exact residency unlink. Dropping Context, FiberHandle or LoadOutcome does not
-end a Fiber. Spawn origin is provenance: a child can outlive its origin, with no
-parent cascade. There is no Runtime-wide shutdown operation.
+end a Fiber. Spawn origin is provenance only: a spawned Fiber can outlive its spawn
+origin, and nothing cascades. There is no Runtime-wide shutdown operation.
 
 Compose ordering in the application. The examples' Roster records delivered
 handles in spawn order, disposes in reverse order and attempts every handle even
@@ -245,8 +251,9 @@ clones/reuse; each execution creates fresh lifecycle and realm occurrences.
 Private/Shared source policy allocates opaque Runtime-local Service realms;
 text labels never rendezvous across executions or enter core.
 
-Parse source rows strictly: every source-schema object and tagged variant rejects unknown or
-misplaced fields, so `disable` is an error rather than an ignored `disabled` typo.
+Parse source rows strictly: every source-schema object and tagged variant
+rejects unknown or misplaced fields, so a misspelled `disable` (for `disabled`)
+now fails instead of being silently ignored.
 Remove unsupported fields before loading; this intentional pre-1.0 Deserialize
 change is recorded in the [Loader changelog](../crates/cordis-loader/CHANGELOG.md).
 Valid wire forms and Serialize output are unchanged.

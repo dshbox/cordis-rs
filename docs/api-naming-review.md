@@ -31,7 +31,7 @@ Delivery: [#201](https://github.com/dshbox/cordis-rs/issues/201).
 | --- | --- | --- |
 | `Context::new`; `Context` | Clarify | Creates one root Context into a new Cordis Runtime; Context is a view, not an independent owner or a general hierarchy |
 | `Plugin`; `Config`, `Input`, `PrepareError`, `ApplyError`; `prepare` | Retain | Source configuration, complete runtime input and each operation's typed failure are distinct. Input names role, preparation names adaptation; Arc<P> delegates the same contract for P: Plugin + Sync |
-| `Plugin::apply` | Clarify | Applies one typed input without promising origin-runtime affinity. Initial ordinary spawn is caller-driven; restart/update/background convergence and era-successor apply use the shared completion runtime. Keep polls non-blocking; a rename would not communicate these scheduling boundaries |
+| `Plugin::apply` | Clarify | Applies one typed input without promising origin-runtime affinity. Apply may run on a Cordis-owned runtime; current placement is ADR 0029 posture, not a frozen promise. Keep polls non-blocking; a rename would not communicate these scheduling boundaries |
 | `Plugin::name`, `inject` | Clarify | Name is diagnostic, never lookup identity; inject declares lifecycle requirements. Sealing materializes both before lifecycle; it does not call them repeatedly during settlement |
 | `PreparedPlugin`; `from_input` | Clarify | The wrapper names prepared stage and seals type association, not running state or the identity of the object that prepared the value |
 | `PreparedPlugin::with_inject_overlay` | Clarify | Completes a dependency-declaration overlay before spawn; no Service-realm selection or dynamic lifecycle mutation |
