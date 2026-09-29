@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [0.5.0](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.4.1...cordis-core-v0.5.0) - 2026-09-29
+
+### Other
+
+- Merge pull request #221 from dshbox/docs/destructor-best-effort-contract
+- reconcile destructor narrowing review findings
+- [**breaking**] narrow user destructor panics to a best-effort contract
+
 ## [0.4.1](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.4.0...cordis-core-v0.4.1) - 2026-09-29
 
 ### Other
