@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Changed
+
+- *(loader)* **Breaking `Deserialize` behaviour:** the source schema
+  (`PluginEntry`, `EntryGroup`, `InjectEntry`, `IsolateEntry`, `RealmPolicy`)
+  now rejects unknown fields, including fields that belong to another tagged
+  variant (for example `label` on `private`, `config` on `required`). A
+  misspelled `disabled` or `isolate` previously parsed with the default and
+  executed the Plugin or placed its Services in the caller's realm; it is now a
+  parse error. `Serialize` output is unchanged.
+
 ## [0.3.23](https://github.com/dshbox/cordis-rs/compare/cordis-loader-v0.3.22...cordis-loader-v0.3.23) - 2026-09-26
 
 ### Fixed
