@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+## [0.6.0](https://github.com/dshbox/cordis-rs/compare/cordis-loader-v0.5.0...cordis-loader-v0.6.0) - 2026-09-30
+
+### Added
+
+- *(loader)* [**breaking**] make source rows extensible with constructors
+- *(core)* [**breaking**] open the public vocabularies that are expected to grow
+
+### Fixed
+
+- *(core)* address review of the first-Pending owner hand-off
+- *(core)* hand committed owners off at their first Pending
+
+### Other
+
+- promise Send for operation futures and apply B2 review fixes
+- declare compatible evolution, openness and auto-trait promises
+
 ## [0.5.0](https://github.com/dshbox/cordis-rs/compare/cordis-loader-v0.4.1...cordis-loader-v0.5.0) - 2026-09-29
 
 ### Changed

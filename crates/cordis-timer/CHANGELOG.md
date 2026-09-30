@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [0.6.0](https://github.com/dshbox/cordis-rs/compare/cordis-timer-v0.5.0...cordis-timer-v0.6.0) - 2026-09-30
+
+### Other
+
+- promise Send for operation futures and apply B2 review fixes
+- declare compatible evolution, openness and auto-trait promises
+
 ## [0.5.0](https://github.com/dshbox/cordis-rs/compare/cordis-timer-v0.4.1...cordis-timer-v0.5.0) - 2026-09-29
 
 ### Changed
