@@ -31,8 +31,11 @@ lifecycle completion. Current placement is described, not promised, in
 Successful spawn hands off a live, quiescent `FiberHandle`: Active means apply
 succeeded; Pending means a required Service is unavailable and apply has not
 run. Keep the delivered handle for explicit lifecycle control. Dropping it does
-not dispose the Fiber. If creation is abandoned after its commit, core owns the
-undelivered Fiber's cleanup; a delivered handle belongs in consumer composition.
+not dispose the Fiber. If the spawn future is dropped after its commit, core owns
+the undelivered Fiber's cleanup; a delivered handle belongs in consumer composition.
+Creation up to handle delivery is driven by the spawn future: one you keep but
+stop polling, such as the unfinished half of a `select`, holds its new Fiber in
+creation until you poll it again or drop it.
 
 Authority: [preparation and creation](v3-public-interface.md#plugin-preparation-sealing-and-creation),
 [ADR 0038](adr/0038-plugin-input-names-role-prepared-wrappers-name-stage.md),
@@ -174,8 +177,13 @@ not asserted as behaviors exercised by that example.
 
 Retain every delivered handle whose Fiber your application intends to end.
 Call `dispose().await` for a terminal barrier through cleanup, Disposed publication
-and exact residency unlink. Dropping Context, FiberHandle or LoadOutcome does not
-end a Fiber. Spawn origin is provenance only: a spawned Fiber can outlive its spawn
+and exact residency unlink. Once committed, `dispose()` and `remove_plugins`
+finish even if their futures are dropped or no longer polled. Await them; do not
+block a Tokio worker thread on a Cordis lifecycle future (for example with
+`futures::executor::block_on` in a task or a `Drop`), because the committed work
+may be queued on that same worker. Use `block_in_place` or `spawn_blocking` from
+synchronous code. Dropping Context, FiberHandle or LoadOutcome does not end a
+Fiber. Spawn origin is provenance only: a spawned Fiber can outlive its spawn
 origin, and nothing cascades. There is no Runtime-wide shutdown operation.
 
 Compose ordering in the application. The examples' Roster records delivered
@@ -276,8 +284,10 @@ control. Loader then performs the complete core spawn.
 Inspect all ordered entries: disabled entries prune descendants, ordinary failure
 does not. Load is partial; `is_ok` means no Failed entry, not all Fibers Active.
 Use `fiber_handles` to retain delivered controls in your application roster.
-Before final handoff, abandonment causes reverse-success-order attempt-all
-framework rollback; ordinary row failure keeps earlier successes caller-owned.
+Before final handoff, dropping the load future causes reverse-success-order
+attempt-all framework rollback; a load future kept but no longer polled holds its
+in-progress spawn, as a spawn future does, and rolls nothing back. Ordinary row
+failure keeps earlier successes caller-owned.
 After delivery, dropping LoadOutcome is inert. Teardown remains explicit.
 
 Authority: [plan/source](v3-public-interface.md#loader-plan-and-source-schema),

@@ -169,7 +169,10 @@ impl crate::Context {
     /// into this removal, while later same-type spawns create or join a fresh
     /// allocation. After detach, disposal is framework-owned and reaches every
     /// member's ordinary terminal unlink barrier even if this caller is
-    /// cancelled. An absent allocation is already removed.
+    /// cancelled or keeps this future without polling it. An absent allocation
+    /// is already removed. As with
+    /// [`FiberHandle::dispose`](crate::FiberHandle::dispose), await this future
+    /// rather than blocking a Tokio worker thread on it.
     ///
     /// A call from the settle context of a Fiber in the current allocation is
     /// refused before detach so it cannot synchronously wait on its own teardown.
@@ -184,8 +187,13 @@ impl crate::Context {
             return Ok(());
         };
 
+        let report = crate::framework_task::PanicReport {
+            logger: self.logger(),
+            operation: "typed plugin removal",
+            context: format!("plugin={}", std::any::type_name::<P>()),
+        };
         let root = self.root.clone();
-        crate::effect::CallerDriven::new(async move {
+        crate::effect::CallerDriven::new(Some(report), async move {
             detached.dispose_all(&root).await;
         })
         .await;
@@ -485,5 +493,73 @@ mod tests {
             replacement.release_residency();
             assert_eq!(registry.resident_fiber_count(), 0);
         }
+    }
+}
+
+#[cfg(test)]
+mod caller_driven_owner_tests {
+    use super::*;
+    use crate::{Context, FiberState, Plugin, PreparedPlugin};
+    use futures::FutureExt;
+    use std::convert::Infallible;
+    use std::panic::AssertUnwindSafe;
+
+    /// One async cleanup gated by the test, so the committed removal owner
+    /// reaches its first `Pending` inside the member's terminal drain.
+    struct GatedCleanup(Arc<tokio::sync::Notify>);
+
+    impl Plugin for GatedCleanup {
+        type Config = ();
+        type Input = ();
+        type PrepareError = Infallible;
+        type ApplyError = Infallible;
+        fn prepare(&self, (): ()) -> Result<(), Infallible> {
+            Ok(())
+        }
+        async fn apply(&self, ctx: Context, _: &()) -> Result<(), Infallible> {
+            let gate = self.0.clone();
+            ctx.effect(move || async move { gate.notified().await })
+                .unwrap();
+            Ok(())
+        }
+    }
+
+    /// A framework-invariant panic in the typed-removal owner after its
+    /// hand-off at the first `Pending` still resumes in the removing caller.
+    /// The owner is split at the detach commit exactly as
+    /// `Context::remove_plugins` builds it, with a probe panic appended after
+    /// the drain.
+    #[tokio::test(flavor = "current_thread")]
+    async fn removal_owner_panic_after_first_pending_reaches_the_caller() {
+        let ctx = Context::new();
+        let gate = Arc::new(tokio::sync::Notify::new());
+        let handle = ctx
+            .spawn(PreparedPlugin::from_input(GatedCleanup(gate.clone()), ()))
+            .await
+            .unwrap();
+
+        let detached = ctx
+            .root
+            .registry
+            .detach_for_removal(PluginKey::Typed(TypeId::of::<GatedCleanup>()))
+            .unwrap()
+            .expect("the typed allocation is current");
+        let root = ctx.root.clone();
+        let mut owner = Box::pin(crate::effect::CallerDriven::new(None, async move {
+            detached.dispose_all(&root).await;
+            std::panic::panic_any("removal owner probe");
+        }));
+        assert!(futures::poll!(owner.as_mut()).is_pending());
+        gate.notify_one();
+
+        let outcome = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            AssertUnwindSafe(owner).catch_unwind(),
+        )
+        .await
+        .expect("the owner reaches its probe");
+        let payload = outcome.expect_err("the owner panic reaches the caller");
+        assert_eq!(payload.downcast_ref::<&str>(), Some(&"removal owner probe"));
+        assert_eq!(handle.state(), FiberState::Disposed);
     }
 }

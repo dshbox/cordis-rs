@@ -11,6 +11,26 @@ use futures::FutureExt;
 use std::future::Future;
 use std::panic::AssertUnwindSafe;
 
+/// Runtime logger context for a framework task that may panic with nobody
+/// left to receive the unwind.
+pub(crate) struct PanicReport {
+    pub(crate) logger: Logger,
+    pub(crate) operation: &'static str,
+    pub(crate) context: String,
+}
+
+impl PanicReport {
+    /// Log one caught framework-task panic; the caller resumes the unwind.
+    pub(crate) fn report(&self, payload: &Box<dyn std::any::Any + Send>) {
+        self.logger.error(format!(
+            "cordis: framework task {} panicked ({}): {}",
+            self.operation,
+            self.context,
+            crate::contained::payload_text(payload)
+        ));
+    }
+}
+
 /// Add diagnostics while preserving a framework invariant panic as a panic.
 pub(crate) async fn report_panic<F>(
     logger: Logger,
@@ -25,10 +45,12 @@ where
     match AssertUnwindSafe(future).catch_unwind().await {
         Ok(output) => output,
         Err(payload) => {
-            logger.error(format!(
-                "cordis: framework task {operation} panicked ({context}): {}",
-                crate::contained::payload_text(&payload)
-            ));
+            PanicReport {
+                logger,
+                operation,
+                context,
+            }
+            .report(&payload);
             std::panic::resume_unwind(payload);
         }
     }

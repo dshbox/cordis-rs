@@ -441,8 +441,10 @@ impl Context {
     /// stub. Claim and failure semantics match [`Context::effect`], while
     /// synchronous execution keeps lifecycle-executor ordering. The callback
     /// must remain short and must not block indefinitely: off-runtime or
-    /// shutdown-resilient completion may run it on Cordis's shared completion
-    /// runtime, where blocking a worker can delay unrelated framework cleanup.
+    /// shutdown-resilient completion, or a disposal handed off from a
+    /// `current_thread` or off-runtime caller after its first wait, may run it
+    /// on Cordis's shared completion runtime, where blocking a worker can delay
+    /// unrelated framework cleanup.
     /// For blocking work, register an async [`Context::effect`] and offload the
     /// blocking section with `tokio::task::spawn_blocking`.
     pub fn effect_sync<F, R>(
@@ -546,13 +548,34 @@ where
     }
 }
 
-/// Framework-owned committed work driven inline by the caller that committed it.
+type OwnerFuture = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
+type OwnerOutcome = std::result::Result<(), Box<dyn std::any::Any + Send>>;
+
+/// Framework-owned committed work whose synchronous prefix is driven inline by
+/// the caller that committed it.
 ///
-/// While the caller polls, the work runs in the caller's task, so ordinary
-/// scheduling (including a paused Tokio clock) is unchanged. If the caller drops
-/// this future while the work is still pending, the same pinned future is handed
-/// to [`detach`], so completion never depends on the abandoned caller or on a
-/// runtime nobody drives. A poll unwind is a failure, never a transfer signal.
+/// The first poll runs the work in the caller's task. Work that finishes there,
+/// such as a disposal with only synchronous cleanups, never leaves the caller,
+/// so its scheduling (including a paused Tokio clock) is unchanged. At the
+/// work's first `Pending` the same pinned future is handed to [`detach`], and
+/// the caller then only awaits its outcome. From then on the work progresses
+/// independently of caller polling (ADR 0029), so a caller future that is still
+/// alive but never polled again, such as the unfinished half of a `select`,
+/// cannot stall it or the operations that coalesce onto it. `detach` sends work
+/// from a `current_thread` runtime or off-runtime to the completion runtime, so
+/// an idle origin runtime cannot stall it either.
+///
+/// A panic in the handed-off work is caught at the task boundary and relayed to
+/// the awaiting caller, where it resumes with the original payload, as it would
+/// have unwound through an inline poll. No framework lock is held at either
+/// point. If the caller has already dropped its wait, the panic is logged
+/// through the owner's [`PanicReport`](crate::framework_task::PanicReport), when
+/// it has one, and the task ends as panicked. A poll unwind is a failure, never
+/// a transfer signal.
+///
+/// Call sites: the dispose owner, the typed-removal drain, and synchronous
+/// cleanup execution inside a drain. A synchronous cleanup finishes in its
+/// first poll, so that last site never hands off.
 ///
 /// The owner runs in its own empty settle-attribution scope, carried inside the
 /// transferable future. Settle frames it pushes therefore never land on the
@@ -560,20 +583,58 @@ where
 /// recursion refusal for the caller; and the caller's frames never leak into
 /// the owner, matching work that starts on a freshly spawned task.
 pub(crate) struct CallerDriven {
-    work: Option<Pin<Box<dyn Future<Output = ()> + Send + 'static>>>,
-    transfer_on_drop: bool,
+    stage: CallerDrivenStage,
+}
+
+enum CallerDrivenStage {
+    /// Not handed off yet. `transfer_on_drop` is cleared by an unwinding poll.
+    Inline {
+        work: OwnerFuture,
+        report: Option<crate::framework_task::PanicReport>,
+        transfer_on_drop: bool,
+    },
+    /// Handed off at its first `Pending`; the caller awaits the relayed outcome.
+    HandedOff(tokio::sync::oneshot::Receiver<OwnerOutcome>),
+    Finished,
 }
 
 impl CallerDriven {
-    pub(crate) fn new(work: impl Future<Output = ()> + Send + 'static) -> Self {
+    pub(crate) fn new(
+        report: Option<crate::framework_task::PanicReport>,
+        work: impl Future<Output = ()> + Send + 'static,
+    ) -> Self {
         Self {
-            work: Some(Box::pin(crate::fiber::with_settle_attribution(
-                Default::default(),
-                work,
-            ))),
-            transfer_on_drop: true,
+            stage: CallerDrivenStage::Inline {
+                work: Box::pin(crate::fiber::with_settle_attribution(
+                    Default::default(),
+                    work,
+                )),
+                report,
+                transfer_on_drop: true,
+            },
         }
     }
+}
+
+/// Hand pending committed work to framework completion and return the relay
+/// its caller awaits.
+fn hand_off(
+    work: OwnerFuture,
+    report: Option<crate::framework_task::PanicReport>,
+) -> tokio::sync::oneshot::Receiver<OwnerOutcome> {
+    use futures::FutureExt;
+
+    let (relay, outcome) = tokio::sync::oneshot::channel();
+    detach(async move {
+        let result = std::panic::AssertUnwindSafe(work).catch_unwind().await;
+        if let Err(Err(payload)) = relay.send(result) {
+            if let Some(report) = report {
+                report.report(&payload);
+            }
+            std::panic::resume_unwind(payload);
+        }
+    });
+    outcome
 }
 
 impl Future for CallerDriven {
@@ -581,34 +642,54 @@ impl Future for CallerDriven {
 
     fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<()> {
         let this = self.get_mut();
-        this.transfer_on_drop = false;
-        let Some(work) = this.work.as_mut() else {
+        if let CallerDrivenStage::Inline {
+            work,
+            transfer_on_drop,
+            ..
+        } = &mut this.stage
+        {
+            *transfer_on_drop = false;
+            if work.as_mut().poll(cx).is_ready() {
+                this.stage = CallerDrivenStage::Finished;
+                return std::task::Poll::Ready(());
+            }
+            let CallerDrivenStage::Inline { work, report, .. } =
+                std::mem::replace(&mut this.stage, CallerDrivenStage::Finished)
+            else {
+                unreachable!("the inline stage was matched above");
+            };
+            this.stage = CallerDrivenStage::HandedOff(hand_off(work, report));
+        }
+        let CallerDrivenStage::HandedOff(outcome) = &mut this.stage else {
             return std::task::Poll::Ready(());
         };
-        match work.as_mut().poll(cx) {
-            std::task::Poll::Pending => {
-                this.transfer_on_drop = true;
-                std::task::Poll::Pending
-            }
-            std::task::Poll::Ready(()) => {
-                this.work.take();
-                std::task::Poll::Ready(())
-            }
+        let outcome = std::task::ready!(Pin::new(outcome).poll(cx));
+        this.stage = CallerDrivenStage::Finished;
+        match outcome {
+            Ok(Ok(())) => std::task::Poll::Ready(()),
+            Ok(Err(payload)) => std::panic::resume_unwind(payload),
+            Err(_) => panic!("handed-off committed lifecycle work ended without an outcome"),
         }
     }
 }
 
 impl Drop for CallerDriven {
     fn drop(&mut self) {
-        if self.transfer_on_drop
-            && let Some(work) = self.work.take()
+        // After the hand-off, dropping the relay abandons only this wait.
+        if let CallerDrivenStage::Inline {
+            transfer_on_drop: true,
+            ..
+        } = self.stage
+            && let CallerDrivenStage::Inline { work, .. } =
+                std::mem::replace(&mut self.stage, CallerDrivenStage::Finished)
         {
             detach(work);
         }
     }
 }
 
-/// Detach Cordis-owned runtime-agnostic lifecycle work whose caller is gone.
+/// Detach Cordis-owned runtime-agnostic lifecycle work from caller polling:
+/// its caller is gone, or it is a [`CallerDriven`] owner past its first `Pending`.
 /// On a multi-thread runtime it stays on that executor to preserve scheduling
 /// semantics; if that runtime shuts down while the task is pending, the same
 /// pinned future moves to the shared completion runtime. Off-runtime and
@@ -645,7 +726,7 @@ pub(crate) fn detach_cleanup(work: impl Future<Output = ()> + Send + 'static) {
 
 #[cfg(test)]
 mod tests {
-    use super::{DetachedWork, DisposableList, EffectFailureKind, sync_cleanup};
+    use super::{CallerDriven, DetachedWork, DisposableList, EffectFailureKind, sync_cleanup};
     use std::future::Future;
     use std::pin::Pin;
 
@@ -682,6 +763,131 @@ mod tests {
             rx.recv_timeout(std::time::Duration::from_millis(100))
                 .is_err(),
             "poll panic must not transfer the same future to fallback"
+        );
+    }
+
+    fn current_thread() -> tokio::runtime::Runtime {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+    }
+
+    /// The synchronous prefix runs in the caller's poll; after the owner's
+    /// first `Pending` it progresses without another caller poll (issue #232).
+    #[test]
+    fn caller_driven_owner_progresses_after_first_pending_without_caller_polls() {
+        let caller = std::thread::current().id();
+        let (prefix_tx, prefix_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = tokio::sync::oneshot::channel::<()>();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let mut owner = Box::pin(CallerDriven::new(None, async move {
+            prefix_tx.send(std::thread::current().id()).unwrap();
+            let _ = release_rx.await;
+            done_tx.send(()).unwrap();
+        }));
+        let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+
+        assert!(owner.as_mut().poll(&mut cx).is_pending());
+        assert_eq!(prefix_rx.try_recv(), Ok(caller), "prefix ran inline");
+        release_tx.send(()).unwrap();
+        done_rx
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("the owner completes while its caller future is held unpolled");
+
+        let completed = current_thread().block_on(async {
+            tokio::time::timeout(std::time::Duration::from_secs(10), owner).await
+        });
+        assert!(completed.is_ok(), "the held caller observes completion");
+    }
+
+    /// An owner panic after the hand-off still resumes in the caller that
+    /// awaits it, with the original payload.
+    #[test]
+    fn caller_driven_relays_an_owner_panic_after_first_pending() {
+        let (release_tx, release_rx) = tokio::sync::oneshot::channel::<()>();
+        let mut owner = Box::pin(CallerDriven::new(None, async move {
+            let _ = release_rx.await;
+            std::panic::panic_any("caller-driven owner probe");
+        }));
+        let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+        assert!(owner.as_mut().poll(&mut cx).is_pending());
+        release_tx.send(()).unwrap();
+
+        let runtime = current_thread();
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            runtime.block_on(async {
+                tokio::time::timeout(std::time::Duration::from_secs(10), owner.as_mut()).await
+            })
+        }));
+        let payload = outcome.expect_err("the owner panic reaches the caller");
+        assert_eq!(
+            payload.downcast_ref::<&str>(),
+            Some(&"caller-driven owner probe")
+        );
+    }
+
+    /// With nobody left to relay to, a handed-off owner panic is reported
+    /// through the owner's Runtime logger before its task ends as panicked.
+    #[test]
+    fn caller_driven_reports_an_owner_panic_after_its_caller_left() {
+        use crate::logger::{BufferExporter, Level, Logger, LoggerService};
+
+        let service = LoggerService::new();
+        let buffer = std::sync::Arc::new(BufferExporter::new(16, Level::Debug).unwrap());
+        let id = service.reserve_exporter();
+        service.insert_reserved(id, buffer.clone());
+        let report = crate::framework_task::PanicReport {
+            logger: Logger::new_for_test(std::sync::Arc::new(service)),
+            operation: "probe owner",
+            context: "caller gone".to_owned(),
+        };
+        let (release_tx, release_rx) = tokio::sync::oneshot::channel::<()>();
+        let mut owner = Box::pin(CallerDriven::new(Some(report), async move {
+            let _ = release_rx.await;
+            std::panic::panic_any("orphaned owner probe");
+        }));
+        let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+        assert!(owner.as_mut().poll(&mut cx).is_pending());
+        drop(owner);
+        release_tx.send(()).unwrap();
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while buffer.snapshot().is_empty() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "orphaned owner panic was not reported"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let records = buffer.snapshot();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].level(), Level::Error);
+        assert_eq!(
+            records[0].text(),
+            "cordis: framework task probe owner panicked (caller gone): orphaned owner probe"
+        );
+    }
+
+    /// A panic in the inline prefix unwinds through the caller's poll and is
+    /// never handed off, so dropping the caller afterwards runs nothing.
+    #[test]
+    fn caller_driven_prefix_panic_unwinds_inline_without_handoff() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut owner = Box::pin(CallerDriven::new(None, PollPanic(tx)));
+        let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            owner.as_mut().poll(&mut cx)
+        }));
+        assert!(outcome.is_err());
+        rx.recv_timeout(std::time::Duration::from_secs(1))
+            .expect("probe reached its first poll");
+
+        drop(owner);
+        assert!(
+            rx.recv_timeout(std::time::Duration::from_millis(100))
+                .is_err(),
+            "a poll unwind must not hand the owner off"
         );
     }
 

@@ -435,7 +435,10 @@ impl LoadPlan {
     /// in-progress spawn through its FiberHandle handoff. After a successful spawn,
     /// Loader owns that FiberHandle until the complete outcome is returned; abandoning
     /// this future transfers all already-obtained FiberHandles to framework-owned,
-    /// reverse-success-order attempt-all disposal. Ordinary entry failure remains
+    /// reverse-success-order attempt-all disposal. Each spawn runs inside this
+    /// future, so while it is alive but no longer polled the entry being created
+    /// does not advance and nothing is rolled back; see
+    /// [`Context::spawn`](cordis_core::Context::spawn). Ordinary entry failure remains
     /// partial and never triggers rollback. Once this method returns, ownership is
     /// the caller's and dropping the delivered outcome or its FiberHandles is inert.
     pub async fn load<R>(
