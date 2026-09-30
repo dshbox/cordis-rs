@@ -422,10 +422,11 @@ process refuses to start that thread the wait reports
 `-> Result<FiberHandle, EraSwapError>`; and `dispose(&self)`
 `-> Result<(), LifecycleRecursion>`.
 
-`ready` answers only a quiescent `Active`, a stable `Pending`, or the terminal
-`Disposed`; a disposed Fiber answers `Ok(FiberState::Disposed)`. A current
-parked Plugin failure is `ReadyError::Apply`, and a transient lifecycle state
-is never returned.
+`ready`'s `Ok` value is only a quiescent `Active`, a stable `Pending`, or the
+terminal `Disposed`; a transient lifecycle state is never returned. A
+self-wait is refused first with `ReadyError::Recursion`; apart from that
+refusal, a disposed Fiber answers `Ok(FiberState::Disposed)`, and a current
+parked Plugin failure is `ReadyError::Apply`.
 
 `wait_state` publication wins the tie with its deadline: a requested state
 published before the deadline is always observed, even if the deadline has
@@ -644,6 +645,31 @@ an opaque `StatefulCallback` and composes with every role; it constructs
 invocation-local state exactly once, after routing, role preflight, and
 a successful claim, outside locks.
 
+Each adapter accepts exactly these callback shapes, where `R` is the result
+below. A sync adapter's callback returns `R` directly; an async adapter's
+callback returns a `Fut: Future<Output = R> + Send + 'static`:
+
+```text
+Event listeners (E: Event)
+  observer / observer_sync     Fn(Context, E::Args)          R = Result<(), Err>
+  responder / responder_sync   Fn(Context, E::Args)          R = Result<Option<E::Output>, Err>
+  mapper / mapper_sync         Fn(Context, E::Args)          R = Result<E::Args, Err>
+  around (async only)          Fn(Context, E::Args, Next<E>) R = Result<E::Output, Err>
+Update control (P: Plugin; no with_state)
+  mapper / mapper_sync         Fn(Context, P::Input)                R = Result<P::Input, Err>
+  around (async only)          Fn(Context, P::Input, UpdateNext<P>) R = Result<P::Input, Err>
+Runtime observers (no with_state)
+  observer / observer_sync     Fn(Context, RuntimeObservation) R = Result<(), Err>
+```
+
+Every callback is `Send + Sync + 'static`, and `Err: std::error::Error +
+'static`. Composed through `with_state(factory, callback)`, an Event
+listener's `factory` is `Fn() -> S + Send + Sync + 'static` with `S: 'static`,
+and its `callback` takes `(Context, S, ...)` in place of `(Context, ...)`.
+These bounds live on private blanket implementations but are part of each
+adapter's supported signature: tightening them is breaking, and loosening
+them follows the [compatibility policy](compatibility-policy.md#compatible-evolution).
+
 `ListenerOptions` is opaque `Debug + Clone + Copy + Default`; the
 default is append, scoped, repeatable. Consuming `prepend`, `global`,
 and `once` builders plus read-only `is_*` facts replace public fields.
@@ -718,7 +744,7 @@ text; a `None` registration identity denotes framework tail execution.
 Failures are reported in effective listener order, never completion
 order.
 
-Callback error types require only `std::error::Error`. The last adapter
+Callback error types require only `std::error::Error + 'static`. The last adapter
 that knows the concrete error normalizes it exactly once to owned
 Runtime-safe diagnostics; the original object, type identity, `Any`, and
 downcast never escape. Panic containment includes future polling and
@@ -1340,7 +1366,12 @@ the compatible evolution these declarations permit.
 
 ### Openness
 
-The interface has exactly 40 public enums: 32 Open and 8 Closed. An Open enum
+The interface has exactly 40 nameable public enums: 32 Open and 8 Closed.
+`UpdateKind`, and the doc-hidden `HookKind` and `CallbackValue`, live in private
+modules and cannot be named downstream. A value of `UpdateKind` or `HookKind`
+is reachable only through a method of the private supertrait that seals
+`UpdateListener` or `Listener`; like other sealing machinery it is outside the
+supported surface and has no openness declaration. An Open enum
 is `#[non_exhaustive]`: a later minor release may add a variant, so downstream
 `match`es need a wildcard arm. A Closed enum carries no attribute and gains a
 variant only in a semver-incompatible release, so downstream `match`es may be
@@ -1369,7 +1400,9 @@ Variants and structs follow the same rule:
   `DispatchError`, `PlanError`, and `LoaderFailure`) are frozen. New failure
   detail arrives as a new variant, never as a new field.
 - The fields of the constructible source variants `InjectEntry::Configured`
-  and `RealmPolicy::Shared` are closed; growth there arrives as a new variant.
+  and `RealmPolicy::Shared` are closed. A new `RealmPolicy` variant is
+  additive; a new `InjectEntry` variant requires a semver-incompatible
+  release.
 - The source structs `PluginEntry` and `EntryGroup` are Open and are built
   through `PluginEntry::new` and `EntryGroup::new`; `IsolateEntry` is a Closed
   pair.
@@ -1401,16 +1434,42 @@ These types are `Send + Sync`:
   `LoadOutcome`, plus `QueryOutcome<T>` and `TimeoutOutcome<T>` when `T` is
   `Send + Sync`.
 
-The Timer operation futures are `Send` when their inner future is `Send`:
-`Sleep` and `Interval` are `Send`, and `Timeout<F>` is `Send` when `F` is.
-They are not promised `Sync`.
+The Timer operation types are `Send` when their inner future is `Send`: the
+`Sleep` future and the `Interval` stream are `Send`, and the `Timeout<F>`
+future is `Send` when `F` is. They are not promised `Sync`.
 
-`Unpin` is never promised. No other auto-trait implementation is promised
-either: not `UnwindSafe` or `RefUnwindSafe`, not the auto traits of types not
-listed above, and not those of the values returned by
-`LoadOutcome::fiber_handles()` or by the listener adapters. Rustdoc's "Auto
-Trait Implementations" lists what a type implements today, not what the
-interface promises.
+The future returned by each asynchronous operation is `Send` under the
+condition below. Each condition uses only the operation's existing signature
+bounds; no signature gains a `Send` or `Sync` bound, and an operation called
+outside its condition still compiles, its future only not promised `Send`.
+
+| Operation | Its future is `Send` |
+| --- | --- |
+| `FiberHandle::ready`, `wait_state`, `restart`, `update`, `era_swap`, `dispose` | always |
+| `Context::spawn` | always |
+| `Context::remove_plugins::<P>` | for every `P: Plugin` |
+| `Context::emit::<E>`, `emit_parallel::<E>`, `query::<E>` | for every `E: Event` with the signature's `E::Args: Clone` |
+| `Context::waterfall::<E, F, Fut, Err>`, `waterfall_query::<E, Q, R, Fut, Err>` | for every parameter set satisfying the signature's bounds |
+| `Next::<E>::call` | for every `E: Event` |
+| `UpdateNext::<P>::call` | for every `P: Plugin` |
+| `EffectRegistration::dispose` | always |
+| `LoadPlan::load::<R>` | when `R: Sync`; a resolver that is not `Sync` still loads |
+
+These futures are promised only `Send`: not `Sync`, not `Unpin`, and not
+`'static`. `Send` does not guarantee `'static`; the lifetime of a future that
+borrows is bounded by what it borrows, such as a `FiberHandle`, `Context`,
+`LoadPlan`, or resolver. To hand an operation to `tokio::spawn`, move owned
+clones into an `async move` block.
+
+`Unpin` is never promised; pin an `Interval`, for example with
+`std::pin::pin!`, before calling `StreamExt::next`. No other auto-trait
+implementation is promised either: not `UnwindSafe` or `RefUnwindSafe`, not
+the auto traits of types not listed above beyond what a declared trait
+implementation or bound already implies (for example `BufferExporter:
+Exporter`, which requires `Send + Sync`), and not those of the values
+returned by `LoadOutcome::fiber_handles()` or by the listener adapters.
+Rustdoc's "Auto Trait Implementations" lists what a type implements today,
+not what the interface promises.
 
 ## Completeness
 

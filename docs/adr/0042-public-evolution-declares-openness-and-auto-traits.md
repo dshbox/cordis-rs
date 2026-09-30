@@ -36,25 +36,38 @@ decision records why.
    | `TimeoutOutcome<T>` | A binary race outcome; cancellation is the separate `TimerCancelled`. |
 
 2. **The fields of error variants are frozen.** The 17 struct-like variants of
-   the Open error enums keep exhaustive fields, and so do the constructible
-   source variants `InjectEntry::Configured` and `RealmPolicy::Shared`. New
-   failure detail arrives as a new variant of the Open enum, never as a new
-   field.
+   the Open error enums keep exhaustive fields. New failure detail arrives as a
+   new variant of the Open enum, never as a new field. The constructible source
+   variants `InjectEntry::Configured` and `RealmPolicy::Shared` also keep
+   exhaustive fields: a new `RealmPolicy` variant is additive, while a new
+   `InjectEntry` variant needs a semver-incompatible release because
+   `InjectEntry` is Closed.
 
 3. **Auto traits are promised by list.** `Context`, `FiberHandle`, every public
    error and failure type, the correlation identities, the snapshots, the
    observation records, and the outcomes are `Send + Sync`. Generic ones are
-   `Send + Sync` when their parameter is. The Timer operation futures are
-   `Send` when their inner future is `Send`. `Unpin` is never promised, and no
-   auto trait outside the list is promised, even where rustdoc shows it. UI pass
-   fixtures in `cordis-core`, `cordis-loader`, and `cordis-timer`
-   (`tests/ui-auto-traits/pass/`) assert every promised auto trait.
+   `Send + Sync` when their parameter is. The Timer operation types are `Send`
+   when their inner future is `Send`. The future of each asynchronous
+   operation (the six `FiberHandle` lifecycle controls, `Context::spawn`,
+   `remove_plugins`, the Event dispatch operations, the `Next` and `UpdateNext`
+   continuations, `EffectRegistration::dispose`, and `LoadPlan::load`) is
+   `Send` under a condition the interface states per operation. Each condition
+   uses only the operation's existing bounds; the only one that names a user
+   type is `LoadPlan::load`, whose future is `Send` when the resolver is `Sync`.
+   These futures are promised only `Send`, not `Sync`, `Unpin`, or `'static`:
+   `Send` does not guarantee `'static`, and the lifetime of a future that
+   borrows is bounded by what it borrows.
+   `Unpin` is never promised, and no auto trait outside the list is promised,
+   even where rustdoc shows it. UI pass fixtures in `cordis-core`,
+   `cordis-loader`, and `cordis-timer` (`tests/ui-auto-traits/pass/`) assert
+   every promised auto trait, with the operation futures checked inside
+   functions generic over exactly the promised conditions.
 
 4. **Listener-adapter bounds are governed like signatures.** The bounds under
    which `observer`, `observer_sync`, `responder`, `responder_sync`, `mapper`,
    `mapper_sync`, `around`, and `with_state` accept a callback live on blanket
-   implementations of traits that downstream code cannot name. The set of
-   callbacks each adapter accepts is nevertheless a supported signature:
+   implementations of traits that downstream code cannot name. The interface
+   declares the accepted callback shapes as part of each adapter's signature:
    tightening those bounds is breaking, and loosening them is compatible when
    existing callers' inference is unaffected.
 
@@ -84,7 +97,23 @@ and no associated constant.
   `Context::spawn_attributed` accept only `Send` futures, so a task that
   captures a `Context` or `FiberHandle`, or holds an `Interval` across an
   await, relies on those auto traits. The `worker_daemon` example does exactly
-  this. Leaving them unstated would leave a relied-upon property unguarded.
+  this, pinning its `Interval` because `Unpin` is not promised. Leaving them
+  unstated would leave a relied-upon property unguarded.
+- **Promise auto traits for values but not for operation futures**: rejected.
+  A task on a multi-thread executor holds each awaited operation future across
+  its await points, so the task is `Send` only if that future is. Awaiting
+  `ready()`, `dispose()`, an Event dispatch, or `LoadPlan::load` inside
+  `Context::run` or `tokio::spawn` therefore depends on the future's `Send`,
+  not only on the `Send + Sync` of the handle it borrows. Future `Send` is the
+  actual compatibility requirement for putting an operation into such a task.
+- **Promise every async future `Send` without conditions, or add `Send`/`Sync`
+  bounds to make it so**: rejected. `LoadPlan::load` accepts any
+  `R: PluginResolver + ?Sized`; its future borrows the resolver across awaits
+  and is `Send` only when `R: Sync`. Adding `Sync` to the signature would
+  break every non-`Sync` resolver, so the promise states the condition instead.
+- **Promise auto traits by list, with per-operation conditions for futures**:
+  chosen. It covers what consumers rely on, freezes no representation detail
+  such as `Unpin`, and tightens no signature.
 
 ## Consequences
 

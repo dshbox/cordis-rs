@@ -84,20 +84,22 @@ The following are compatible (minor) changes:
   `PluginResolver`. Supported signatures use `Exporter` and `PluginResolver`
   as trait objects (`Arc<dyn Exporter>`, `R: PluginResolver + ?Sized`), so
   only dyn-compatible methods may be added to them (a generic method only with
-  `where Self: Sized`) and no associated constant. A method added to `Plugin`
-  is also forwarded by `impl Plugin for Arc<P>`, which delegates the complete
-  contract;
+  `where Self: Sized`) and no associated constant. A method or associated
+  constant added to `Plugin` is also forwarded by `impl Plugin for Arc<P>`,
+  which delegates the complete contract; without forwarding, `Arc<P>` would
+  silently take the default instead of `P`'s own item;
 - adding any item to a sealed trait: `Listener`, `UpdateListener`,
   `RuntimeObserver`, `CleanupResult`, and `TimerExt`. A new `TimerExt` method
   can make a same-named method of another extension trait in scope ambiguous;
   Cargo's guidelines class this as a possibly-breaking minor change, and
   Cordis accepts it as minor;
-- relaxing a bound or accepting a wider argument type when the type inference
-  of existing callers is unaffected. This includes the bounds of the listener
-  adapter blanket implementations, which are governed like signatures (see
-  below); and
-- adding an auto-trait promise to the interface for a type that already
-  implements that trait.
+- relaxing a bound on a function's or method's own generic parameters or
+  arguments, or accepting a wider argument type, when the type inference of
+  existing callers is unaffected. This includes the
+  [listener adapter callback bounds](v3-public-interface.md#event-contracts-roles-and-dispatch),
+  which the interface declares as part of each adapter's signature; and
+- adding an auto-trait promise to the interface for a type or operation
+  future that already implements that trait.
 
 The following remain breaking even when they look additive:
 
@@ -108,25 +110,27 @@ The following remain breaking even when they look additive:
 - adding a required trait item, any associated type (Rust has no stable
   associated type defaults), or a new supertrait to a trait that downstream
   code may implement;
-- tightening the bounds under which a public listener adapter (`observer`,
-  `observer_sync`, `responder`, `responder_sync`, `mapper`, `mapper_sync`,
-  `around`, and `with_state` composition) accepts a callback. Those bounds
-  live on private blanket implementations, for example
-  `F: Fn(Context, E::Args) -> Fut + Send + Sync + 'static` with
-  `Err: std::error::Error + 'static` for an async Observer. The traits cannot
-  be named downstream, but the set of callbacks each adapter accepts is a
-  supported signature; and
+- relaxing a supertrait or associated-type bound that downstream generic code
+  may rely on, such as `Plugin: Send`, `Service: Send + Sync + 'static`,
+  `Plugin::Input: Send + 'static`, or `Event::Args: Send + 'static`. Generic
+  code uses these as implied bounds, so removing one breaks it;
+- tightening a listener adapter's callback bounds. The traits that carry them
+  cannot be named downstream, but the set of callbacks each adapter accepts is
+  a supported signature; and
 - removing an auto-trait implementation (`Send`, `Sync`, `Unpin`,
-  `UnwindSafe`, `RefUnwindSafe`) that the interface declares, including
+  `UnwindSafe`, `RefUnwindSafe`) that the interface declares, including the
+  `Send` of an operation future under its declared condition and any declared
   through an `impl Trait` return type.
 
 Auto-trait implementations the interface does not declare, for example
 `Unpin` of `Sleep`, `Timeout<F>`, and `Interval`, or the auto traits leaked by
 an undeclared `impl Trait` return such as `LoadOutcome::fiber_handles()`, are
 outside the promise and may change in a minor release. So are doc-hidden
-members of supported items, for example `CleanupResult::into_outcome`. Rustdoc
-of supported items elaborates the interface; where the two disagree the
-interface wins and the disagreement is a defect.
+members of supported items, for example `CleanupResult::into_outcome`, and the
+methods of the private supertraits that seal a trait, with the values they
+return, such as `UpdateKind`. The interface's
+[precedence rule](v3-public-interface.md#interface-promises) decides between it
+and rustdoc.
 
 ## Deprecation and removal
 
