@@ -16,7 +16,7 @@ Cordis v3 现已成为默认 `main` 主线。现有 `0.6.x` 实现保留在 `leg
 
 ```toml
 [dependencies]
-cordis-rs = "0.10"
+cordis-rs = "0.11"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 ```
 
@@ -27,25 +27,26 @@ use cordis::Context;
 `cordis-rs` 在 v3 中是很薄的 facade，真正的 runtime contract 位于：
 
 ```toml
-cordis-core = "0.5"
+cordis-core = "0.6"
 ```
 
 框架和第三方 Plugin 作者可以直接依赖 `cordis-core`。时间与声明式加载能力保持独立：
 
 ```toml
-cordis-timer = "0.5"
-cordis-loader = "0.5"
+cordis-timer = "0.6"
+cordis-loader = "0.6"
 ```
 
 v3 使用 Rust 2024 Edition，MSRV 为 **Rust 1.88**。
 
-从 semantic `0.4` / facade `0.9` 升级时，请将 core、timer、loader 的
-requirements 一起更新到 `0.5`，facade 更新到 `0.10`。facade re-export core
-类型，混用 `0.4` 和 `0.5` 的 core 类型会导致 type mismatch。API 拼写和 runtime
-行为都没有变化：`0.5` 把 user destructor panic 收窄为一条 best-effort 规则
-（[ADR 0041](docs/adr/0041-user-destructor-panics-are-best-effort.md)），请保证交给
-Cordis 的值在 `Drop` 时不会 panic。更早的升级（包括 `0.4` 中 Loader 的严格
-source schema）见 [MIGRATION.md](MIGRATION.md)、
+从 semantic `0.5` / facade `0.10` 升级时，请将 core、timer、loader 的
+requirements 一起更新到 `0.6`，facade 更新到 `0.11`。facade re-export core
+类型，混用 `0.5` 和 `0.6` 的 core 类型会导致 type mismatch。`0.6` 是 pre-freeze
+breaking 版本线：预期会增长的 public vocabulary 现在是 `#[non_exhaustive]`（需要补
+wildcard arm 和 `..` pattern），Loader source row 变为可扩展并改用 `PluginEntry::new`
+与 `EntryGroup::new` 构造，另有两条已文档化的承诺被收窄（提交后的创建进度，以及
+lifecycle admission order 的含义）。具体修改步骤和更早的升级见
+[MIGRATION.md](MIGRATION.md)、
 [core release notes](crates/cordis-core/CHANGELOG.md) 和
 [facade release notes](crates/cordis/CHANGELOG.md)。
 
@@ -65,7 +66,7 @@ source schema）见 [MIGRATION.md](MIGRATION.md)、
 
 ## 从 0.6.x 迁移
 
-`cordis-rs 0.10.x` 是当前 application-facing v3 发布线；v3 runtime architecture 最初在 `0.7.x` 发布。这不是 `0.6.x` 的 source-compatible 升级。迁移入口：
+`cordis-rs 0.11.x` 是当前 application-facing v3 发布线；v3 runtime architecture 最初在 `0.7.x` 发布。这不是 `0.6.x` 的 source-compatible 升级。迁移入口：
 
 - [`MIGRATION.md`](MIGRATION.md)：面向现有用户的迁移说明。
 - [`docs/v3-migration.md`](docs/v3-migration.md)：更详细的架构迁移 inventory。

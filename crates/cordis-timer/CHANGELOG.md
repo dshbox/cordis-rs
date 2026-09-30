@@ -4,6 +4,13 @@
 
 ## [0.6.0](https://github.com/dshbox/cordis-rs/compare/cordis-timer-v0.5.0...cordis-timer-v0.6.0) - 2026-09-30
 
+### Changed
+
+- *(timer)* Coordinate with `cordis-core 0.6`; update semantic-crate dependency
+  requirements together. Timer's public operations are unchanged, and its
+  operation futures are covered by the new future-`Send` and auto-trait
+  promises.
+
 ### Other
 
 - promise Send for operation futures and apply B2 review fixes

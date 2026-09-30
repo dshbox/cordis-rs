@@ -4,6 +4,20 @@
 
 ## [0.6.0](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.5.0...cordis-core-v0.6.0) - 2026-09-30
 
+### Changed
+
+- *(core)* **Breaking pre-freeze batch** (spec #225: #233, #234, #235, #236,
+  #237, #240, #241). Public vocabularies expected to grow are now
+  `#[non_exhaustive]`; lifecycle admission order is defined as slot acquisition,
+  and the earlier promise that a committed `spawn` completes independently of
+  caller polling is narrowed to polling-driven creation up to `FiberHandle`
+  delivery. Committed `FiberHandle::dispose()` and `Context::remove_plugins` keep
+  their owner hand-off at the first Pending. The new compatible-evolution policy
+  and the auto-trait and operation-future `Send` promises are declared. See
+  [MIGRATION.md](https://github.com/dshbox/cordis-rs/blob/main/MIGRATION.md).
+- *(core)* Coordinate the semantic crates on the `0.6` line. Update direct core,
+  timer and loader dependency requirements together.
+
 ### Added
 
 - *(core)* [**breaking**] open the public vocabularies that are expected to grow
