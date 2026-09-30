@@ -98,7 +98,8 @@ this candidate.
 The candidate is `64aa6de` with main CI run 36695938925. Because it precedes
 this declaration, the record names it directly. The declaration's own merge
 commit changes only this record, the conformance evidence, the naming review,
-the ROADMAP checkbox and the README status lines. Its diff against `64aa6de` is
+the consumer guide's link to this record, the ROADMAP checkbox and the README
+status lines. Its diff against `64aa6de` is
 empty under `crates/`, the public interface, the architecture, the ADRs, the
 compatibility policy and the glossary, as recorded in
 [PR #245](https://github.com/dshbox/cordis-rs/pull/245), so the declared

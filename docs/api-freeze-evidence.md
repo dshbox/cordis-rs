@@ -423,7 +423,7 @@ eight path deliveries above (#201–#208), coordinated under
 [spec #200](https://github.com/dshbox/cordis-rs/issues/200). Each path was delivered
 against its own fixed baseline, independently reviewed on Standards and Spec,
 and ran all eight local gates. The
-[recommendation](api-freeze-recommendation.md) records the candidate provenance,
+[freeze candidate record](api-freeze-recommendation.md) records the candidate provenance,
 validation receipt and blocker dispositions.
 
 The supported inventory is covered by the eight paths above: core default-feature
