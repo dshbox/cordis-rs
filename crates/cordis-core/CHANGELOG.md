@@ -42,7 +42,6 @@
 - promise Send for operation futures and apply B2 review fixes
 - declare compatible evolution, openness and auto-trait promises
 - define lifecycle admission, fix ObservationRouting traits and FiberHandle wording
-- Merge pull request #237 from dshbox/fix/caller-driven-first-pending-handoff-20260930
 
 ## [0.5.0](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.4.1...cordis-core-v0.5.0) - 2026-09-29
 
