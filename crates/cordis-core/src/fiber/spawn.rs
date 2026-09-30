@@ -407,9 +407,15 @@ impl Context {
     ///
     /// Before the allocation/publication commit, dropping this future
     /// has no lifecycle effect (the pre-commit section is synchronous).
-    /// After it, the framework completes the transaction independently
-    /// of caller polling: the FiberHandle handoff, or the full disposal and
-    /// unlink of the undelivered Fiber. Caller cancellation is never
+    /// After it, initial settlement, including Plugin apply, runs in this
+    /// future's task. While the future is alive, the creation advances only
+    /// as it is polled: a future kept but no longer polled, such as the
+    /// unfinished half of a `select`, holds the new Fiber in its creation, and
+    /// work that waits on that Fiber, such as
+    /// [`remove_plugins`](Context::remove_plugins) of its allocation, waits
+    /// too. Dropping the future hands the committed creation to framework
+    /// completion, which fully disposes and unlinks the undelivered Fiber
+    /// independently of caller polling. Caller cancellation is never
     /// reported as [`SpawnError::Interrupted`].
     pub async fn spawn(
         &self,

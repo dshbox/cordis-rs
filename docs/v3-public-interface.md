@@ -303,9 +303,13 @@ admission.
 returns a `FiberHandle` only after a fresh Fiber reaches live quiescent
 `Active` or stable `Pending`. Initial apply failure leaves no resident
 Fiber. Cancellation law: before the allocation/publication commit,
-cancelling the spawn future has no lifecycle effect; afterward the
-framework completes the FiberHandle handoff or fully disposes and unlinks the
-undelivered Fiber independently of caller polling.
+cancelling the spawn future has no lifecycle effect. After the commit, initial
+settlement, including Plugin apply, runs in the spawning caller's task. While
+the spawn future is alive, the creation advances only as that future is polled,
+and work that waits on the new Fiber, such as typed removal of its allocation,
+waits for it. Dropping the future hands the committed creation to framework
+completion, which fully disposes and unlinks the undelivered Fiber
+independently of caller polling.
 
 Absent from the interface: public `DynPlugin`, raw `ErasedConfig`,
 `InterceptConfig`, `any_plugin`, erased methods, and downcast/storage
@@ -459,7 +463,7 @@ one current allocation, freezes its completion set, and awaits ordinary
 disposal and unlink/prune for every member. Later same-type spawns use a
 fresh allocation outside that removal. Absence is success. Self-wait
 recursion is refused before detach. After detach, completion is
-framework-owned and independent of caller cancellation.
+framework-owned and independent of caller cancellation and caller polling.
 
 ## Runtime snapshots and observations
 
@@ -970,6 +974,9 @@ caller or disposing it when the result cannot be delivered; abandonment
 transfers reverse-success-order, attempt-all rollback to framework-owned
 completion. Core owns an in-progress spawn until FiberHandle handoff; Loader
 owns result handoff afterward; the caller owns the delivered outcome.
+Loader performs each spawn inside the load future, so the spawn cancellation
+law applies: while that future is alive but not polled, the entry being created
+does not advance and the already-obtained FiberHandles are not rolled back.
 Ordinary entry failures do not trigger rollback. Dropping a delivered
 LoadOutcome or FiberHandle is inert.
 

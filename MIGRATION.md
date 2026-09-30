@@ -54,6 +54,31 @@ Constructing `Routing` and `RealmPolicy` values is unaffected, and
 `UpdateOutcome`, `QueryOutcome`, `ResidencyChange`, `ListenerChange`,
 `InjectEntry` and `TimeoutOutcome` stay exhaustive.
 
+**Narrowed promise: creation after its commit.** As with
+[ADR 0041](docs/adr/0041-user-destructor-panics-are-best-effort.md), no API
+spelling or signature changes, but a documented contract is narrowed.
+`Context::spawn` used to promise that, after its allocation commit, the framework
+completes the creation independently of caller polling. That was never
+implemented: creation up to FiberHandle delivery is driven by polling the spawn
+future. The contract now says so. While a committed spawn future is alive, the
+creation advances only as that future is polled, and work that waits on the new
+Fiber, such as `remove_plugins` of its allocation, waits too. Dropping the future
+still hands the creation to framework completion, which disposes the undelivered
+Fiber. `LoadPlan::load` spawns inside its own future, so a load future kept but
+no longer polled holds its in-progress entry and rolls nothing back. Poll such a
+future to completion or drop it; do not park it, for example as the unfinished
+half of a `select`. See
+[ADR 0029](docs/adr/0029-lifecycle-commits-complete-and-critical-sections-are-closed.md)
+and the [creation law](docs/v3-public-interface.md#plugin-preparation-sealing-and-creation).
+
+Committed `FiberHandle::dispose()` and `Context::remove_plugins` now keep the
+stronger promise again: once their owner first waits, it runs without the
+committing caller, so a future kept but no longer polled no longer stalls them or
+the `dispose()` and `ready()` calls that coalesce onto them. Await these futures;
+do not block a Tokio worker thread on them (for example with
+`futures::executor::block_on` inside a task), because the handed-off owner may
+be queued on that same worker.
+
 ## From facade 0.9.x / semantic 0.4.x to 0.10.x / 0.5.x
 
 Update `cordis-rs` dependency requirements to `0.10` and any direct `cordis-core`,

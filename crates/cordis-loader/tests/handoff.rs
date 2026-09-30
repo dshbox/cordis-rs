@@ -8,8 +8,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
+use cordis_core::lifecycle::FiberRole;
 use cordis_core::logger::{BufferExporter, Level};
-use cordis_core::{Context, Plugin, PreparedPlugin};
+use cordis_core::{Context, FiberState, Plugin, PreparedPlugin};
 use cordis_loader::outcome::{EntryOutcome, LoaderFailure};
 use cordis_loader::plan::{LoadPlan, LoadPlanBuilder, PluginEntry};
 use cordis_loader::resolver::PluginRequest;
@@ -416,6 +417,86 @@ async fn abandonment_continues_after_last_input_drop_panics_between_members() {
         reports[0].text(),
         "cordis: Loader rollback member destruction panicked: last input reference dropped during loader rollback"
     );
+}
+
+/// Loader awaits core spawn inline (issue #232, #224 U1). A load future held
+/// unpolled after an entry's spawn commit therefore keeps that creation where it
+/// is, as a held `Context::spawn` future does, and starts no rollback. Resuming
+/// it finishes the load; dropping it instead hands the in-progress creation and
+/// the rollback to framework completion (the abandonment tests above).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn held_load_future_advances_its_in_progress_spawn_only_as_it_is_polled() {
+    let ctx = Context::new();
+    let first = CleanupProbe::new(CleanupMode::Ok, Arc::new(AtomicUsize::new(0)));
+    let blocker = BlockProbe::new();
+    let plan = plan(&["first", "block"]);
+    let resolver_probe = first.clone();
+    let resolver_blocker = blocker.clone();
+    let resolver =
+        move |request: PluginRequest<'_>| -> Result<Option<PreparedPlugin>, ResolverError> {
+            if request.resolve_key() == "block" {
+                return Ok(Some(PreparedPlugin::from_input(
+                    BlockingPlugin(resolver_blocker.clone()),
+                    (),
+                )));
+            }
+            Ok(Some(PreparedPlugin::from_input(
+                CleanupPlugin(resolver_probe.clone()),
+                (),
+            )))
+        };
+
+    let mut load = Box::pin(plan.load(&ctx, &resolver));
+    tokio::select! {
+        _ = &mut load => panic!("load cannot finish while its second apply is parked"),
+        () = blocker.entered.notified() => {}
+    }
+
+    // `load` is now alive and unpolled, like the unfinished half of a select.
+    blocker.release.notify_one();
+    let settle_window = Instant::now() + Duration::from_millis(100);
+    while Instant::now() < settle_window {
+        tokio::task::yield_now().await;
+    }
+    let states: Vec<FiberState> = ctx
+        .runtime_snapshot()
+        .fibers()
+        .iter()
+        .filter(|fiber| fiber.role() == FiberRole::Ordinary)
+        .map(|fiber| fiber.state())
+        .collect();
+    assert_eq!(states.len(), 2, "both entries committed: {states:?}");
+    assert!(
+        states.contains(&FiberState::Loading),
+        "the held load future does not advance its in-progress spawn: {states:?}"
+    );
+    assert_eq!(
+        first.observed_order(),
+        0,
+        "a held load future starts no rollback"
+    );
+
+    let outcome = tokio::select! {
+        outcome = &mut load => outcome,
+        () = async {
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while Instant::now() < deadline {
+                tokio::task::yield_now().await;
+            }
+        } => panic!("resumed load did not finish"),
+    };
+    assert!(
+        outcome
+            .entries()
+            .iter()
+            .all(|entry| matches!(entry, EntryOutcome::Spawned { .. })),
+        "resuming the held load delivers every entry"
+    );
+    for fiber_handle in outcome.fiber_handles() {
+        fiber_handle.dispose().await.unwrap();
+    }
+    first.wait().await;
+    wait_for_root_only(&ctx).await;
 }
 
 #[tokio::test]

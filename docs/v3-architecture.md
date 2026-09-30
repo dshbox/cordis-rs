@@ -424,13 +424,21 @@ Cancellation before that commit changes no framework state — no state,
 configuration, gate, claim, allocation, publication, or observation.
 Cancellation after it abandons only the caller's wait while
 framework-owned work continues independently of caller polling until it
-reaches the operation's documented barrier. Runtime-agnostic lifecycle work
-is driven inline by the committing caller; an abandoned wait hands the same
-pinned future to the current multi-thread executor (moving to Cordis's shared
-completion runtime only if executor shutdown drops it after a normal `Pending`),
-or straight to the completion runtime from a `current_thread` runtime or
-off-runtime; arbitrary async effect cleanup starts on that completion
-runtime from its first poll. This uniform law and its supporting rules are the decision of
+reaches the operation's documented barrier. For runtime-agnostic lifecycle
+work the synchronous part runs inline in the committing caller's poll; at its
+first `Pending` the owner is handed to framework completion, and the work
+continues independently of caller polling, so a caller future kept alive but no
+longer polled stalls neither the owner nor the calls that coalesce onto it. The
+caller only awaits the outcome, and an owner panic resumes in that caller. The
+hand-off places the same pinned future on the current multi-thread executor
+(moving to Cordis's shared completion runtime only if executor shutdown drops it
+after a normal `Pending`), or straight on the completion runtime from a
+`current_thread` runtime or off-runtime; arbitrary async effect cleanup starts
+on that completion runtime from its first poll. New-Fiber creation is narrower:
+initial settlement runs Plugin apply in the spawning caller's task, so while the
+committed spawn future is alive, creation advances only as that future is
+polled, and dropping it hands the committed creation to framework completion.
+Loader inherits this for the entry it is creating. This uniform law and its supporting rules are the decision of
 [ADR 0029](adr/0029-lifecycle-commits-complete-and-critical-sections-are-closed.md).
 
 | Operation | Irreversible commit | Required independent completion |

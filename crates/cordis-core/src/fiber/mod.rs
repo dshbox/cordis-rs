@@ -987,9 +987,10 @@ impl Fiber {
 
     /// Complete the terminal disposal transaction. The first caller commits
     /// Open-to-Closing while holding the lifecycle slot, then drives the
-    /// remainder inline as caller-driven framework work that is handed to
-    /// framework completion if the caller abandons its wait. Every racing/later caller
-    /// waits for the same full cleanup + Disposed + exact-unlink barrier.
+    /// owner's synchronous prefix inline; at the owner's first `Pending` it is
+    /// handed to framework completion and the caller only awaits its outcome.
+    /// Every racing/later caller waits for the same full cleanup + Disposed +
+    /// exact-unlink barrier.
     pub(crate) async fn dispose(self: &Arc<Self>) {
         if self.dispose_complete.load(Ordering::SeqCst) {
             return;
@@ -1012,8 +1013,9 @@ impl Fiber {
         }
 
         // Open-to-Closing is committed. No await occurs between the claim and
-        // the caller-driven owner, so caller cancellation can only hand the
-        // pending owner to framework completion; it can never stop it.
+        // the caller-driven owner, and the owner leaves the caller at its first
+        // `Pending`, so neither caller cancellation nor a caller that stops
+        // polling can stop it.
         let fiber = self.clone();
         crate::effect::CallerDriven::new(async move {
             fiber.complete_claimed_dispose().await;
@@ -1656,7 +1658,9 @@ impl FiberHandle {
     /// Concurrent/later calls coalesce onto that same completion; completed
     /// repeats succeed without replaying cleanup or lifecycle observation.
     /// Caller cancellation after the terminal claim abandons only that caller's
-    /// wait and cannot stop the owner transaction.
+    /// wait and cannot stop the owner transaction. The owner also progresses
+    /// independently of caller polling: a claiming future that is kept but no
+    /// longer polled delays neither the owner nor the calls coalescing onto it.
     ///
     /// A self-wait from this Fiber's settle context is refused before the
     /// terminal claim with [`LifecycleRecursion`] naming
@@ -1954,6 +1958,73 @@ mod terminal_claim_tests {
         );
 
         fiber.complete_claimed_dispose().await;
+        assert_eq!(handle.state(), FiberState::Disposed);
+        handle.dispose().await.unwrap();
+    }
+}
+
+#[cfg(test)]
+mod caller_driven_owner_tests {
+    use super::*;
+    use futures::FutureExt;
+    use std::convert::Infallible;
+    use std::panic::AssertUnwindSafe;
+
+    /// One async cleanup gated by the test, so the committed owner reaches its
+    /// first `Pending` inside the terminal drain.
+    struct GatedCleanup(Arc<tokio::sync::Notify>);
+
+    impl crate::Plugin for GatedCleanup {
+        type Config = ();
+        type Input = ();
+        type PrepareError = Infallible;
+        type ApplyError = Infallible;
+        fn prepare(&self, (): ()) -> Result<(), Infallible> {
+            Ok(())
+        }
+        async fn apply(&self, ctx: Context, _: &()) -> Result<(), Infallible> {
+            let gate = self.0.clone();
+            ctx.effect(move || async move { gate.notified().await })
+                .unwrap();
+            Ok(())
+        }
+    }
+
+    /// A framework-invariant panic in the dispose owner after its hand-off at
+    /// the first `Pending` still resumes in the committing caller. The owner is
+    /// split at the terminal claim exactly as `Fiber::dispose` builds it, with
+    /// a probe panic appended after the barrier.
+    #[tokio::test(flavor = "current_thread")]
+    async fn dispose_owner_panic_after_first_pending_reaches_the_caller() {
+        let ctx = Context::new();
+        let gate = Arc::new(tokio::sync::Notify::new());
+        let handle = ctx
+            .spawn(crate::PreparedPlugin::from_input(
+                GatedCleanup(gate.clone()),
+                (),
+            ))
+            .await
+            .unwrap();
+        let fiber = handle.fiber.clone();
+
+        fiber.slot.claim().await;
+        assert!(!fiber.claim_terminal(), "first terminal claim");
+        let owner_fiber = fiber.clone();
+        let mut owner = Box::pin(crate::effect::CallerDriven::new(async move {
+            owner_fiber.complete_claimed_dispose().await;
+            std::panic::panic_any("dispose owner probe");
+        }));
+        assert!(futures::poll!(owner.as_mut()).is_pending());
+        gate.notify_one();
+
+        let outcome = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            AssertUnwindSafe(owner).catch_unwind(),
+        )
+        .await
+        .expect("the owner reaches its probe");
+        let payload = outcome.expect_err("the owner panic reaches the caller");
+        assert_eq!(payload.downcast_ref::<&str>(), Some(&"dispose owner probe"));
         assert_eq!(handle.state(), FiberState::Disposed);
         handle.dispose().await.unwrap();
     }

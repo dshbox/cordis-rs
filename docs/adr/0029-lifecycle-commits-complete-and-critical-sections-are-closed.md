@@ -7,14 +7,24 @@ Cancellation before that commit has no framework effect: no state,
 configuration, gate, claim, allocation, publication, or observation
 changes. Cancellation after that commit abandons only the caller's wait;
 framework-owned work continues independently of caller polling until it
-reaches the operation's documented barrier. Runtime-agnostic Cordis lifecycle
-work is driven inline by the committing caller while it polls. When that caller
-abandons its wait, the same pinned future is handed off: on a multi-thread Tokio
-runtime it continues as a task on that executor, and if shutdown drops it after
-a normal `Pending` it transfers to a shared Cordis completion runtime. On a
-`current_thread` runtime, or off-runtime, it goes to the completion runtime
-directly, because a current-thread runtime runs spawned tasks only while someone
-drives it. Arbitrary async effect cleanup is different: it is first polled on that
+reaches the operation's documented barrier. For runtime-agnostic Cordis
+lifecycle work the synchronous part runs inline in the committing caller's
+poll; at its first `Pending` the owner is handed to framework completion, and
+the work continues independently of caller polling. A caller whose future stays
+alive but is never polled again therefore stalls neither the owner nor the
+operations that coalesce onto it. The caller only awaits the owner's outcome,
+and a panic in the handed-off owner resumes in that awaiting caller. The target
+of the hand-off, which moves the same pinned future, depends on the runtime: on
+a multi-thread Tokio runtime it continues as a task on that executor, and if shutdown drops it after a normal `Pending` it
+transfers to a shared Cordis completion runtime. On a `current_thread` runtime,
+or off-runtime, it goes to the completion runtime directly, because a
+current-thread runtime runs spawned tasks only while someone drives it.
+New-Fiber creation is narrower. Its initial settlement runs Plugin apply in the
+spawning caller's task, and a half-polled apply may own Tokio time/IO state that
+must not migrate between runtime drivers. While the committed spawn future is
+alive, creation therefore advances only as that future is polled, and work that
+waits on the new Fiber waits for it. Dropping the future hands the committed
+creation to framework completion. Arbitrary async effect cleanup is different: it is first polled on that
 completion runtime, so Tokio time/IO work created by the cleanup never migrates
 between runtime drivers. A poll unwind is a failure, never a transfer signal.
 This uniform law covers
@@ -79,7 +89,11 @@ commits as each FiberHandle is obtained; if load or result construction is
 abandoned before delivery, the already-obtained FiberHandles are disposed in
 reverse success order, attempt-all, under framework-owned completion. Loader
 uses the same core completion seam, so abandoning a load during executor
-shutdown does not drop that rollback. Dropping a delivered outcome is inert.
+shutdown does not drop that rollback. Loader awaits each creation inside the
+load future, so the creation rule carries over: while that future is alive, the
+entry being created advances only as it is polled, and the already-obtained
+FiberHandles stay with the load until it is polled to completion or dropped.
+Dropping a delivered outcome is inert.
 
 ## Consequences of the rule
 

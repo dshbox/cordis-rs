@@ -201,3 +201,147 @@ fn abandoned_creation_is_rolled_back_while_the_origin_current_thread_runtime_is_
          (ordinary residents={residents})"
     );
 }
+
+// Held-caller variants (issue #232). The caller's future is polled once on the
+// idle origin and then kept alive without being polled or dropped, as the
+// unfinished half of a `select` would be. Committed disposal and removal must
+// still finish; creation advances only once that future is dropped.
+
+#[test]
+fn committed_dispose_completes_while_its_held_caller_and_the_origin_runtime_are_idle() {
+    let origin = origin_runtime();
+    let ctx = Context::new();
+    let release = std::sync::Arc::new(tokio::sync::Notify::new());
+    let handle = origin
+        .block_on(ctx.spawn(PreparedPlugin::from_input(
+            ParkedCleanup(release.clone()),
+            (),
+        )))
+        .unwrap();
+
+    let mut first = Box::pin(handle.dispose());
+    origin.block_on(async {
+        assert!(futures::poll!(first.as_mut()).is_pending());
+    });
+
+    let observer = observer_runtime();
+    let completed = observer.block_on(async {
+        release.notify_one();
+        tokio::time::timeout(Duration::from_secs(3), handle.dispose())
+            .await
+            .is_ok()
+    });
+    let state = handle.state();
+    let residents = ordinary_residents(&ctx);
+    assert!(
+        completed,
+        "committed dispose did not reach its barrier while its caller future was held on \
+         the idle origin runtime (state={state:?}, ordinary residents={residents})"
+    );
+    assert_eq!(state, FiberState::Disposed);
+    assert_eq!(residents, 0);
+
+    // The held future only observes the finished barrier once resumed.
+    assert!(origin.block_on(first).is_ok());
+    drop(observer);
+    drop(origin);
+}
+
+#[test]
+fn committed_group_removal_completes_while_its_held_caller_and_the_origin_runtime_are_idle() {
+    let origin = origin_runtime();
+    let ctx = Context::new();
+    let release = std::sync::Arc::new(tokio::sync::Notify::new());
+    let handle = origin
+        .block_on(ctx.spawn(PreparedPlugin::from_input(
+            ParkedCleanup(release.clone()),
+            (),
+        )))
+        .unwrap();
+
+    let mut removal = Box::pin(ctx.remove_plugins::<ParkedCleanup>());
+    origin.block_on(async {
+        assert!(futures::poll!(removal.as_mut()).is_pending());
+    });
+    release.notify_one();
+
+    // Observe only, as in the dropped-caller variant above.
+    let observer = observer_runtime();
+    let completed = observer.block_on(async {
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while ordinary_residents(&ctx) != 0 {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .is_ok()
+    });
+    let state = handle.state();
+    let residents = ordinary_residents(&ctx);
+    assert!(
+        completed,
+        "committed group removal did not dispose its frozen member while its caller future \
+         was held on the idle origin runtime (state={state:?}, ordinary residents={residents})"
+    );
+    assert_eq!(state, FiberState::Disposed);
+
+    assert!(origin.block_on(removal).is_ok());
+    drop(observer);
+    drop(origin);
+}
+
+/// Documented narrowing: a held spawn future keeps its committed creation
+/// where it is. Dropping it, even without driving the origin again, hands the
+/// rollback to framework completion.
+#[test]
+fn held_creation_is_rolled_back_once_its_future_is_dropped_while_the_origin_runtime_is_idle() {
+    struct Parked(std::sync::Arc<tokio::sync::Notify>);
+    impl Plugin for Parked {
+        type Config = ();
+        type Input = ();
+        type PrepareError = Infallible;
+        type ApplyError = Infallible;
+        fn prepare(&self, (): ()) -> Result<(), Infallible> {
+            Ok(())
+        }
+        async fn apply(&self, _ctx: Context, _input: &()) -> Result<(), Infallible> {
+            self.0.notified().await;
+            Ok(())
+        }
+    }
+
+    let origin = origin_runtime();
+    let ctx = Context::new();
+    let never = std::sync::Arc::new(tokio::sync::Notify::new());
+    let mut spawn = Box::pin(ctx.spawn(PreparedPlugin::from_input(Parked(never), ())));
+    origin.block_on(async {
+        assert!(futures::poll!(spawn.as_mut()).is_pending());
+    });
+
+    let observer = observer_runtime();
+    observer.block_on(async { tokio::time::sleep(Duration::from_millis(100)).await });
+    assert_eq!(
+        ordinary_residents(&ctx),
+        1,
+        "a held spawn future keeps its committed creation"
+    );
+
+    drop(spawn);
+    let rolled_back = observer.block_on(async {
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while ordinary_residents(&ctx) != 0 {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .is_ok()
+    });
+    let residents = ordinary_residents(&ctx);
+    drop(observer);
+    drop(origin);
+    assert!(
+        rolled_back,
+        "dropped creation was not rolled back while the origin runtime was idle \
+         (ordinary residents={residents})"
+    );
+}
