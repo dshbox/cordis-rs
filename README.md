@@ -391,9 +391,10 @@ independent instead of letting one hidden tree control all three.
 The v3 semantic crates began at `0.1.0` and now publish on the `0.6.x` line; the
 historical application package entered v3 at `cordis-rs 0.7.0` and now publishes
 on `0.11.x`. The workspace uses Rust 2024 Edition with MSRV 1.88.
-As a pre-1.0 project, the public API may still evolve before 1.0. The API freeze
-candidate is declared (`64aa6de`, #222); 1.0 still requires a stabilization
-release without a planned breaking change.
+As a pre-1.0 project, the public API may still evolve before 1.0, but after the
+declared API freeze candidate (`64aa6de`, #222) a deliberate break restarts the
+stabilization requirement; 1.0 still requires a stabilization release without a
+planned breaking change.
 The intended stable rules are documented in the
 [`1.0 compatibility policy`](docs/compatibility-policy.md), and the normative
 semantic surface is [`docs/v3-public-interface.md`](docs/v3-public-interface.md).

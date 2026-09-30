@@ -42,9 +42,16 @@ The declaration change edits only non-normative records: this record, the
 status lines. It leaves the public interface, architecture, ADRs,
 compatibility policy, glossary and crate sources as they are at the candidate.
 The weekly correctness-assurance workflow is a ROADMAP confidence goal, not a
-required job; its latest run predates the candidate. The pending test-only
+required job. Its latest run,
+[run 36413948134](https://github.com/dshbox/cordis-rs/actions/runs/36413948134)
+(2026-09-28 on `ed07d31`), predates and does not cover the candidate; a
+`workflow_dispatch` on the candidate is optional. The pending test-only
 release PR [#243](https://github.com/dshbox/cordis-rs/pull/243)
-(0.6.1 / 0.11.1) is not part of the candidate.
+(0.6.1 / 0.11.1) is not part of the candidate and stays unmerged until after
+this declaration. Any release cut from a later commit is a post-freeze release
+governed by the compatibility policy; the stabilization release is a separate,
+later ROADMAP gate, and whether a given release counts as it is the author's
+decision.
 
 ## Candidate and exact revision
 
@@ -88,11 +95,19 @@ conformance, naming, schema, openness and scheduling claims are rechecked
 against it. Validation of an earlier baseline or revision does not validate
 this candidate.
 
-The candidate is `64aa6de` with main CI run 36695938925; the declaration change
-names both (see [#222](https://github.com/dshbox/cordis-rs/issues/222)). This
-avoids an impossible self-hash inside a versioned file. A later commit is a
-different candidate: recheck affected claims and CI instead of inheriting a
-green result by branch name. This is not a 1.0 readiness claim.
+The candidate is `64aa6de` with main CI run 36695938925. Because it precedes
+this declaration, the record names it directly. The declaration's own merge
+commit changes only this record, the conformance evidence, the naming review,
+the ROADMAP checkbox and the README status lines. Its diff against `64aa6de` is
+empty under `crates/`, the public interface, the architecture, the ADRs, the
+compatibility policy and the glossary, as recorded in
+[PR #245](https://github.com/dshbox/cordis-rs/pull/245), so it is not a
+different candidate. Any later change to the supported surface or its normative
+documents produces a new candidate: recheck the affected claims and CI instead
+of inheriting this validation by branch name. A deliberate break updates its
+authority and restarts the ROADMAP stabilization requirement. The stabilization
+release ([#243](https://github.com/dshbox/cordis-rs/pull/243) or a successor)
+is a separate, later ROADMAP gate. This is not a 1.0 readiness claim.
 
 ## Deliverables and coverage
 
@@ -156,13 +171,13 @@ not replace the exact candidate's review and CI receipt.
 Merged tracker state alone does not prove correctness or absence of further defects.
 The updated source-to-contract review and named regressions support the current
 finding; the original "none identified" statement is superseded, not preserved as
-a claim for current main. No known unresolved supported-contract item is deferred
+a claim for the candidate. No known unresolved supported-contract item is deferred
 to make the candidate appear ready.
 
 ## Review and validation record
 
 Each delivery ([#201](https://github.com/dshbox/cordis-rs/issues/201)–[#209](https://github.com/dshbox/cordis-rs/issues/209))
-and each revision of this preparation was reviewed on separate Standards and Spec
+and each earlier revision of this preparation was reviewed on separate Standards and Spec
 axes and validated by the eight local gates: toolchain, fmt, clippy, vocabulary,
 tests, docs, examples and floating-latest compatibility. Canonical UI snapshots
 use the pinned Rust toolchain and rust-src; floating latest checks compatibility
@@ -174,8 +189,11 @@ run identifiers and CI runs) live in the delivery tickets and in
 [PR #210](https://github.com/dshbox/cordis-rs/pull/210)'s description and
 comments, not in this document. The #225 batch PRs (#233–#237, #240, #241) were
 each reviewed on Standards and Spec and validated by the local gates and main
-CI; their receipts live in those PRs and in #225. The candidate receipt lives
-in [#222](https://github.com/dshbox/cordis-rs/issues/222).
+CI; their receipts live in those PRs and in #225. The candidate receipt is
+recorded in [PR #245](https://github.com/dshbox/cordis-rs/pull/245); the
+[#222](https://github.com/dshbox/cordis-rs/issues/222) closing comment links it.
+The docs-only declaration revision ran the toolchain, fmt, vocabulary and docs
+gates; its candidate is validated by main CI run 36695938925.
 
 ## Residual limits and later 1.0 work
 
@@ -192,8 +210,9 @@ A committed creation does not advance while its spawn or load future is held
 unpolled, and work waiting on the new Fiber waits with it; dropping that future
 hands the creation to framework completion, which fully disposes and unlinks
 the undelivered Fiber. Among lifecycle intents already waiting for the arbiter,
-admission order is unspecified. `wait_state` guarantees only that a publication
-preceding its deadline wins.
+admission order is unspecified. At the `wait_state` deadline tie, a requested
+state published before the deadline is always observed; one published after the
+deadline but before the waiter resumes may be reported either way.
 
 The author declared `64aa6de` the API freeze candidate in #222 and ticked the
 [ROADMAP](../ROADMAP.md#required-before-10) item "Declare an API freeze

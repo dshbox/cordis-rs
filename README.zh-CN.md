@@ -96,4 +96,4 @@ MIT。项目延续 Cordis lineage；版权声明见 [`LICENSE`](LICENSE)。
 其中链接了现有 authority、runnable examples 与对应 evidence。
 [API freeze candidate record（English）](docs/api-freeze-recommendation.md)
 记录已宣布的 API freeze candidate（`64aa6de`，#222）与剩余工作；1.0 仍需要一次
-stabilization release。
+不含 planned breaking change 的 stabilization release。

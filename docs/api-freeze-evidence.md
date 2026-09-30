@@ -259,9 +259,9 @@ owner off at its first `Pending`, to the multi-thread origin when available,
 otherwise the completion runtime, relaying a framework-invariant owner panic to a
 caller that still awaits it and otherwise reporting it to the Runtime logger.
 B1 (#232), an owner stalled by a held but unpolled caller, is fixed by that
-hand-off. Creation is narrowed instead: it advances only while its spawn future
-is polled, and once that future is dropped, framework completion fully disposes
-and unlinks the undelivered Fiber. No unresolved defect in
+hand-off. Creation is narrowed instead: a held spawn future does not advance
+its committed creation, and dropping it hands the creation to framework
+completion, which fully disposes and unlinks the undelivered Fiber. No unresolved defect in
 this path is currently identified. Usage: [rules 5–6](consumer-guide.md#5-register-resources-with-their-generation-and-separate-ownership-from-attribution)
 and [worker_daemon](../examples/worker_daemon/src/main.rs).
 
