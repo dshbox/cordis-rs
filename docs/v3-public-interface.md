@@ -411,6 +411,14 @@ process refuses to start that thread the wait reports
 `-> Result<FiberHandle, EraSwapError>`; and `dispose(&self)`
 `-> Result<(), LifecycleRecursion>`.
 
+`wait_state` publication wins the tie with its deadline: a requested state
+published before the deadline is always observed, even if the deadline has
+also passed when the waiter resumes. A requested state published after the
+deadline but before the waiter resumes may be reported either way; that
+outcome is unspecified. This is the opposite of Timer `Timeout`, where at an
+uncommitted boundary `Elapsed` wins: a state publication that precedes the
+deadline is already committed when the wait examines it.
+
 `FiberId` is opaque Runtime-local correlation identity with `Debug + Clone + Eq + Hash`
 only; there is no nullable numeric `uid()`. Restart, same-Fiber update, and disposal
 preserve it; era replacement allocates a new identity; cross-Runtime identities never

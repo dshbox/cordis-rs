@@ -233,7 +233,19 @@ impl StatePublication {
             }
 
             tokio::select! {
-                _ = &mut deadline => return Err(WaitStateError::Elapsed),
+                _ = &mut deadline => {
+                    // Publication wins the tie: a task resumed late can find
+                    // the deadline and the publication wake ready together,
+                    // and `select!` picks between them at random. Only a
+                    // final snapshot that still misses the requested
+                    // publication reports `Elapsed`.
+                    let (current, revision) = self.snapshot(target);
+                    return if current == target || revision != baseline_revision {
+                        Ok(())
+                    } else {
+                        Err(WaitStateError::Elapsed)
+                    };
+                }
                 _ = &mut notified => {}
             }
         }
@@ -1638,6 +1650,15 @@ impl FiberHandle {
     /// signal is the Fiber's dedicated state-publication revision: the notify
     /// is only a wake hint, so a requested state published and superseded
     /// before this task is polled again is still observed.
+    ///
+    /// Publication wins the tie with the deadline: a requested state published
+    /// before the deadline is always observed, even if the deadline has also
+    /// passed when this task resumes. A requested state published after the
+    /// deadline but before this task resumes may be reported either way; that
+    /// outcome is unspecified. This is the opposite of the Timer `Timeout`
+    /// rule, where at an uncommitted boundary `Elapsed` wins: a state
+    /// publication that precedes the deadline is already committed when this
+    /// wait examines it.
     pub async fn wait_state(
         &self,
         state: FiberState,
