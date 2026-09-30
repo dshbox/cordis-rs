@@ -1650,13 +1650,14 @@ impl FiberHandle {
     /// is only a wake hint, so a requested state published and superseded
     /// before this task is polled again is still observed.
     ///
-    /// Publication wins the tie with the deadline: `Elapsed` is reported only
-    /// when the deadline has passed and no requested publication has
-    /// committed by the time this task observes it. A publication that
-    /// precedes the deadline is therefore observed even if the deadline has
-    /// also passed when the task resumes. This is the opposite of the Timer
-    /// `Timeout` rule, where at an uncommitted boundary `Elapsed` wins: a
-    /// state publication is already committed when this wait examines it.
+    /// Publication wins the tie with the deadline: a requested state published
+    /// before the deadline is always observed, even if the deadline has also
+    /// passed when this task resumes. A requested state published after the
+    /// deadline but before this task resumes may be reported either way; that
+    /// outcome is unspecified. This is the opposite of the Timer `Timeout`
+    /// rule, where at an uncommitted boundary `Elapsed` wins: a state
+    /// publication that precedes the deadline is already committed when this
+    /// wait examines it.
     pub async fn wait_state(
         &self,
         state: FiberState,

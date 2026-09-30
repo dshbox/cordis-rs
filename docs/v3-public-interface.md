@@ -405,17 +405,19 @@ All lifecycle controls are async: `ready(&self) -> Result<FiberState, ReadyError
 representable monotonic clock never elapses; pending waits share one lazily
 started Cordis deadline thread rather than holding a thread each, and if the
 process refuses to start that thread the wait reports
-`WaitStateError::DeadlineUnavailable` instead of panicking; publication wins
-the tie with the deadline: `Elapsed` is reported only when no requested
-publication has committed by the time the waiter observes the passed deadline,
-so a publication that precedes the deadline is observed even if the waiter is
-next polled after the deadline has also passed — unlike Timer `Timeout`, where
-at an uncommitted boundary `Elapsed` wins, because a state publication is
-already committed when the wait examines it);
+`WaitStateError::DeadlineUnavailable` instead of panicking);
 `restart(&self) -> Result<(), RestartError>`; `update(&self, change: PreparedChange)`
 `-> Result<UpdateOutcome, UpdateError>`; `era_swap(&self, change: PreparedChange)`
 `-> Result<FiberHandle, EraSwapError>`; and `dispose(&self)`
 `-> Result<(), LifecycleRecursion>`.
+
+`wait_state` publication wins the tie with its deadline: a requested state
+published before the deadline is always observed, even if the deadline has
+also passed when the waiter resumes. A requested state published after the
+deadline but before the waiter resumes may be reported either way; that
+outcome is unspecified. This is the opposite of Timer `Timeout`, where at an
+uncommitted boundary `Elapsed` wins: a state publication that precedes the
+deadline is already committed when the wait examines it.
 
 `FiberId` is opaque Runtime-local correlation identity with `Debug + Clone + Eq + Hash`
 only; there is no nullable numeric `uid()`. Restart, same-Fiber update, and disposal
