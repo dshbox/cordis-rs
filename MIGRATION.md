@@ -43,9 +43,11 @@ Downstream code that matched them exhaustively needs two mechanical edits:
 - Add `..` to every pattern on these record variants:
   `RuntimeObservation::{FiberResidency, FiberState, ServiceVisibility,
   ListenerRegistration, DispatchCompleted}` and
-  `EntryOutcome::{Group, Disabled, Pruned, Spawned, Failed}`. Such a variant can
-  no longer be constructed outside its defining crate; every one carries an
-  identity that Cordis alone creates.
+  `EntryOutcome::{Group, Disabled, Pruned, Spawned, Failed}`. These variants can
+  no longer be constructed outside their defining crate. Downstream tests that
+  fabricated them must obtain real ones from a Runtime: `RuntimeObservation`
+  records from observers registered with `Context::observe_runtime`, and
+  `EntryOutcome` rows from `LoadPlan::load`.
 
 Constructing `Routing` and `RealmPolicy` values is unaffected, and
 `RealmPolicy::Shared { label }` keeps its fields. `FiberState`, `FiberRole`,
