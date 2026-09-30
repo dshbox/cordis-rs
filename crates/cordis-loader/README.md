@@ -79,13 +79,10 @@ async fn main() -> Result<(), BoxError> {
     let mut builder = LoadPlanBuilder::new();
     builder.add_plugin(
         None,
-        PluginEntry {
-            key: Some("worker".into()),
-            name: None,
-            config: Value::Null,
-            disabled: false,
-            inject: Vec::new(),
-            isolate: Vec::new(),
+        {
+            let mut entry = PluginEntry::new(Value::Null);
+            entry.key = Some("worker".into());
+            entry
         },
     )?;
     let plan = builder.finish()?;

@@ -1,6 +1,6 @@
 use cordis_loader::{EntryGroup, LoadPlanBuilder};
 fn main() {
     let mut builder = LoadPlanBuilder::new();
-    let id = builder.add_group(None, EntryGroup { name: "root".into() }).unwrap();
+    let id = builder.add_group(None, EntryGroup::new("root")).unwrap();
     let _ = serde_json::to_string(&id).unwrap();
 }

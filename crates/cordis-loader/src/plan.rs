@@ -66,8 +66,21 @@ impl Hash for EntryId {
 /// `config` is required in the wire form. Unit configuration is JSON `null`.
 /// Unknown fields are rejected: a misspelled declaration such as `disable` or
 /// `isolated` would otherwise fall back to a default and change what executes.
+///
+/// The struct is `#[non_exhaustive]` so a serde-defaulted field can be added
+/// without breaking Rust-constructed plans. Fields stay `pub` and assignable;
+/// build a row with [`PluginEntry::new`] and then set what differs:
+///
+/// ```
+/// use cordis_loader::PluginEntry;
+///
+/// let mut e = PluginEntry::new(serde_json::json!({ "port": 8080 }));
+/// e.key = Some("server".into());
+/// e.disabled = true;
+/// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct PluginEntry {
     /// Explicit Plugin resolution key, preferred over [`PluginEntry::name`].
     pub key: Option<String>,
@@ -86,11 +99,40 @@ pub struct PluginEntry {
     pub isolate: Vec<IsolateEntry>,
 }
 
+impl PluginEntry {
+    /// Create a row with the given source `config` and every other field at
+    /// its wire default: no `key` or `name`, enabled, and empty `inject` and
+    /// `isolate`.
+    ///
+    /// The result equals deserializing `{"config": <config>}`. Assign the
+    /// public fields to override a default. Use JSON `null` for unit
+    /// configuration.
+    pub fn new(config: Value) -> Self {
+        Self {
+            key: None,
+            name: None,
+            config,
+            disabled: false,
+            inject: Vec::new(),
+            isolate: Vec::new(),
+        }
+    }
+}
+
 /// Mutable serialized source for one structural sequencing group.
 ///
-/// Unknown fields are rejected.
+/// Unknown fields are rejected. The struct is `#[non_exhaustive]`; construct it
+/// with [`EntryGroup::new`]. The `name` field stays `pub` and assignable.
+///
+/// ```
+/// use cordis_loader::EntryGroup;
+///
+/// let mut g = EntryGroup::new("workers");
+/// g.name = "renamed".into();
+/// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct EntryGroup {
     /// Human-readable source-only group name.
     ///
@@ -98,6 +140,13 @@ pub struct EntryGroup {
     /// configuration readability but is not retained in the frozen plan or
     /// surfaced in execution outcomes.
     pub name: String,
+}
+
+impl EntryGroup {
+    /// Create a group row with the given source-only `name`.
+    pub fn new(name: impl Into<String>) -> Self {
+        Self { name: name.into() }
+    }
 }
 
 /// One declarative Service dependency in a [`PluginEntry`].

@@ -80,20 +80,16 @@ impl Plugin for PublishPair {
 }
 
 fn plugin<S: Service>(key: &str, policy: Option<RealmPolicy>) -> PluginEntry {
-    PluginEntry {
-        key: Some(key.to_owned()),
-        name: None,
-        config: serde_json::Value::Null,
-        disabled: false,
-        inject: Vec::new(),
-        isolate: policy
-            .into_iter()
-            .map(|policy| IsolateEntry {
-                service: S::NAME.to_owned(),
-                policy,
-            })
-            .collect(),
-    }
+    let mut entry = PluginEntry::new(serde_json::Value::Null);
+    entry.key = Some(key.to_owned());
+    entry.isolate = policy
+        .into_iter()
+        .map(|policy| IsolateEntry {
+            service: S::NAME.to_owned(),
+            policy,
+        })
+        .collect();
+    entry
 }
 
 fn prepared<S>() -> PreparedPlugin
@@ -166,14 +162,7 @@ async fn dispose_all(outcome: &cordis_loader::LoadOutcome) {
 #[tokio::test]
 async fn realm_policy_is_execution_local_service_exact_and_independent_of_structure() {
     let mut builder = LoadPlanBuilder::new();
-    let group = builder
-        .add_group(
-            None,
-            EntryGroup {
-                name: "group".into(),
-            },
-        )
-        .unwrap();
+    let group = builder.add_group(None, EntryGroup::new("group")).unwrap();
     let shared_left = builder
         .add_plugin(
             Some(&group),
@@ -362,14 +351,7 @@ async fn shared_placement_collision_fails_only_that_row_and_later_rows_continue(
 #[tokio::test]
 async fn cloned_plan_reuse_preserves_entry_correlation_but_refreshes_runtime_identity() {
     let mut builder = LoadPlanBuilder::new();
-    let group = builder
-        .add_group(
-            None,
-            EntryGroup {
-                name: "root".into(),
-            },
-        )
-        .unwrap();
+    let group = builder.add_group(None, EntryGroup::new("root")).unwrap();
     let entry = builder
         .add_plugin(
             Some(&group),

@@ -29,7 +29,10 @@ cordis-loader = "0.5"
 ## From facade 0.10.x / semantic 0.5.x to 0.11.x / 0.6.x
 
 Update `cordis-rs` dependency requirements to `0.11` and any direct `cordis-core`,
-`cordis-timer` and `cordis-loader` requirements together to `0.6`.
+`cordis-timer` and `cordis-loader` requirements together to `0.6`. The facade
+re-exports core types; a `cordis::Context` backed by core `0.6` is a different
+Rust type from a direct core `0.5` `Context`, so cross-crate values must use the
+same core line.
 
 Public vocabularies that are expected to grow are now `#[non_exhaustive]`, so a
 later release can add a variant or a record field without a breaking change.
@@ -53,6 +56,37 @@ Constructing `Routing` and `RealmPolicy` values is unaffected, and
 `RealmPolicy::Shared { label }` keeps its fields. `FiberState`, `FiberRole`,
 `UpdateOutcome`, `QueryOutcome`, `ResidencyChange`, `ListenerChange`,
 `InjectEntry` and `TimeoutOutcome` stay exhaustive.
+
+Loader source rows `PluginEntry` and `EntryGroup` are now `#[non_exhaustive]`, so
+a source field can later be added without another breaking release. Struct
+literals no longer compile outside `cordis-loader` (`E0639`), and destructuring
+patterns must end in `..` (`E0638`). Construct rows with
+`PluginEntry::new(config)` and `EntryGroup::new(name)`, then assign the fields
+that differ; the fields stay `pub`:
+
+```rust
+// before
+let entry = PluginEntry {
+    key: Some("worker".into()),
+    name: None,
+    config: serde_json::Value::Null,
+    disabled: false,
+    inject: Vec::new(),
+    isolate: Vec::new(),
+};
+let group = EntryGroup { name: "root".into() };
+
+// after
+let mut entry = PluginEntry::new(serde_json::Value::Null);
+entry.key = Some("worker".into());
+let group = EntryGroup::new("root");
+```
+
+`PluginEntry::new(config)` leaves `key` and `name` unset, the entry enabled and
+`inject` and `isolate` empty, which equals deserializing `{"config": ..}`. The
+JSON wire format, serde attributes and strict unknown-field rejection are
+unchanged, and code that deserializes rows needs no change. `IsolateEntry` stays
+a plain struct with public fields.
 
 **Narrowed promise: creation after its commit.** As with
 [ADR 0041](docs/adr/0041-user-destructor-panics-are-best-effort.md), no API

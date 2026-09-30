@@ -8,46 +8,22 @@ use cordis_loader::plan::{
 use serde_json::{Value, json};
 
 fn plugin(key: &str) -> PluginEntry {
-    PluginEntry {
-        key: Some(key.to_owned()),
-        name: None,
-        config: Value::Null,
-        disabled: false,
-        inject: Vec::new(),
-        isolate: Vec::new(),
-    }
+    let mut entry = PluginEntry::new(Value::Null);
+    entry.key = Some(key.to_owned());
+    entry
 }
 
 #[test]
 fn builder_accepts_only_already_admitted_same_lineage_parents_and_freezes_ids() {
     let mut builder = LoadPlanBuilder::new();
-    let root = builder
-        .add_group(
-            None,
-            EntryGroup {
-                name: "root".into(),
-            },
-        )
-        .unwrap();
+    let root = builder.add_group(None, EntryGroup::new("root")).unwrap();
     let plugin_id = builder.add_plugin(Some(&root), plugin("worker")).unwrap();
     let nested_group = builder
-        .add_group(
-            Some(&plugin_id),
-            EntryGroup {
-                name: "nested".into(),
-            },
-        )
+        .add_group(Some(&plugin_id), EntryGroup::new("nested"))
         .unwrap();
 
     let mut foreign = LoadPlanBuilder::new();
-    let foreign_parent = foreign
-        .add_group(
-            None,
-            EntryGroup {
-                name: "foreign".into(),
-            },
-        )
-        .unwrap();
+    let foreign_parent = foreign.add_group(None, EntryGroup::new("foreign")).unwrap();
     let err = builder
         .add_plugin(Some(&foreign_parent), plugin("orphan"))
         .unwrap_err();
@@ -60,24 +36,12 @@ fn builder_accepts_only_already_admitted_same_lineage_parents_and_freezes_ids() 
     drop((plan, clone));
 
     let mut rebuilt = LoadPlanBuilder::new();
-    let rebuilt_root = rebuilt
-        .add_group(
-            None,
-            EntryGroup {
-                name: "root".into(),
-            },
-        )
-        .unwrap();
+    let rebuilt_root = rebuilt.add_group(None, EntryGroup::new("root")).unwrap();
     let rebuilt_plugin = rebuilt
         .add_plugin(Some(&rebuilt_root), plugin("worker"))
         .unwrap();
     let rebuilt_nested = rebuilt
-        .add_group(
-            Some(&rebuilt_plugin),
-            EntryGroup {
-                name: "nested".into(),
-            },
-        )
+        .add_group(Some(&rebuilt_plugin), EntryGroup::new("nested"))
         .unwrap();
     rebuilt.finish().unwrap();
 
@@ -92,14 +56,7 @@ fn builder_accepts_only_already_admitted_same_lineage_parents_and_freezes_ids() 
 #[test]
 fn failed_add_is_atomic_and_its_id_is_not_an_admitted_parent() {
     let mut builder = LoadPlanBuilder::new();
-    let root = builder
-        .add_group(
-            None,
-            EntryGroup {
-                name: "root".into(),
-            },
-        )
-        .unwrap();
+    let root = builder.add_group(None, EntryGroup::new("root")).unwrap();
 
     let mut invalid = plugin("bad");
     invalid.inject = vec![
@@ -118,12 +75,7 @@ fn failed_add_is_atomic_and_its_id_is_not_an_admitted_parent() {
     };
 
     let err = builder
-        .add_group(
-            Some(&rejected),
-            EntryGroup {
-                name: "cannot-attach".into(),
-            },
-        )
+        .add_group(Some(&rejected), EntryGroup::new("cannot-attach"))
         .unwrap_err();
     assert!(matches!(err, PlanError::ForeignParent { parent } if parent == rejected));
 
@@ -140,14 +92,7 @@ fn failed_add_is_atomic_and_its_id_is_not_an_admitted_parent() {
 fn validation_rejects_missing_identity_and_duplicate_axes_but_keeps_axes_orthogonal() {
     let mut builder = LoadPlanBuilder::new();
 
-    let missing = PluginEntry {
-        key: None,
-        name: None,
-        config: Value::Null,
-        disabled: false,
-        inject: Vec::new(),
-        isolate: Vec::new(),
-    };
+    let missing = PluginEntry::new(Value::Null);
     assert!(matches!(
         builder.add_plugin(None, missing).unwrap_err(),
         PlanError::MissingResolveIdentity { .. }

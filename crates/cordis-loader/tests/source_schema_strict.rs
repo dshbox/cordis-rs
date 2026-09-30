@@ -243,3 +243,44 @@ fn documented_rows_parse_and_round_trip() {
         assert_eq!(serde_json::to_value(&parsed).unwrap(), wire);
     }
 }
+
+/// The rows are `#[non_exhaustive]` and built with constructors. A document
+/// written before that change still parses, and `new(..)` yields exactly the
+/// row the wire defaults produce.
+#[test]
+fn constructors_equal_the_deserialized_default_rows() {
+    // A pre-existing document: the full pre-constructor field set, spelled out.
+    let legacy: PluginEntry = serde_json::from_str(
+        r#"{"key":"w","name":null,"config":{"n":1},"disabled":false,"inject":[],"isolate":[]}"#,
+    )
+    .unwrap();
+    assert_eq!(legacy.key.as_deref(), Some("w"));
+
+    // The minimal wire form (config only) is the default row.
+    let config = json!({"n": 1});
+    let wire: PluginEntry = serde_json::from_value(json!({"config": config})).unwrap();
+    let built = PluginEntry::new(config.clone());
+    assert_eq!(
+        serde_json::to_value(&built).unwrap(),
+        serde_json::to_value(&wire).unwrap()
+    );
+    assert!(built.key.is_none() && built.name.is_none());
+    assert!(!built.disabled && built.inject.is_empty() && built.isolate.is_empty());
+
+    // Fields stay assignable after construction.
+    let mut row = PluginEntry::new(json!(null));
+    row.key = Some("k".into());
+    row.disabled = true;
+    assert_eq!(
+        serde_json::to_value(&row).unwrap(),
+        json!({"key": "k", "name": null, "config": null,
+               "disabled": true, "inject": [], "isolate": []})
+    );
+
+    let group: EntryGroup = serde_json::from_str(r#"{"name": "workers"}"#).unwrap();
+    assert_eq!(
+        serde_json::to_value(EntryGroup::new("workers")).unwrap(),
+        serde_json::to_value(&group).unwrap()
+    );
+    assert_eq!(EntryGroup::new(String::from("g")).name, "g");
+}

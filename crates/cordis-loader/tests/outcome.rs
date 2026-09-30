@@ -15,14 +15,9 @@ use cordis_loader::plan::{EntryGroup, LoadPlanBuilder, PluginEntry};
 use cordis_loader::resolver::PluginRequest;
 
 fn plugin(key: &str) -> PluginEntry {
-    PluginEntry {
-        key: Some(key.to_owned()),
-        name: None,
-        config: serde_json::Value::Null,
-        disabled: false,
-        inject: Vec::new(),
-        isolate: Vec::new(),
-    }
+    let mut entry = PluginEntry::new(serde_json::Value::Null);
+    entry.key = Some(key.to_owned());
+    entry
 }
 
 fn disabled_plugin(key: &str) -> PluginEntry {
@@ -103,32 +98,15 @@ async fn dispose_spawned(outcome: &cordis_loader::LoadOutcome) {
 #[tokio::test]
 async fn outcomes_are_complete_depth_first_and_pruning_names_the_disabling_plugin() {
     let mut builder = LoadPlanBuilder::new();
-    let root = builder
-        .add_group(
-            None,
-            EntryGroup {
-                name: "root".into(),
-            },
-        )
-        .unwrap();
+    let root = builder.add_group(None, EntryGroup::new("root")).unwrap();
     let first = builder.add_plugin(Some(&root), plugin("first")).unwrap();
     let sibling = builder
-        .add_group(
-            Some(&root),
-            EntryGroup {
-                name: "sibling".into(),
-            },
-        )
+        .add_group(Some(&root), EntryGroup::new("sibling"))
         .unwrap();
     // Added after its parent's sibling on purpose: execution still follows the
     // frozen parent/child relation depth-first, while sibling declaration order stays stable.
     let nested = builder
-        .add_group(
-            Some(&first),
-            EntryGroup {
-                name: "nested".into(),
-            },
-        )
+        .add_group(Some(&first), EntryGroup::new("nested"))
         .unwrap();
     let disabled = builder
         .add_plugin(Some(&nested), disabled_plugin("disabled"))
@@ -137,12 +115,7 @@ async fn outcomes_are_complete_depth_first_and_pruning_names_the_disabling_plugi
         .add_plugin(Some(&disabled), plugin("never-resolve"))
         .unwrap();
     let pruned_group = builder
-        .add_group(
-            Some(&disabled),
-            EntryGroup {
-                name: "pruned-group".into(),
-            },
-        )
+        .add_group(Some(&disabled), EntryGroup::new("pruned-group"))
         .unwrap();
     let pruned_disabled = builder
         .add_plugin(Some(&pruned_group), disabled_plugin("also-never"))
@@ -320,14 +293,7 @@ async fn inactive_context_reports_each_reachable_plugin_and_leaves_no_runtime_re
     assert!(before.services().is_empty());
 
     let mut builder = LoadPlanBuilder::new();
-    let group = builder
-        .add_group(
-            None,
-            EntryGroup {
-                name: "root".into(),
-            },
-        )
-        .unwrap();
+    let group = builder.add_group(None, EntryGroup::new("root")).unwrap();
     let first = builder.add_plugin(Some(&group), plugin("first")).unwrap();
     let disabled = builder
         .add_plugin(Some(&group), disabled_plugin("disabled"))
