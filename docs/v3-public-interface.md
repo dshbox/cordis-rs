@@ -405,7 +405,13 @@ All lifecycle controls are async: `ready(&self) -> Result<FiberState, ReadyError
 representable monotonic clock never elapses; pending waits share one lazily
 started Cordis deadline thread rather than holding a thread each, and if the
 process refuses to start that thread the wait reports
-`WaitStateError::DeadlineUnavailable` instead of panicking);
+`WaitStateError::DeadlineUnavailable` instead of panicking; publication wins
+the tie with the deadline: `Elapsed` is reported only when no requested
+publication has committed by the time the waiter observes the passed deadline,
+so a publication that precedes the deadline is observed even if the waiter is
+next polled after the deadline has also passed — unlike Timer `Timeout`, where
+at an uncommitted boundary `Elapsed` wins, because a state publication is
+already committed when the wait examines it);
 `restart(&self) -> Result<(), RestartError>`; `update(&self, change: PreparedChange)`
 `-> Result<UpdateOutcome, UpdateError>`; `era_swap(&self, change: PreparedChange)`
 `-> Result<FiberHandle, EraSwapError>`; and `dispose(&self)`
