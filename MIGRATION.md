@@ -26,6 +26,32 @@ cordis-timer = "0.5"
 cordis-loader = "0.5"
 ```
 
+## From facade 0.10.x / semantic 0.5.x to 0.11.x / 0.6.x
+
+Update `cordis-rs` dependency requirements to `0.11` and any direct `cordis-core`,
+`cordis-timer` and `cordis-loader` requirements together to `0.6`.
+
+Public vocabularies that are expected to grow are now `#[non_exhaustive]`, so a
+later release can add a variant or a record field without a breaking change.
+Downstream code that matched them exhaustively needs two mechanical edits:
+
+- Add a wildcard arm (`_ => ...`) to every `match` on these enums:
+  `LifecycleOperation`, `PluginFailureKind`, `EffectFailureKind`,
+  `InvocationFailureKind`, `DispatchOutcomeKind`, `EventOperation`,
+  `ListenerRole`, `Routing`, `RuntimeObservation`, `ObservationRouting`,
+  `ResolverFailureKind`, `EntryOutcome` and `RealmPolicy`.
+- Add `..` to every pattern on these record variants:
+  `RuntimeObservation::{FiberResidency, FiberState, ServiceVisibility,
+  ListenerRegistration, DispatchCompleted}` and
+  `EntryOutcome::{Group, Disabled, Pruned, Spawned, Failed}`. Such a variant can
+  no longer be constructed outside its defining crate; every one carries an
+  identity that Cordis alone creates.
+
+Constructing `Routing` and `RealmPolicy` values is unaffected, and
+`RealmPolicy::Shared { label }` keeps its fields. `FiberState`, `FiberRole`,
+`UpdateOutcome`, `QueryOutcome`, `ResidencyChange`, `ListenerChange`,
+`InjectEntry` and `TimeoutOutcome` stay exhaustive.
+
 ## From facade 0.9.x / semantic 0.4.x to 0.10.x / 0.5.x
 
 Update `cordis-rs` dependency requirements to `0.10` and any direct `cordis-core`,

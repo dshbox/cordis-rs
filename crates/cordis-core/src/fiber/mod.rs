@@ -1385,6 +1385,7 @@ impl fmt::Debug for FiberHandle {
 
 /// Lifecycle operation named by a typed recursion refusal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum LifecycleOperation {
     /// Drive or await current-target convergence.
     Ready,

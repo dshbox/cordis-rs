@@ -8,6 +8,8 @@
 //! Loader protocol layers.
 
 mod handoff;
+#[cfg(test)]
+mod vocabulary_inventory;
 
 /// Complete per-entry execution outcomes and Loader failures.
 pub mod outcome;

@@ -25,18 +25,22 @@ use crate::resolver::ResolverFailure;
 /// a reachable disabled Plugin is [`Disabled`](Self::Disabled), and a reachable
 /// enabled Plugin is either [`Spawned`](Self::Spawned) or [`Failed`](Self::Failed).
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum EntryOutcome {
     /// One reachable structural sequencing group; no Fiber is spawned for it.
+    #[non_exhaustive]
     Group {
         /// Exact plan-entry correlation identity.
         id: EntryId,
     },
     /// One reachable disabled Plugin declaration.
+    #[non_exhaustive]
     Disabled {
         /// Exact plan-entry correlation identity.
         id: EntryId,
     },
     /// One descendant removed from execution by a disabled Plugin ancestor.
+    #[non_exhaustive]
     Pruned {
         /// Exact plan-entry correlation identity.
         id: EntryId,
@@ -44,6 +48,7 @@ pub enum EntryOutcome {
         disabled_ancestor: EntryId,
     },
     /// One reachable Plugin successfully resolved and spawned.
+    #[non_exhaustive]
     Spawned {
         /// Exact plan-entry correlation identity.
         id: EntryId,
@@ -53,6 +58,7 @@ pub enum EntryOutcome {
         fiber_handle: FiberHandle,
     },
     /// One reachable Plugin whose independent execution attempt failed.
+    #[non_exhaustive]
     Failed {
         /// Exact plan-entry correlation identity.
         id: EntryId,

@@ -201,6 +201,7 @@ impl<E: std::error::Error> CleanupResult for Result<(), E> {
 /// The semantic kind of an [`EffectFailure`]: the cleanup returned an
 /// error, or it panicked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum EffectFailureKind {
     /// The cleanup returned `Err(_)` from its `Result<(), E>` form.
     ReturnedError,

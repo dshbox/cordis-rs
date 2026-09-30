@@ -94,6 +94,7 @@ impl std::fmt::Debug for ScopeId {
 
 /// Correlation-only projection of one dispatch's routing.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ObservationRouting {
     /// Every Scope is eligible.
     Unscoped,
@@ -129,8 +130,10 @@ pub enum ListenerChange {
 
 /// One immutable committed Runtime transition record.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum RuntimeObservation {
     /// One ordinary Fiber entered or left Runtime residency.
+    #[non_exhaustive]
     FiberResidency {
         /// Whether the occurrence was admitted or removed.
         change: ResidencyChange,
@@ -138,6 +141,7 @@ pub enum RuntimeObservation {
         fiber: FiberSnapshot,
     },
     /// One Fiber lifecycle state transitioned.
+    #[non_exhaustive]
     FiberState {
         /// Opaque Fiber correlation identity.
         fiber: FiberId,
@@ -147,6 +151,7 @@ pub enum RuntimeObservation {
         current: FiberState,
     },
     /// Visibility of one exact Service slot changed.
+    #[non_exhaustive]
     ServiceVisibility {
         /// Service contract name.
         service: String,
@@ -158,6 +163,7 @@ pub enum RuntimeObservation {
         current: Option<ServicePublicationId>,
     },
     /// One exact Event listener occurrence registered or unregistered.
+    #[non_exhaustive]
     ListenerRegistration {
         /// Registration or unregistration transition.
         change: ListenerChange,
@@ -173,6 +179,7 @@ pub enum RuntimeObservation {
         options: ListenerOptions,
     },
     /// One primitive Event dispatch completed.
+    #[non_exhaustive]
     DispatchCompleted {
         /// Primitive dispatch operation.
         operation: EventOperation,

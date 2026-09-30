@@ -185,6 +185,7 @@ pub struct IsolateEntry {
 /// tagged variant does not define, such as a `label` on `private`, are rejected.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase", from = "RealmPolicyWire")]
+#[non_exhaustive]
 pub enum RealmPolicy {
     /// Select a fresh private realm when the plan is executed.
     Private,

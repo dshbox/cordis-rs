@@ -93,6 +93,7 @@ where
 
 /// Semantic kind of one Loader-normalized resolver failure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum ResolverFailureKind {
     /// The resolver returned its typed `Err` value.
     ReturnedError,
