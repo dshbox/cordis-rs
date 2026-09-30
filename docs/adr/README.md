@@ -13,6 +13,13 @@ crates compatible; it does not extend the architecture decision index. The
 architecture set therefore resumes at
 [ADR 0041](0041-user-destructor-panics-are-best-effort.md).
 
+[ADR 0042](0042-public-evolution-declares-openness-and-auto-traits.md) is
+likewise an accepted compatibility decision under the compatibility policy. It
+records why every public enum is declared Open or Closed, why error-variant
+fields are frozen, which auto traits the public interface promises, and why
+listener-adapter bounds are governed like signatures. It does not extend the
+architecture decision index either.
+
 Source comments may also mention **ADR 0001 through ADR 0027**. Those numbers
 are historical provenance labels from the pre-promotion v3 research repository;
 they are not part of this public repository's normative ADR set and their files

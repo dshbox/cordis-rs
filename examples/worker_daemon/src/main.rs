@@ -126,13 +126,15 @@ impl Plugin for WorkerPlugin {
         let task_probe = self.probe.clone();
         let period = input.period;
         ctx.run(async move {
-            let mut ticks = match task_ctx.interval(period) {
+            let ticks = match task_ctx.interval(period) {
                 Ok(ticks) => ticks,
                 Err(error) => {
                     println!("  interval registration refused synchronously: {error}");
                     return;
                 }
             };
+            // `Interval` is not promised `Unpin`; pin it before `StreamExt::next`.
+            let mut ticks = std::pin::pin!(ticks);
             loop {
                 match ticks.next().await {
                     Some(Ok(())) => {

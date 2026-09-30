@@ -99,9 +99,12 @@ impl Plugin for TimerProbe {
         let task_ctx = ctx.clone();
         let events = self.events.clone();
         ctx.run(async move {
-            let mut ticks = task_ctx
-                .interval(Duration::from_millis(100))
-                .expect("interval registers");
+            // `Interval` is not promised `Unpin`; pin it before `StreamExt::next`.
+            let mut ticks = std::pin::pin!(
+                task_ctx
+                    .interval(Duration::from_millis(100))
+                    .expect("interval registers")
+            );
             let _ = events.send("armed");
             loop {
                 match ticks.next().await {

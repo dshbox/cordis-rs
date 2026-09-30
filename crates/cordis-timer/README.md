@@ -86,6 +86,8 @@ construction; missed ticks coalesce without shifting that phase. Generation
 cancellation appears once as `Err(TimerCancelled)` and then the stream ends.
 
 Use `futures::StreamExt` (or another `Stream` consumer) to await interval ticks.
+`Interval` is not promised `Unpin`, so pin it first, for example with
+`let mut ticks = std::pin::pin!(ticks);`, before calling `ticks.next().await`.
 
 ### Timeout
 
