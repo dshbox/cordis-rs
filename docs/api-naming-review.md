@@ -1,8 +1,12 @@
 # Public API naming review
 
-Non-normative review of the supported v3 inventory against production baseline
-`4824196bbff6dada178ed230c344e12ad164919e`, fetched on 2026-09-29, under
-[spec #200](https://github.com/dshbox/cordis-rs/issues/200).
+Non-normative review of the supported v3 inventory against the declared API
+freeze candidate `64aa6deddf8678100648927e9311c0a7618bf53f` (semantic 0.6.0 /
+facade 0.11.0), fetched on 2026-09-30, under
+[spec #200](https://github.com/dshbox/cordis-rs/issues/200) and
+[#222](https://github.com/dshbox/cordis-rs/issues/222). It was originally
+reviewed at `4824196` and is rechecked for #221 and the #225 pre-freeze batch
+(#233–#237, #240, #241).
 The [public inventory](v3-public-interface.md) owns exact declarations and paths;
 this review lists names to record their semantic assessment, not to define another API.
 
@@ -35,7 +39,7 @@ Delivery: [#201](https://github.com/dshbox/cordis-rs/issues/201).
 | `Plugin::name`, `inject` | Clarify | Name is diagnostic, never lookup identity; inject declares lifecycle requirements. Sealing materializes both before lifecycle; it does not call them repeatedly during settlement |
 | `PreparedPlugin`; `from_input` | Clarify | The wrapper names prepared stage and seals type association, not running state or the identity of the object that prepared the value |
 | `PreparedPlugin::with_inject_overlay` | Clarify | Completes a dependency-declaration overlay before spawn; no Service-realm selection or dynamic lifecycle mutation |
-| `Context::spawn`; `FiberHandle`, `FiberId` | Clarify | Spawn hands off a live quiescent Fiber; FiberHandle grants lifecycle control and has inert Drop, FiberId grants correlation only. ADR 0039 already resolves the misleading Fork spelling |
+| `Context::spawn`; `FiberHandle`, `FiberId` | Clarify | Spawn hands off a live quiescent Fiber; FiberHandle grants lifecycle control and has inert Drop, FiberId grants correlation only. ADR 0039 already resolves the misleading Fork spelling, and the rustdoc no longer calls it a "plugin instance" handle (C3, #240). A held spawn future does not advance its committed creation; dropping it hands the creation to framework completion |
 | `SpawnError`; `InactiveContext`, `InitialApply`, `Interrupted` | Retain | Names pre-allocation refusal, contained initial apply failure, and framework invalidation before handoff; Interrupted does not mean caller cancellation |
 | `PluginFailure`, `PluginFailureKind`; `kind`, `diagnostic`; `ReturnedError`, `Panic` | Retain | Opaque apply failure retains normalized semantic cause/text, not heterogeneous error/downcast authority |
 | `BoxError` | Clarify | Optional outer application erasure; use concrete Plugin associated error types until their owning normalization boundary |
@@ -85,8 +89,8 @@ Delivery: [#203](https://github.com/dshbox/cordis-rs/issues/203).
 | --- | --- | --- |
 | `FiberState`; `Loading`, `Active`, `Pending`, `Unloading`, `Failed`, `Disposed` | Retain | Lifecycle publications, with no numeric order or default; Failed follows completed rollback |
 | `FiberHandle::name`, `state`, `id`, `pending_missing` | Clarify | Diagnostic name, observed state, opaque correlation identity and normalized missing prerequisite names; none grants registry lookup |
-| `FiberHandle::ready`, `wait_state` | Clarify | Current-target quiescence driver versus passive publication wait; ready can return Pending or current apply failure |
-| `FiberHandle::restart`, `update`, `era_swap` | Clarify | Retry input, replace same-Fiber input, or end old identity before a fresh successor; no dead-handle respawn |
+| `FiberHandle::ready`, `wait_state` | Clarify | Current-target quiescence driver versus passive publication wait; ready returns quiescent Active, stable Pending or terminal Disposed, or the current apply failure; wait_state observes a publication that precedes its deadline even when resumed late (C1, #234) |
+| `FiberHandle::restart`, `update`, `era_swap` | Clarify | Retry input, replace same-Fiber input, or end old identity before a fresh successor; no dead-handle respawn. Admission is lifecycle-slot acquisition; the order among waiting intents is unspecified (B3, #240) |
 | `PreparedChange`; `from_input` | Clarify | Typed move-only one-attempt candidate, with no Plugin behavior or control; every attempted outcome consumes it |
 | `UpdateOutcome`; `Committed`, `Vetoed` | Clarify | Committed input can settle Pending; Vetoed is normal precommit policy and does not return a reusable candidate |
 | `Context::on_update`; `UpdateListener`; `UpdateNext::call` | Clarify | Sealed methodless policy subscription and consuming remaining-chain capability; framework invokes it only before update commit, not for era swap or postcommit recovery |
@@ -110,7 +114,7 @@ Delivery: [#204](https://github.com/dshbox/cordis-rs/issues/204).
 | Names / members | Conclusion | Semantic assessment |
 | --- | --- | --- |
 | `Context::effect`, `effect_sync` | Clarify | Register async/synchronous at-most-once generation cleanup; sync means short immediate work, not infallible work |
-| `CleanupResult`; `into_outcome` | Retain | Sealed adaptation of unit or typed Result into normalized cleanup outcome; not an extensible transport protocol |
+| `CleanupResult` | Retain | Sealed adaptation of `()` or typed `Result` into the normalized cleanup outcome; not an extensible transport protocol. Its doc-hidden `into_outcome` takes a crate-private token, is uncallable downstream and is outside the supported surface (C2, #236) |
 | `EffectRegistration`; `dispose`, `disarm` | Clarify | Exact consuming cleanup claim or suppression; inert Drop, winning dispose independently completes, false means another claim won |
 | `EffectFailure`, `EffectFailureKind`; `kind`, `diagnostic`; `ReturnedError`, `Panic` | Retain | Normalized cleanup cause and owned diagnostic; no original error type/downcast authority |
 | `EffectRegistrationError`; `InactiveContext` | Retain | Current generation refuses retained cleanup admission |
@@ -133,7 +137,7 @@ Delivery: [#205](https://github.com/dshbox/cordis-rs/issues/205).
 | --- | --- | --- |
 | `Event`; `NAME`, `Args`, `Output` | Retain | Named compatible typed contract; marker identity does not route or impose universal Clone/Sync bounds |
 | `Routing`; `Unscoped`, `Scoped` | Clarify | Explicit eligibility selection in one Runtime; Scoped(root) is not Unscoped |
-| `Listener`; `observer`, `observer_sync`, `responder`, `responder_sync`, `mapper`, `mapper_sync`, `around` | Clarify | Sealed methodless capability with explicit semantic roles; sync denotes immediate completion, not infallibility; no around_sync contract |
+| `Listener`; `observer`, `observer_sync`, `responder`, `responder_sync`, `mapper`, `mapper_sync`, `around` | Clarify | Sealed methodless capability with explicit semantic roles; sync denotes immediate completion, not infallibility; no around_sync contract. Each adapter's accepted callback shapes and bounds are part of its supported signature (ADR 0042) |
 | `StatefulCallback`; `with_state` | Clarify | Opaque adapter composition creates invocation-local state exactly once after claim, not shared listener state |
 | `ListenerOptions`; `prepend`, `global`, `once`, `is_prepend`, `is_global`, `is_once`; `Default` | Clarify | Consuming selection/order/claim policy and read-only facts; default append/scoped/repeatable, once means claim rather than success |
 | `Context::on`, `on_with`; `ListenerRegistration::remove` | Clarify | Register/control one exact occurrence; consuming remove and inert Drop do not revoke claimed invocation |
@@ -142,7 +146,7 @@ Delivery: [#205](https://github.com/dshbox/cordis-rs/issues/205).
 | `Context::emit`, `emit_parallel`, `query`, `waterfall`, `waterfall_query` | Clarify | Four completion-aware primitives and one derived query tail; no detached completion after pending-future cancellation |
 | `QueryOutcome`; `Miss`, `Answer` | Retain | Explicit absence/presence; false, zero and empty values are answers |
 | `ListenerRole`; `Observer`, `Responder`, `Mapper`, `Around` | Retain | Callback semantic roles, shared by error/observation correlation |
-| `EventOperation`; `Emit`, `EmitParallel`, `Query`, `Waterfall` | Retain | Exactly four primitives; waterfall_query narrates its derived operations |
+| `EventOperation`; `Emit`, `EmitParallel`, `Query`, `Waterfall` | Retain | The four current dispatch primitives; Open (`#[non_exhaustive]`, ADR 0042), so a later primitive is additive; waterfall_query narrates its derived operations |
 | `DispatchOutcomeKind`; `Completed`, `Answered`, `Missed`, `Failed` | Clarify | Completed-operation narration, not guaranteed subscriber receipt or an audit journal |
 | `InvocationFailure`, `InvocationFailureKind`; `registration_id`, `kind`, `diagnostic`; `ReturnedError`, `Panic` | Retain | Normalized invocation cause/text and optional exact listener correlation; None denotes framework tail |
 | `ParallelFailures`; `failures` | Retain | Nonempty read-only failures in effective listener order, including the one-failure case |
@@ -194,8 +198,8 @@ Delivery: [#207](https://github.com/dshbox/cordis-rs/issues/207).
 | `LoadPlanBuilder`; `new`, `add_plugin`, `add_group`, `finish` | Clarify | Failure-atomic source admission followed by immutable freeze, not a live Fiber tree or patchable Runtime |
 | `LoadPlan`; `load` | Clarify | Reusable frozen sequencing plan, executing partial outcomes with separate final handoff ownership |
 | `EntryId` | Clarify | Opaque plan-lineage correlation, not numeric index, path, resolve key or Fiber control |
-| `PluginEntry`; `key`, `name`, `config`, `disabled`, `inject`, `isolate` | Clarify | Mutable serialized source; key/name choose repeatable resolve metadata, config is required, disable prunes descendants, inject and placement are independent |
-| `EntryGroup`; `name` | Clarify | Structural sequencing source syntax; name is not retained as frozen-plan/outcome identity |
+| `PluginEntry`; `new`; `key`, `name`, `config`, `disabled`, `inject`, `isolate` | Clarify | Open serialized source row built through `new(config)`, which equals the wire default, with assignable `pub` fields; key/name choose repeatable resolve metadata, config is required, disable prunes descendants, inject and placement are independent |
+| `EntryGroup`; `new`, `name` | Clarify | Open structural sequencing source row built through `new(name)`; name is not retained as frozen-plan/outcome identity |
 | `InjectEntry`; `Required`, `Configured { service, config }` | Retain | Source dependency declarations, with optional target-specific typed configuration preparation |
 | `IsolateEntry`; `service`, `policy`; `RealmPolicy::{Private, Shared { label }}` | Clarify | Execution-local source placement policy; labels never become core identity or cross-execution rendezvous |
 | `PlanError`; `ForeignParent { parent }`, `MissingResolveIdentity { entry }`, `DuplicateInjectService { entry, service }`, `DuplicateIsolateService { entry, service }` | Retain | Failure-atomic parent/identity/axis validation with exact rejected-source correlation |
@@ -239,6 +243,9 @@ canonical core specialist names against the normative table and all public metho
 spellings in the supported source families; field/variant assessments are grouped
 explicitly above. Lexical presence is a completeness backstop, not semantic proof:
 the per-path source/contract reviews supply the meaning and usage assessment.
+The 0.6 batch added no core specialist name and no rename; it added the two
+Loader row constructors `PluginEntry::new` and `EntryGroup::new` and opened
+vocabularies without renaming them.
 
 **Propose rename: none.** No concrete misleading risk survives the established
 glossary, accepted ADR constraints and the clarification above. There is therefore
@@ -248,6 +255,6 @@ its own ticket with risk, one canonical alternative, migration impact and real
 dependencies; no public compatibility alias is the default migration path here.
 
 [Spec #200](https://github.com/dshbox/cordis-rs/issues/200) and the
-[freeze recommendation](api-freeze-recommendation.md) retain the final scope and
+[freeze candidate record](api-freeze-recommendation.md) retain the final scope and
 blocker disposition. This naming review introduces no declarations or new domain
 meaning and requires no new glossary entry or ADR.

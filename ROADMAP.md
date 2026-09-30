@@ -75,9 +75,15 @@ settled architecture merely to create more pre-1.0 work.
   Cargo feature expectations, package-version coordination, and MSRV changes.
   `internal-api` remains unsupported downstream while its use by already-published
   sibling crates carries an explicit package-compatibility obligation.
-- [ ] **Declare an API freeze candidate.** Resolve every known planned breaking
+- [x] **Declare an API freeze candidate.** Resolve every known planned breaking
   change before the freeze and record that the normative public-interface inventory
-  is the candidate 1.0 surface.
+  is the candidate 1.0 surface. Declared in
+  [#222](https://github.com/dshbox/cordis-rs/issues/222): the
+  [public interface](docs/v3-public-interface.md) at `main` commit
+  `64aa6deddf8678100648927e9311c0a7618bf53f` (semantic 0.6.0 / facade 0.11.0;
+  [main CI run 36695938925](https://github.com/dshbox/cordis-rs/actions/runs/36695938925),
+  10/10 jobs) is the candidate 1.0 surface; see the
+  [freeze candidate record](docs/api-freeze-recommendation.md).
 - [x] **Resolve public macro ergonomics before the API freeze.** Representative
   declarations were reviewed in `hello_plugin`, `scopes_tenants`, `gateway`, and
   `chat_capstone` against the public trait contracts. Cordis 1.0 intentionally
