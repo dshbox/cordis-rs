@@ -303,13 +303,13 @@ admission.
 returns a `FiberHandle` only after a fresh Fiber reaches live quiescent
 `Active` or stable `Pending`. Initial apply failure leaves no resident
 Fiber. Cancellation law: before the allocation/publication commit,
-cancelling the spawn future has no lifecycle effect. After the commit, initial
-settlement, including Plugin apply, runs in the spawning caller's task. While
-the spawn future is alive, the creation advances only as that future is polled,
-and work that waits on the new Fiber, such as typed removal of its allocation,
-waits for it. Dropping the future hands the committed creation to framework
-completion, which fully disposes and unlinks the undelivered Fiber
-independently of caller polling.
+cancelling the spawn future has no lifecycle effect. After the commit, the
+creation up to FiberHandle delivery is driven by polling the spawn future. While
+the future is alive, the creation advances only as it is polled, and work that
+waits on the new Fiber, such as typed removal of its allocation, waits for it.
+Dropping the future hands the committed creation to framework completion, which
+fully disposes and unlinks the undelivered Fiber independently of caller
+polling.
 
 Absent from the interface: public `DynPlugin`, raw `ErasedConfig`,
 `InterceptConfig`, `any_plugin`, erased methods, and downcast/storage

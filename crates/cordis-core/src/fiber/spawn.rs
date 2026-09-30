@@ -407,9 +407,9 @@ impl Context {
     ///
     /// Before the allocation/publication commit, dropping this future
     /// has no lifecycle effect (the pre-commit section is synchronous).
-    /// After it, initial settlement, including Plugin apply, runs in this
-    /// future's task. While the future is alive, the creation advances only
-    /// as it is polled: a future kept but no longer polled, such as the
+    /// After it, the creation up to FiberHandle delivery is driven by polling
+    /// this future. While the future is alive, the creation advances only as
+    /// it is polled: a future kept but no longer polled, such as the
     /// unfinished half of a `select`, holds the new Fiber in its creation, and
     /// work that waits on that Fiber, such as
     /// [`remove_plugins`](Context::remove_plugins) of its allocation, waits

@@ -426,6 +426,17 @@ async fn abandonment_continues_after_last_input_drop_panics_between_members() {
 /// the rollback to framework completion (the abandonment tests above).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn held_load_future_advances_its_in_progress_spawn_only_as_it_is_polled() {
+    held_load_future_advances_only_as_polled().await;
+}
+
+/// On a current-thread runtime nothing but the held load future could drive
+/// the entry, so this flavor pins the same rule without spare workers.
+#[tokio::test(flavor = "current_thread")]
+async fn held_load_future_advances_its_in_progress_spawn_only_as_it_is_polled_on_current_thread() {
+    held_load_future_advances_only_as_polled().await;
+}
+
+async fn held_load_future_advances_only_as_polled() {
     let ctx = Context::new();
     let first = CleanupProbe::new(CleanupMode::Ok, Arc::new(AtomicUsize::new(0)));
     let blocker = BlockProbe::new();

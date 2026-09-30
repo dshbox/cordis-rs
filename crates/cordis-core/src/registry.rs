@@ -170,7 +170,9 @@ impl crate::Context {
     /// allocation. After detach, disposal is framework-owned and reaches every
     /// member's ordinary terminal unlink barrier even if this caller is
     /// cancelled or keeps this future without polling it. An absent allocation
-    /// is already removed.
+    /// is already removed. As with
+    /// [`FiberHandle::dispose`](crate::FiberHandle::dispose), await this future
+    /// rather than blocking a Tokio worker thread on it.
     ///
     /// A call from the settle context of a Fiber in the current allocation is
     /// refused before detach so it cannot synchronously wait on its own teardown.
@@ -185,8 +187,13 @@ impl crate::Context {
             return Ok(());
         };
 
+        let report = crate::framework_task::PanicReport {
+            logger: self.logger(),
+            operation: "typed plugin removal",
+            context: format!("plugin={}", std::any::type_name::<P>()),
+        };
         let root = self.root.clone();
-        crate::effect::CallerDriven::new(async move {
+        crate::effect::CallerDriven::new(Some(report), async move {
             detached.dispose_all(&root).await;
         })
         .await;
@@ -538,7 +545,7 @@ mod caller_driven_owner_tests {
             .unwrap()
             .expect("the typed allocation is current");
         let root = ctx.root.clone();
-        let mut owner = Box::pin(crate::effect::CallerDriven::new(async move {
+        let mut owner = Box::pin(crate::effect::CallerDriven::new(None, async move {
             detached.dispose_all(&root).await;
             std::panic::panic_any("removal owner probe");
         }));

@@ -72,7 +72,7 @@ cleanup boundary.
 | precommit update control ↔ dispose | dispose may invalidate admission while control awaits; old generation/config remain authoritative | `close_during_awaited_control_reports_admission_lost` | covered |
 | caller cancellation before lifecycle commit | no state/config/gate/claim/allocation effect | spawn pre-admission refusal/cancellation contracts; update precommit cancellation; era source-claim-wait cancellation | covered at representative commits |
 | caller cancellation after lifecycle commit | framework owner completes cleanup/quiescence/handoff independently | spawn, restart, update, disposal, era cancellation contracts | covered at each deep operation family |
-| caller future held unpolled after lifecycle commit | disposal and typed-removal owners leave the caller at their first `Pending`, so neither they nor coalescing `dispose()`/`ready()` wait for the held caller; an owner panic still resumes in that caller; creation (spawn, Loader entry) advances only while its future is polled, and dropping it hands the creation to framework completion | `held_caller_completion.rs` on both flavors; held-caller variants in `idle_origin_runtime.rs`; private `caller_driven_*` tests in `effect.rs`, `fiber/mod.rs` and `registry.rs`; Loader `held_load_future_advances_its_in_progress_spawn_only_as_it_is_polled` | covered by real Tokio evidence; no reduced Loom model, see below |
+| caller future held unpolled after lifecycle commit | disposal and typed-removal owners leave the caller at their first `Pending`, so neither they nor coalescing `dispose()`/`ready()` wait for the held caller; a framework-invariant owner panic still resumes in a caller that awaits it (user destructor panics stay best-effort under ADR 0041); creation (spawn, Loader entry) advances only while its future is polled, and dropping it hands the creation to framework completion | `held_caller_completion.rs` on both flavors; held-caller variants in `idle_origin_runtime.rs`; private `caller_driven_*` tests in `effect.rs`, `fiber/mod.rs` and `registry.rs`; Loader `held_load_future_advances_its_in_progress_spawn_only_as_it_is_polled` | covered by real Tokio evidence; no reduced Loom model, see below |
 | generation close ↔ retained-resource registration | either refusal with no occurrence, or one owned commit later cleaned exactly once | `every_core_family_publish_versus_close_has_only_refusal_or_owned_commit`, effect registration race tests | covered |
 | generation close ↔ manual retained-resource control | one exact cleanup claim; no duplicate cleanup | effect dispose/disarm-vs-drain tests, Service publication stale/current control tests | covered |
 | Service same-occurrence payload `set` ↔ ready | payload mutation is target-neutral by contract, so no lifecycle drift overlap exists | Service target-neutral tests / ADR 0031 | semantically irrelevant, not a missing race test |
@@ -83,8 +83,11 @@ state change: the caller polls the owner inline until its first `Pending`, then
 moves the same pinned future into one framework task and polls only the outcome
 relay. At no point do two drivers poll the owner, and no lock or arbitration word
 is shared between them, so there is no interleaving for a reduced model to
-explore. A wake that the stale caller waker receives after the move is spurious:
-the new task polls the owner once when it starts and registers its own waker.
+explore. Of its three call sites, the dispose owner and the typed-removal drain
+can hand off; synchronous cleanup execution inside a drain finishes in its first
+poll and never does. A wake that the stale caller waker receives after the move
+is spurious: the new task polls the owner once when it starts and registers its
+own waker.
 Tokio task dispatch and waker behavior are real-runtime facts, so the evidence
 is the Tokio contracts in the row above.
 

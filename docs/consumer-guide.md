@@ -33,8 +33,8 @@ succeeded; Pending means a required Service is unavailable and apply has not
 run. Keep the delivered handle for explicit lifecycle control. Dropping it does
 not dispose the Fiber. If the spawn future is dropped after its commit, core owns
 the undelivered Fiber's cleanup; a delivered handle belongs in consumer composition.
-Creation runs in the spawn future's task: a spawn future you keep but stop
-polling, such as the unfinished half of a `select`, holds its new Fiber in
+Creation up to handle delivery is driven by the spawn future: one you keep but
+stop polling, such as the unfinished half of a `select`, holds its new Fiber in
 creation until you poll it again or drop it.
 
 Authority: [preparation and creation](v3-public-interface.md#plugin-preparation-sealing-and-creation),
@@ -178,8 +178,12 @@ not asserted as behaviors exercised by that example.
 Retain every delivered handle whose Fiber your application intends to end.
 Call `dispose().await` for a terminal barrier through cleanup, Disposed publication
 and exact residency unlink. Once committed, `dispose()` and `remove_plugins`
-finish even if their futures are dropped or no longer polled. Dropping Context,
-FiberHandle or LoadOutcome does not end a Fiber. Spawn origin is provenance only: a spawned Fiber can outlive its spawn
+finish even if their futures are dropped or no longer polled. Await them; do not
+block a Tokio worker thread on a Cordis lifecycle future (for example with
+`futures::executor::block_on` in a task or a `Drop`), because the committed work
+may be queued on that same worker. Use `block_in_place` or `spawn_blocking` from
+synchronous code. Dropping Context, FiberHandle or LoadOutcome does not end a
+Fiber. Spawn origin is provenance only: a spawned Fiber can outlive its spawn
 origin, and nothing cascades. There is no Runtime-wide shutdown operation.
 
 Compose ordering in the application. The examples' Roster records delivered

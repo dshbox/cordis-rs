@@ -783,7 +783,9 @@ impl Fiber {
         if async_cleanup {
             crate::effect::detach_cleanup(work);
         } else {
-            crate::effect::CallerDriven::new(work).await;
+            // A synchronous cleanup finishes in its first poll, so this owner
+            // never reaches the hand-off; it runs wherever its drain runs.
+            crate::effect::CallerDriven::new(None, work).await;
         }
         // `Err` means the framework task ended before publishing an outcome;
         // the exact cleanup claim remains consumed either way.
@@ -1016,8 +1018,16 @@ impl Fiber {
         // the caller-driven owner, and the owner leaves the caller at its first
         // `Pending`, so neither caller cancellation nor a caller that stops
         // polling can stop it.
+        let report = self
+            .spawn_state
+            .root()
+            .map(|root| crate::framework_task::PanicReport {
+                logger: root.logger.logger_for_fiber(&self.name),
+                operation: "fiber dispose",
+                context: format!("fiber={:?}", self.name),
+            });
         let fiber = self.clone();
-        crate::effect::CallerDriven::new(async move {
+        crate::effect::CallerDriven::new(report, async move {
             fiber.complete_claimed_dispose().await;
         })
         .await;
@@ -1662,6 +1672,12 @@ impl FiberHandle {
     /// independently of caller polling: a claiming future that is kept but no
     /// longer polled delays neither the owner nor the calls coalescing onto it.
     ///
+    /// Await this future; do not block a Tokio worker thread on it, for
+    /// example with `futures::executor::block_on` inside a task. The owner may
+    /// continue as a task queued on that same worker, which then never runs.
+    /// From synchronous code, use `tokio::task::block_in_place` or
+    /// `tokio::task::spawn_blocking`.
+    ///
     /// A self-wait from this Fiber's settle context is refused before the
     /// terminal claim with [`LifecycleRecursion`] naming
     /// [`LifecycleOperation::Dispose`].
@@ -2010,7 +2026,7 @@ mod caller_driven_owner_tests {
         fiber.slot.claim().await;
         assert!(!fiber.claim_terminal(), "first terminal claim");
         let owner_fiber = fiber.clone();
-        let mut owner = Box::pin(crate::effect::CallerDriven::new(async move {
+        let mut owner = Box::pin(crate::effect::CallerDriven::new(None, async move {
             owner_fiber.complete_claimed_dispose().await;
             std::panic::panic_any("dispose owner probe");
         }));

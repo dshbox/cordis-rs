@@ -12,22 +12,24 @@ lifecycle work the synchronous part runs inline in the committing caller's
 poll; at its first `Pending` the owner is handed to framework completion, and
 the work continues independently of caller polling. A caller whose future stays
 alive but is never polled again therefore stalls neither the owner nor the
-operations that coalesce onto it. The caller only awaits the owner's outcome,
-and a panic in the handed-off owner resumes in that awaiting caller. The target
-of the hand-off, which moves the same pinned future, depends on the runtime: on
-a multi-thread Tokio runtime it continues as a task on that executor, and if shutdown drops it after a normal `Pending` it
-transfers to a shared Cordis completion runtime. On a `current_thread` runtime,
+operations that coalesce onto it. The caller only awaits the owner's outcome;
+a framework-invariant panic in the handed-off owner resumes in a caller that
+still awaits it, while user destructor panics remain best-effort under
+[ADR 0041](0041-user-destructor-panics-are-best-effort.md). The target of the
+hand-off, which moves the same pinned future, depends on the runtime: on a
+multi-thread Tokio runtime it continues as a task on that executor, and if
+shutdown drops it after a normal `Pending` it transfers to a shared Cordis
+completion runtime. On a `current_thread` runtime,
 or off-runtime, it goes to the completion runtime directly, because a
 current-thread runtime runs spawned tasks only while someone drives it.
-New-Fiber creation is narrower. Its initial settlement runs Plugin apply in the
-spawning caller's task, and a half-polled apply may own Tokio time/IO state that
-must not migrate between runtime drivers. While the committed spawn future is
-alive, creation therefore advances only as that future is polled, and work that
-waits on the new Fiber waits for it. Dropping the future hands the committed
-creation to framework completion. Arbitrary async effect cleanup is different: it is first polled on that
-completion runtime, so Tokio time/IO work created by the cleanup never migrates
-between runtime drivers. A poll unwind is a failure, never a transfer signal.
-This uniform law covers
+New-Fiber creation is narrower: creation up to FiberHandle delivery is driven
+by polling the spawn future. While the committed spawn future is alive, creation
+advances only as that future is polled, and work that waits on the new Fiber
+waits for it. Dropping the future hands the committed creation to framework
+completion. Arbitrary async effect cleanup is different: it is first polled on
+that completion runtime, so Tokio time/IO work created by the cleanup never
+migrates between runtime drivers. A poll unwind is a failure, never a transfer
+signal. This uniform law covers
 disposal, Registry removal, restart, update, era swap, new-Fiber
 creation, exact manual cleanup disposal, and Loader result handoff.
 
@@ -105,8 +107,11 @@ runtime with two worker threads is shared by executor-shutdown transfers,
 current-thread/off-runtime completion handoffs, async effect cleanup, committed
 restart/update apply, background Service convergence and era-successor creation.
 Ordinary `Context::spawn` instead drives initial settlement in the caller's task,
-including drift rechecks before handoff. Plugin apply has no affinity guarantee
-to the spawning runtime: `Handle::current()` and `tokio::spawn` use the runtime
+including drift rechecks before handoff. That placement is why the creation rule
+above is a progress rule: a half-polled initial apply may own Tokio time/IO state
+that must not migrate between runtime drivers, so a committed creation is not
+handed off while its spawn future is alive. Plugin apply has no affinity
+guarantee to the spawning runtime: `Handle::current()` and `tokio::spawn` use the runtime
 polling that apply. This is a fixed process-lifetime cost, not one OS
 thread/runtime per pending task or shutdown transfer. Tokio tasks and time/IO
 operations created during later apply or async cleanup use the completion runtime.
@@ -115,8 +120,11 @@ apply: a Plugin that spawns Pending and becomes Active when its Service is
 published is first applied by background convergence, so its whole generation
 workload runs there from the first apply.
 A paused clock on the caller's test runtime does not control completion-runtime
-time. Resources captured earlier from an external runtime remain owned by that runtime; Cordis completion
-ownership cannot keep an unrelated runtime's timer/IO driver alive after it
+time. A disposal or removal owner handed off from a `current_thread` or
+off-runtime caller runs the rest of its drain, including later synchronous
+cleanups, on a completion worker even while that caller still polls.
+Resources captured earlier from an external runtime remain owned by that
+runtime; Cordis completion ownership cannot keep an unrelated runtime's timer/IO driver alive after it
 shuts down.
 
 Each apply poll must remain non-blocking. Move synchronous blocking sections to
@@ -131,7 +139,9 @@ a given apply are representation, so they stay here rather than in the public
 interface.
 Synchronous effect cleanup must not block indefinitely: it can
 stall its lifecycle executor, or a shared completion worker when off-runtime or
-shutdown-resilient completion reaches it. Blocking work belongs behind an async
+shutdown-resilient completion reaches it, or when a disposal or removal owner
+handed off from a `current_thread` or off-runtime caller after its first
+`Pending` runs it. Blocking work belongs behind an async
 cleanup and `tokio::task::spawn_blocking`. This guarantee covers executor loss while the
 process remains alive, not process termination: Cordis has no Runtime-wide
 shutdown API or process-exit drain.
