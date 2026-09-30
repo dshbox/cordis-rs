@@ -11,9 +11,12 @@
   `#[non_exhaustive]`; lifecycle admission order is defined as slot acquisition,
   and the earlier promise that a committed `spawn` completes independently of
   caller polling is narrowed to polling-driven creation up to `FiberHandle`
-  delivery. Committed `FiberHandle::dispose()` and `Context::remove_plugins` keep
-  their owner hand-off at the first Pending. The new compatible-evolution policy
-  and the auto-trait and operation-future `Send` promises are declared. See
+  delivery ([ADR 0029](https://github.com/dshbox/cordis-rs/blob/main/docs/adr/0029-lifecycle-commits-complete-and-critical-sections-are-closed.md)). Committed `FiberHandle::dispose()` and
+  `Context::remove_plugins` hand their owner to framework completion at its first
+  Pending, so the committed work progresses while the caller's future is alive
+  but unpolled. The new compatible-evolution policy and the auto-trait and
+  operation-future `Send` promises are declared
+  ([ADR 0042](https://github.com/dshbox/cordis-rs/blob/main/docs/adr/0042-public-evolution-declares-openness-and-auto-traits.md)). See
   [MIGRATION.md](https://github.com/dshbox/cordis-rs/blob/main/MIGRATION.md).
 - *(core)* Coordinate the semantic crates on the `0.6` line. Update direct core,
   timer and loader dependency requirements together.

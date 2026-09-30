@@ -45,7 +45,12 @@ requirements 一起更新到 `0.6`，facade 更新到 `0.11`。facade re-export 
 breaking 版本线：预期会增长的 public vocabulary 现在是 `#[non_exhaustive]`（需要补
 wildcard arm 和 `..` pattern），Loader source row 变为可扩展并改用 `PluginEntry::new`
 与 `EntryGroup::new` 构造，另有两条已文档化的承诺被收窄（提交后的创建进度，以及
-lifecycle admission order 的含义）。具体修改步骤和更早的升级见
+lifecycle admission order 的含义；见
+[ADR 0029](docs/adr/0029-lifecycle-commits-complete-and-critical-sections-are-closed.md)）。
+compatible evolution 规则、enum openness 以及 auto trait 与 operation future 的 `Send`
+承诺记录在
+[ADR 0042](docs/adr/0042-public-evolution-declares-openness-and-auto-traits.md)。
+具体修改步骤和更早的升级见
 [MIGRATION.md](MIGRATION.md)、
 [core release notes](crates/cordis-core/CHANGELOG.md) 和
 [facade release notes](crates/cordis/CHANGELOG.md)。

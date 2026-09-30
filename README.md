@@ -51,7 +51,12 @@ breaking pre-freeze line: public vocabularies expected to grow are now
 `#[non_exhaustive]` (add wildcard arms and `..` patterns), Loader source rows are
 extensible and built with `PluginEntry::new` and `EntryGroup::new`, and two
 documented promises are narrowed (creation progress after its commit, and the
-meaning of lifecycle admission order). For step-by-step edits and earlier
+meaning of lifecycle admission order;
+[ADR 0029](docs/adr/0029-lifecycle-commits-complete-and-critical-sections-are-closed.md)).
+The compatible-evolution rules, enum openness and auto-trait and operation-future
+`Send` promises are recorded in
+[ADR 0042](docs/adr/0042-public-evolution-declares-openness-and-auto-traits.md).
+For step-by-step edits and earlier
 upgrades, see [MIGRATION.md](MIGRATION.md), the
 [core release notes](crates/cordis-core/CHANGELOG.md) and the
 [facade release notes](crates/cordis/CHANGELOG.md).
