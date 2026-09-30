@@ -10,7 +10,8 @@ semantic `0.4.0` / facade `0.9.0` release #215. This revision rechecks the
 claims affected by #221 (ADR 0041), the #225 pre-freeze batch (#233–#237, #240,
 #241), release #239 and the test-only #242/#244. The delivery spec is [#200](https://github.com/dshbox/cordis-rs/issues/200). Each path's completion
 record identifies its fixed review point, resulting commit, two review axes and
-eight local gates. A final candidate recommendation is a separate delivery.
+eight local gates. The [freeze candidate record](api-freeze-recommendation.md)
+declares the candidate separately.
 
 Authority remains the [glossary](../CONTEXT.md), [architecture](v3-architecture.md),
 [public inventory](v3-public-interface.md), accepted ADRs and
@@ -100,7 +101,8 @@ The original observation used Rust 1.95.0 and dependencies vendored from upstrea
 tags, rather than the canonical Rust 1.98.1 and locked registry artifacts. It is
 not a current-head gate result, a universal progress proof or normal-suite
 conformance coverage. Current apply placement is separately source-reviewed above;
-the freeze recommendation requires its own exact-head validation.
+the [freeze candidate record](api-freeze-recommendation.md) requires its own
+exact-commit validation.
 
 The Interrupted discriminator pauses a yield-free handoff window using a private
 probe, then invokes public typed removal. It verifies a reachable safe-API race,

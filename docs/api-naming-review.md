@@ -255,6 +255,6 @@ its own ticket with risk, one canonical alternative, migration impact and real
 dependencies; no public compatibility alias is the default migration path here.
 
 [Spec #200](https://github.com/dshbox/cordis-rs/issues/200) and the
-[freeze recommendation](api-freeze-recommendation.md) retain the final scope and
+[freeze candidate record](api-freeze-recommendation.md) retain the final scope and
 blocker disposition. This naming review introduces no declarations or new domain
 meaning and requires no new glossary entry or ADR.
