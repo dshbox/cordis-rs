@@ -59,7 +59,8 @@ Constructing `Routing` and `RealmPolicy` values is unaffected, and
 
 Loader source rows `PluginEntry` and `EntryGroup` are now `#[non_exhaustive]`, so
 a source field can later be added without another breaking release. Struct
-literals no longer compile outside `cordis-loader` (`E0639`). Construct rows with
+literals no longer compile outside `cordis-loader` (`E0639`), and destructuring
+patterns must end in `..` (`E0638`). Construct rows with
 `PluginEntry::new(config)` and `EntryGroup::new(name)`, then assign the fields
 that differ; the fields stay `pub`:
 
