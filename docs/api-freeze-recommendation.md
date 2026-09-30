@@ -101,10 +101,14 @@ commit changes only this record, the conformance evidence, the naming review,
 the ROADMAP checkbox and the README status lines. Its diff against `64aa6de` is
 empty under `crates/`, the public interface, the architecture, the ADRs, the
 compatibility policy and the glossary, as recorded in
-[PR #245](https://github.com/dshbox/cordis-rs/pull/245), so it is not a
-different candidate. Any later change to the supported surface or its normative
-documents produces a new candidate: recheck the affected claims and CI instead
-of inheriting this validation by branch name. A deliberate break updates its
+[PR #245](https://github.com/dshbox/cordis-rs/pull/245), so the declared
+surface is unchanged. The candidate remains `64aa6de`: a later commit,
+including this declaration's merge, is not itself the candidate and does not
+inherit its CI validation by branch name. The declared surface stays the
+normative inventory at `64aa6de` while later changes are compatible under the
+[compatibility policy](compatibility-policy.md) and ADR 0042. Naming any later
+commit as a candidate requires rechecking the affected claims and that commit's
+own main CI run. A deliberate break updates its
 authority and restarts the ROADMAP stabilization requirement. The stabilization
 release ([#243](https://github.com/dshbox/cordis-rs/pull/243) or a successor)
 is a separate, later ROADMAP gate. This is not a 1.0 readiness claim.
