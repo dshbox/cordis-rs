@@ -267,6 +267,11 @@ clones/reuse; each execution creates fresh lifecycle and realm occurrences.
 Private/Shared source policy allocates opaque Runtime-local Service realms;
 text labels never rendezvous across executions or enter core.
 
+Construct source rows with `PluginEntry::new(config)` and `EntryGroup::new(name)`
+and assign the public fields that differ (`let mut e = PluginEntry::new(json);
+e.key = Some(..);`); the rows are `#[non_exhaustive]`, so struct literals do not
+compile outside the crate.
+
 Parse source rows strictly: every source-schema object and tagged variant
 rejects unknown or misplaced fields, so a misspelled `disable` (for `disabled`)
 now fails instead of being silently ignored.

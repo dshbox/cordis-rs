@@ -1,7 +1,7 @@
-error[E0560]: struct `PluginEntry` has no field named `group`
- --> tests/ui-plan/fail/group_boolean.rs:5:59
+error[E0609]: no field `group` on type `PluginEntry`
+ --> tests/ui-plan/fail/group_boolean.rs:4:11
   |
-5 |         disabled: false, inject: vec![], isolate: vec![], group: true,
-  |                                                           ^^^^^ `PluginEntry` does not have this field
+4 |     entry.group = true;
+  |           ^^^^^ unknown field
   |
-  = note: all struct fields are already assigned
+  = note: available fields are: `key`, `name`, `config`, `disabled`, `inject`, `isolate`

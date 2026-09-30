@@ -853,6 +853,7 @@ sequencing, never Fiber ownership.
 The mutable serialized source schema:
 
 ```rust
+#[non_exhaustive]
 pub struct PluginEntry {
     pub key: Option<String>,
     pub name: Option<String>,
@@ -862,7 +863,16 @@ pub struct PluginEntry {
     pub isolate: Vec<IsolateEntry>,
 }
 
+impl PluginEntry {
+    pub fn new(config: serde_json::Value) -> Self;
+}
+
+#[non_exhaustive]
 pub struct EntryGroup { pub name: String }
+
+impl EntryGroup {
+    pub fn new(name: impl Into<String>) -> Self;
+}
 
 pub enum InjectEntry {
     Required(String),
@@ -880,6 +890,15 @@ pub enum RealmPolicy {
     Shared { label: String },
 }
 ```
+
+`PluginEntry` and `EntryGroup` are `#[non_exhaustive]`, so a serde-defaulted
+field can be added without breaking Rust-constructed plans; struct literals are
+not available outside the crate. `PluginEntry::new(config)` sets every other
+field to its wire default (no `key` or `name`, enabled, empty `inject` and
+`isolate`) and equals deserializing `{"config": ..}`; `EntryGroup::new(name)`
+sets the name. Fields stay `pub` and assignable:
+`let mut e = PluginEntry::new(json); e.key = Some(..);`. `IsolateEntry` stays a
+closed pair with public fields.
 
 These source-schema types are `Debug + Clone + Serialize + Deserialize`; enum wire
 syntax is explicit and independent of Rust variant layout. Deserialization is

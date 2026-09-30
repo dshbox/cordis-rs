@@ -17,14 +17,9 @@ use cordis_loader::resolver::PluginRequest;
 use tokio::sync::Notify;
 
 fn plugin(key: &str) -> PluginEntry {
-    PluginEntry {
-        key: Some(key.to_owned()),
-        name: None,
-        config: serde_json::Value::Null,
-        disabled: false,
-        inject: Vec::new(),
-        isolate: Vec::new(),
-    }
+    let mut entry = PluginEntry::new(serde_json::Value::Null);
+    entry.key = Some(key.to_owned());
+    entry
 }
 
 #[derive(Debug)]

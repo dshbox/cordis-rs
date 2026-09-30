@@ -1,5 +1,5 @@
 error[E0599]: no method named `add_group` found for struct `LoadPlan` in the current scope
  --> tests/ui-plan/fail/load_plan_mutation.rs:5:18
   |
-5 |     let _ = plan.add_group(None, EntryGroup { name: "late".into() });
+5 |     let _ = plan.add_group(None, EntryGroup::new("late"));
   |                  ^^^^^^^^^ method not found in `LoadPlan`
