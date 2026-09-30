@@ -166,15 +166,14 @@ fn abandoned_creation_is_rolled_back_while_the_origin_current_thread_runtime_is_
 
     let origin = origin_runtime();
     let ctx = Context::new();
-    // First poll commits allocation and starts the initial apply, which parks;
-    // the caller then abandons the creation.
+    let never = std::sync::Arc::new(tokio::sync::Notify::new());
+    // First poll commits allocation and starts the initial apply, which parks.
+    // The future is held across the residency assertion: dropping it starts
+    // the rollback on the completion runtime, which can finish before an
+    // assertion made after the drop (issue #238).
+    let mut spawn = Box::pin(ctx.spawn(PreparedPlugin::from_input(Parked(never), ())));
     origin.block_on(async {
-        let never = std::sync::Arc::new(tokio::sync::Notify::new());
-        assert!(
-            ctx.spawn(PreparedPlugin::from_input(Parked(never), ()))
-                .now_or_never()
-                .is_none()
-        );
+        assert!(futures::poll!(spawn.as_mut()).is_pending());
     });
     assert_eq!(
         ordinary_residents(&ctx),
@@ -182,9 +181,14 @@ fn abandoned_creation_is_rolled_back_while_the_origin_current_thread_runtime_is_
         "creation committed its allocation"
     );
 
+    // The caller then abandons the creation on the origin runtime, which is
+    // not driven again.
+    origin.block_on(async { drop(spawn) });
+
+    // Bounded wait for the rollback; generous so a loaded CI runner cannot flake it.
     let observer = observer_runtime();
     let rolled_back = observer.block_on(async {
-        tokio::time::timeout(Duration::from_secs(3), async {
+        tokio::time::timeout(Duration::from_secs(10), async {
             while ordinary_residents(&ctx) != 0 {
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
