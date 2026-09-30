@@ -27,6 +27,13 @@
 
 ### Fixed
 
+- *(core)* `FiberHandle::wait_state` no longer reports `Elapsed` at random for a
+  requested state that was published before the deadline when the waiter resumes
+  after the deadline; a publication before the deadline is always observed
+  ([#234](https://github.com/dshbox/cordis-rs/pull/234)).
+- *(core)* Downstream code can no longer call the hidden
+  `CleanupResult::into_outcome` to forge an `EffectFailure`; the method now takes
+  a crate-private token ([#236](https://github.com/dshbox/cordis-rs/pull/236)).
 - *(core)* address review of the first-Pending owner hand-off
 - *(core)* hand committed owners off at their first Pending
 
