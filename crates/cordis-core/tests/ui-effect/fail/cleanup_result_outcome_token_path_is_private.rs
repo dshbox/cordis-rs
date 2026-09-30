@@ -1,8 +1,7 @@
-// `CleanupResult::into_outcome` is a doc-hidden required method of a
-// nameable trait. It takes a crate-private token, so downstream code can
-// call it neither directly nor through a generic `R: CleanupResult`
-// bound: the token is unnameable, so it cannot be supplied and an
-// `EffectFailure` cannot be forged.
+// The module holding `CleanupResult::into_outcome`'s token is private, so
+// the token's path cannot be named downstream. This proves only path
+// privacy; the sibling `cleanup_result_outcome_{missing,default,unit}_token`
+// fixtures prove the method itself requires a token.
 
 use cordis_core::effect::CleanupResult;
 

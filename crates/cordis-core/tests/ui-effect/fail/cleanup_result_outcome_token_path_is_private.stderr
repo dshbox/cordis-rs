@@ -1,7 +1,7 @@
 error[E0603]: module `sealed` is private
-  --> tests/ui-effect/fail/cleanup_result_outcome_is_uncallable.rs:21:49
+  --> tests/ui-effect/fail/cleanup_result_outcome_token_path_is_private.rs:20:49
    |
-21 |     let _ = r.into_outcome(cordis_core::effect::sealed::OutcomeToken);
+20 |     let _ = r.into_outcome(cordis_core::effect::sealed::OutcomeToken);
    |                                                 ^^^^^^  ------------ unit struct `OutcomeToken` is not publicly re-exported
    |                                                 |
    |                                                 private module
@@ -13,9 +13,9 @@ note: the module `sealed` is defined here
    | ^^^^^^^^^^
 
 error[E0603]: module `sealed` is private
-  --> tests/ui-effect/fail/cleanup_result_outcome_is_uncallable.rs:25:73
+  --> tests/ui-effect/fail/cleanup_result_outcome_token_path_is_private.rs:24:73
    |
-25 |     let _ = Err::<(), Forged>(Forged).into_outcome(cordis_core::effect::sealed::OutcomeToken);
+24 |     let _ = Err::<(), Forged>(Forged).into_outcome(cordis_core::effect::sealed::OutcomeToken);
    |                                                                         ^^^^^^  ------------ unit struct `OutcomeToken` is not publicly re-exported
    |                                                                         |
    |                                                                         private module
