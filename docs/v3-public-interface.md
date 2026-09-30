@@ -503,22 +503,27 @@ Framework observation is subscription-only. The single immutable record
 family is:
 
 ```rust
+#[non_exhaustive]
 pub enum RuntimeObservation {
+    #[non_exhaustive]
     FiberResidency {
         change: ResidencyChange,
         fiber: FiberSnapshot,
     },
+    #[non_exhaustive]
     FiberState {
         fiber: FiberId,
         previous: FiberState,
         current: FiberState,
     },
+    #[non_exhaustive]
     ServiceVisibility {
         service: String,
         realm: ServiceRealm,
         previous: Option<ServicePublicationId>,
         current: Option<ServicePublicationId>,
     },
+    #[non_exhaustive]
     ListenerRegistration {
         change: ListenerChange,
         listener: ListenerRegistrationId,
@@ -527,6 +532,7 @@ pub enum RuntimeObservation {
         scope: ScopeId,
         options: ListenerOptions,
     },
+    #[non_exhaustive]
     DispatchCompleted {
         operation: EventOperation,
         event: &'static str,
@@ -856,6 +862,7 @@ pub struct IsolateEntry {
     pub policy: RealmPolicy,
 }
 
+#[non_exhaustive]
 pub enum RealmPolicy {
     Private,
     Shared { label: String },
@@ -927,11 +934,17 @@ where `R: PluginResolver + ?Sized`. It produces one ordered outcome per plan ent
 
 ```rust
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum EntryOutcome {
+    #[non_exhaustive]
     Group { id: EntryId },
+    #[non_exhaustive]
     Disabled { id: EntryId },
+    #[non_exhaustive]
     Pruned { id: EntryId, disabled_ancestor: EntryId },
+    #[non_exhaustive]
     Spawned { id: EntryId, resolve_key: String, fiber_handle: FiberHandle },
+    #[non_exhaustive]
     Failed { id: EntryId, resolve_key: String, failure: LoaderFailure },
 }
 ```
@@ -1123,11 +1136,13 @@ pub enum TaskRegistrationError {
 The lifecycle family is commit-aware:
 
 ```rust
+#[non_exhaustive]
 pub enum PluginFailureKind {
     ReturnedError,
     Panic,
 }
 
+#[non_exhaustive]
 pub enum LifecycleOperation {
     Ready,
     WaitState,
@@ -1208,6 +1223,7 @@ pub enum LoaderFailure {
     Spawn(SpawnError),
 }
 
+#[non_exhaustive]
 pub enum ResolverFailureKind {
     ReturnedError,
     Panic,

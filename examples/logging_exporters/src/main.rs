@@ -178,6 +178,7 @@ async fn main() -> Result<(), BoxError> {
             if let RuntimeObservation::FiberResidency {
                 change: ResidencyChange::Admitted,
                 fiber,
+                ..
             } = record
             {
                 hits.fetch_add(1, Ordering::SeqCst);

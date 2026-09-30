@@ -396,7 +396,7 @@ async fn cloned_plan_reuse_preserves_entry_correlation_but_refreshes_runtime_ide
 
     for outcome in [&first, &second] {
         assert_eq!(outcome.entries().len(), 3);
-        assert!(matches!(outcome.entries()[0], EntryOutcome::Group { ref id } if id == &group));
+        assert!(matches!(outcome.entries()[0], EntryOutcome::Group { ref id, .. } if id == &group));
         assert!(
             matches!(outcome.entries()[1], EntryOutcome::Spawned { ref id, .. } if id == &entry)
         );
@@ -454,7 +454,7 @@ async fn cloned_plan_reuse_preserves_entry_correlation_but_refreshes_runtime_ide
 
     let other_runtime = Context::new();
     let third = clone.load(&other_runtime, &resolver).await;
-    assert!(matches!(third.entries()[0], EntryOutcome::Group { ref id } if id == &group));
+    assert!(matches!(third.entries()[0], EntryOutcome::Group { ref id, .. } if id == &group));
     assert!(matches!(third.entries()[1], EntryOutcome::Spawned { ref id, .. } if id == &entry));
     assert!(
         matches!(third.entries()[2], EntryOutcome::Spawned { ref id, .. } if id == &private_entry)

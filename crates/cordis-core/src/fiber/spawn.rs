@@ -74,6 +74,7 @@ async fn probe_handoff(phase: HandoffPhase, contract: std::any::TypeId) {
 /// The semantic kind of a [`PluginFailure`]: the apply returned an error,
 /// or it panicked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum PluginFailureKind {
     /// The apply returned `Err(_)` from its typed `Result`.
     ReturnedError,

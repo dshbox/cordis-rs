@@ -19,6 +19,7 @@ pub trait Event {
 
 /// Explicit Event routing for every dispatch operation.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub enum Routing {
     /// Consider registrations from every Scope.
     Unscoped,
@@ -67,6 +68,7 @@ impl fmt::Debug for ListenerRegistrationId {
 
 /// Semantic listener role.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ListenerRole {
     /// Notification participant; contributes no answer.
     Observer,
@@ -80,6 +82,7 @@ pub enum ListenerRole {
 
 /// Event operation used by role preflight diagnostics.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum EventOperation {
     /// Ordered awaited notification.
     Emit,
@@ -95,6 +98,7 @@ pub enum EventOperation {
 ///
 /// This enum carries no display, wire-name, ordering, or serialization contract.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum DispatchOutcomeKind {
     /// A notification or waterfall primitive completed successfully.
     Completed,
@@ -108,6 +112,7 @@ pub enum DispatchOutcomeKind {
 
 /// Why one claimed listener invocation failed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum InvocationFailureKind {
     /// The user callback or tail returned an error.
     ReturnedError,

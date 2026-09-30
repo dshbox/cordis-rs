@@ -41,6 +41,9 @@ mod framework_task;
 mod gated;
 mod update;
 
+#[cfg(test)]
+mod vocabulary_inventory;
+
 /// Published-sibling implementation seams for semantic leaf crates.
 ///
 /// This module exists only when the non-default `internal-api` Cargo feature is

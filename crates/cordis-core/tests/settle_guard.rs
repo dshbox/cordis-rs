@@ -126,6 +126,9 @@ where
                 Ok(()) => Observation::Success,
                 Err(recursion) => Observation::Recursion(recursion),
             },
+            // `LifecycleOperation` is non-exhaustive: a new operation must get its
+            // own arm here before this guard can vouch for it.
+            other => panic!("settle guard has no arm for {other:?}"),
         }
     })
     .await
