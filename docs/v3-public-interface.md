@@ -571,8 +571,9 @@ The complete supporting variants are
 `ListenerRole::{Observer, Responder, Mapper, Around}`,
 `EventOperation::{Emit, EmitParallel, Query, Waterfall}`,
 `DispatchOutcomeKind::{Completed, Answered, Missed, Failed}`, and
-`ObservationRouting::{Unscoped, Scoped(ScopeId)}`. The small enums are
-`Debug + Clone + Copy + Eq`; `RuntimeObservation` and the snapshot
+`ObservationRouting::{Unscoped, Scoped(ScopeId)}`. The fieldless supporting
+enums are `Debug + Clone + Copy + Eq`; `ObservationRouting` is
+`Debug + Clone + Eq`; `RuntimeObservation` and the snapshot
 records are `Debug + Clone`. `FiberRole::{Root, Ordinary}` is
 `Debug + Clone + Copy + Eq` with no representation, ordering, display,
 or serialization contract.

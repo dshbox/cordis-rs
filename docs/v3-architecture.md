@@ -157,10 +157,14 @@ rule is the decision of
 
 One logical arbiter per Fiber serializes lifecycle intents: at most one
 lifecycle operation advances on a Fiber at a time, accepted restart and
-update intents serialize in admission order, provider drift coalesces
-to the latest target, and terminal closing prevents later uncommitted
-intents. The arbiter is logical ownership of the lifecycle transaction,
-never an OS mutex held across user work or arbitrary awaits.
+update intents serialize by admission, provider drift coalesces to the
+latest target, and terminal closing prevents later uncommitted intents.
+Admission is lifecycle-slot acquisition: an intent is admitted when it
+acquires the slot, not when it was called or first polled. Among intents
+already waiting for the arbiter the order is unspecified; the arbiter
+gives no FIFO guarantee. The arbiter is logical ownership of the
+lifecycle transaction, never an OS mutex held across user work or
+arbitrary awaits.
 
 A Fiber settles and converges against its SemanticTarget through the
 three named settle passes — initial, convergence, and restart — each

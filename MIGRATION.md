@@ -79,6 +79,14 @@ do not block a Tokio worker thread on them (for example with
 `futures::executor::block_on` inside a task), because the handed-off owner may
 be queued on that same worker.
 
+**Narrowed promise: lifecycle admission order.** "Admission" is lifecycle-slot
+acquisition, and the order among restart or update intents already waiting for a
+Fiber's arbiter is unspecified. Do not read the earlier "serialize in admission
+order" as first-come-first-served: an update is admitted when it acquires the
+slot, so concurrent callers must not rely on call or first-poll order. Sequence
+updates yourself, by awaiting each one, when order matters. See
+[ADR 0029](docs/adr/0029-lifecycle-commits-complete-and-critical-sections-are-closed.md).
+
 ## From facade 0.9.x / semantic 0.4.x to 0.10.x / 0.5.x
 
 Update `cordis-rs` dependency requirements to `0.10` and any direct `cordis-core`,
