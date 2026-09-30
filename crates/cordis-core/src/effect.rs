@@ -174,6 +174,11 @@ mod sealed {
     pub trait Sealed {}
     impl Sealed for () {}
     impl<E: std::error::Error> Sealed for Result<(), E> {}
+
+    /// Crate-only capability for `CleanupResult::into_outcome`. The type is
+    /// unnameable outside this crate, so no downstream code can produce
+    /// one — even through a generic `R: CleanupResult` bound.
+    pub struct OutcomeToken;
 }
 
 /// What an effect cleanup may return. Sealed: exactly `()` (infallible)
@@ -182,18 +187,21 @@ mod sealed {
 /// exactly once into the opaque [`EffectFailure`] and the original error
 /// object, `Any` access, and downcasts never escape.
 pub trait CleanupResult: sealed::Sealed {
+    // Takes a crate-private token so the method is uncallable downstream:
+    // a bare call, or one through a generic `R: CleanupResult` bound, has
+    // no way to name the token and so cannot forge an `EffectFailure`.
     #[doc(hidden)]
-    fn into_outcome(self) -> std::result::Result<(), EffectFailure>;
+    fn into_outcome(self, token: sealed::OutcomeToken) -> std::result::Result<(), EffectFailure>;
 }
 
 impl CleanupResult for () {
-    fn into_outcome(self) -> std::result::Result<(), EffectFailure> {
+    fn into_outcome(self, _: sealed::OutcomeToken) -> std::result::Result<(), EffectFailure> {
         Ok(())
     }
 }
 
 impl<E: std::error::Error> CleanupResult for Result<(), E> {
-    fn into_outcome(self) -> std::result::Result<(), EffectFailure> {
+    fn into_outcome(self, _: sealed::OutcomeToken) -> std::result::Result<(), EffectFailure> {
         self.map_err(|e| EffectFailure::returned(e.to_string()))
     }
 }
@@ -419,7 +427,9 @@ impl Context {
         R: CleanupResult,
     {
         self.register_cleanup(Cleanup {
-            run: Box::new(move || Box::pin(async move { cleanup().await.into_outcome() })),
+            run: Box::new(move || {
+                Box::pin(async move { cleanup().await.into_outcome(sealed::OutcomeToken) })
+            }),
             async_cleanup: true,
         })
     }
@@ -443,7 +453,9 @@ impl Context {
         R: CleanupResult,
     {
         self.register_cleanup(Cleanup {
-            run: Box::new(move || Box::pin(async move { cleanup().into_outcome() })),
+            run: Box::new(move || {
+                Box::pin(async move { cleanup().into_outcome(sealed::OutcomeToken) })
+            }),
             async_cleanup: false,
         })
     }
@@ -706,12 +718,14 @@ mod tests {
 
     #[test]
     fn cleanup_result_normalizes_once() {
-        use super::CleanupResult;
-        assert!(().into_outcome().is_ok());
+        use super::{CleanupResult, sealed::OutcomeToken};
+        assert!(().into_outcome(OutcomeToken).is_ok());
         #[derive(Debug, thiserror::Error)]
         #[error("cleanup boom")]
         struct Boom;
-        let failure = Err::<(), Boom>(Boom).into_outcome().unwrap_err();
+        let failure = Err::<(), Boom>(Boom)
+            .into_outcome(OutcomeToken)
+            .unwrap_err();
         assert_eq!(failure.kind(), EffectFailureKind::ReturnedError);
         assert_eq!(failure.diagnostic(), "cleanup boom");
     }

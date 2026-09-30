@@ -4,7 +4,7 @@ error[E0046]: not all trait items implemented, missing: `into_outcome`
 9 | impl CleanupResult for Custom {}
   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ missing `into_outcome` in implementation
   |
-  = help: implement the missing item: `fn into_outcome(self) -> Result<(), EffectFailure> { todo!() }`
+  = help: implement the missing item: `fn into_outcome(self, _: effect::sealed::OutcomeToken) -> Result<(), EffectFailure> { todo!() }`
 
 error[E0277]: the trait bound `Custom: effect::sealed::Sealed` is not satisfied
  --> tests/ui-effect/fail/cleanup_result_is_sealed.rs:9:24
