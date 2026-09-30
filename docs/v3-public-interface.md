@@ -51,6 +51,13 @@ The interface guarantees, for every item in every crate:
   by that operation's own semantics. There is no universal `Default`,
   `Clone`, `Send`, `Sync`, or `'static` bound beyond the declarations
   below.
+- **Declared openness and auto traits.** Every public enum is declared
+  Open or Closed, and the promised auto traits are listed, in
+  [Openness and auto traits](#openness-and-auto-traits). No other auto trait,
+  including `Unpin`, is promised.
+- **The interface outranks rustdoc.** Rustdoc of supported items elaborates
+  these declarations; where the two disagree, this interface wins and the
+  disagreement is a defect.
 
 ## Authoring style and macro surface
 
@@ -414,6 +421,11 @@ process refuses to start that thread the wait reports
 `-> Result<UpdateOutcome, UpdateError>`; `era_swap(&self, change: PreparedChange)`
 `-> Result<FiberHandle, EraSwapError>`; and `dispose(&self)`
 `-> Result<(), LifecycleRecursion>`.
+
+`ready` answers only a quiescent `Active`, a stable `Pending`, or the terminal
+`Disposed`; a disposed Fiber answers `Ok(FiberState::Disposed)`. A current
+parked Plugin failure is `ReadyError::Apply`, and a transient lifecycle state
+is never returned.
 
 `wait_state` publication wins the tie with its deadline: a requested state
 published before the deadline is always observed, even if the deadline has
@@ -1317,6 +1329,88 @@ process. This rule is the complete destructor-panic contract of
 `cordis-core`, `cordis-loader`, and `cordis-timer`, and of the `cordis-rs`
 facade through its re-exports; stronger guarantees may be added compatibly
 ([ADR 0041](adr/0041-user-destructor-panics-are-best-effort.md)).
+
+## Openness and auto traits
+
+This section declares which public vocabularies may grow within a major line
+and which auto traits the public types carry
+([ADR 0042](adr/0042-public-evolution-declares-openness-and-auto-traits.md)).
+The [compatibility policy](compatibility-policy.md#compatible-evolution) defines
+the compatible evolution these declarations permit.
+
+### Openness
+
+The interface has exactly 40 public enums: 32 Open and 8 Closed. An Open enum
+is `#[non_exhaustive]`: a later minor release may add a variant, so downstream
+`match`es need a wildcard arm. A Closed enum carries no attribute and gains a
+variant only in a semver-incompatible release, so downstream `match`es may be
+exhaustive.
+
+| Module | Open (`#[non_exhaustive]`) | Closed |
+| --- | --- | --- |
+| core `lifecycle` | `PluginFailureKind`, `LifecycleOperation`, `SpawnError`, `ReadyError`, `RestartError`, `WaitStateError`, `UpdateError`, `EraSwapFailure`, `EraSwapError` | `FiberState`, `FiberRole`, `UpdateOutcome` |
+| core `service` | `RealmMappingError`, `ServiceLookupError`, `ServicePublishError`, `ServiceControlError`, `ConfigResolutionError<E>` | — |
+| core `event` | `Routing`, `ListenerRole`, `EventOperation`, `DispatchOutcomeKind`, `InvocationFailureKind`, `ListenerRegistrationError`, `DispatchError` | `QueryOutcome<T>` |
+| core `effect` | `EffectFailureKind`, `EffectRegistrationError`, `TaskRegistrationError` | — |
+| core `observation` | `RuntimeObservation`, `ObservationRouting` | `ResidencyChange`, `ListenerChange` |
+| loader `plan` | `RealmPolicy`, `PlanError` | `InjectEntry` |
+| loader `resolver` | `ResolverFailureKind` | — |
+| loader `outcome` | `EntryOutcome`, `LoaderFailure` | — |
+| timer root | `TimerRegistrationError` | `TimeoutOutcome<T>` |
+
+Variants and structs follow the same rule:
+
+- Each of the five record variants of `RuntimeObservation` and each of the
+  five variants of `EntryOutcome` is itself `#[non_exhaustive]`: a minor
+  release may add a field, so patterns on them use `..`.
+- The fields of the 17 struct-like variants of the Open error enums
+  (`RealmMappingError`, `ServiceLookupError`, `ServicePublishError`,
+  `ServiceControlError`, `ConfigResolutionError`, `ListenerRegistrationError`,
+  `DispatchError`, `PlanError`, and `LoaderFailure`) are frozen. New failure
+  detail arrives as a new variant, never as a new field.
+- The fields of the constructible source variants `InjectEntry::Configured`
+  and `RealmPolicy::Shared` are closed; growth there arrives as a new variant.
+- The source structs `PluginEntry` and `EntryGroup` are Open and are built
+  through `PluginEntry::new` and `EntryGroup::new`; `IsolateEntry` is a Closed
+  pair.
+- `Level` is a struct with associated constants rather than an enum, so it is
+  already Open: a new level would be an additive associated constant.
+
+### Auto traits
+
+These types are `Send + Sync`:
+
+- `Context` and `FiberHandle`;
+- every public error and failure type: each operation family listed under
+  [Operation-specific errors](#operation-specific-errors-and-panic-boundaries),
+  the opaque `PluginFailure`, `EffectFailure`, `InvocationFailure`,
+  `ParallelFailures`, `ResolverFailure`, and `LifecycleRecursion`, the helper
+  errors `JsonPrepareError<E>` and `BufferSizeZero`, and the kinds
+  `PluginFailureKind`, `EffectFailureKind`, `InvocationFailureKind`,
+  `ResolverFailureKind`, and `LifecycleOperation`. The generic
+  `ConfigResolutionError<E>` and `JsonPrepareError<E>` are `Send + Sync` when
+  `E` is. `BoxError` is `Send + Sync` by its definition;
+- the correlation identities `FiberId`, `EntryId`, `ServiceRealm`,
+  `ServicePublicationId`, `ScopeId`, and `ListenerRegistrationId`;
+- the snapshots `RuntimeSnapshot`, `FiberSnapshot`, and `ServiceSnapshot`,
+  with `FiberRole`;
+- the observation records `RuntimeObservation`, `ResidencyChange`,
+  `ListenerChange`, and `ObservationRouting`, with `ListenerRole`,
+  `EventOperation`, and `DispatchOutcomeKind`; and
+- the outcomes `FiberState`, `UpdateOutcome`, `EntryOutcome`, and
+  `LoadOutcome`, plus `QueryOutcome<T>` and `TimeoutOutcome<T>` when `T` is
+  `Send + Sync`.
+
+The Timer operation futures are `Send` when their inner future is `Send`:
+`Sleep` and `Interval` are `Send`, and `Timeout<F>` is `Send` when `F` is.
+They are not promised `Sync`.
+
+`Unpin` is never promised. No other auto-trait implementation is promised
+either: not `UnwindSafe` or `RefUnwindSafe`, not the auto traits of types not
+listed above, and not those of the values returned by
+`LoadOutcome::fiber_handles()` or by the listener adapters. Rustdoc's "Auto
+Trait Implementations" lists what a type implements today, not what the
+interface promises.
 
 ## Completeness
 
