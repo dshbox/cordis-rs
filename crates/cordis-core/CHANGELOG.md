@@ -2,6 +2,47 @@
 
 ## [Unreleased]
 
+## [0.6.0](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.5.0...cordis-core-v0.6.0) - 2026-09-30
+
+### Changed
+
+- *(core)* **Breaking pre-freeze batch** (spec #225: #233, #234, #235, #236,
+  #237, #240, #241). Public vocabularies expected to grow are now
+  `#[non_exhaustive]`; lifecycle admission order is defined as slot acquisition,
+  and the earlier promise that a committed `spawn` completes independently of
+  caller polling is narrowed to polling-driven creation up to `FiberHandle`
+  delivery ([ADR 0029](https://github.com/dshbox/cordis-rs/blob/main/docs/adr/0029-lifecycle-commits-complete-and-critical-sections-are-closed.md)). Committed `FiberHandle::dispose()` and
+  `Context::remove_plugins` hand their owner to framework completion at its first
+  Pending, so the committed work progresses while the caller's future is alive
+  but unpolled. The new compatible-evolution policy and the auto-trait and
+  operation-future `Send` promises are declared
+  ([ADR 0042](https://github.com/dshbox/cordis-rs/blob/main/docs/adr/0042-public-evolution-declares-openness-and-auto-traits.md)). See
+  [MIGRATION.md](https://github.com/dshbox/cordis-rs/blob/main/MIGRATION.md).
+- *(core)* Coordinate the semantic crates on the `0.6` line. Update direct core,
+  timer and loader dependency requirements together.
+
+### Added
+
+- *(core)* [**breaking**] open the public vocabularies that are expected to grow
+
+### Fixed
+
+- *(core)* `FiberHandle::wait_state` no longer reports `Elapsed` at random for a
+  requested state that was published before the deadline when the waiter resumes
+  after the deadline; a publication before the deadline is always observed
+  ([#234](https://github.com/dshbox/cordis-rs/pull/234)).
+- *(core)* Downstream code can no longer call the hidden
+  `CleanupResult::into_outcome` to forge an `EffectFailure`; the method now takes
+  a crate-private token ([#236](https://github.com/dshbox/cordis-rs/pull/236)).
+- *(core)* address review of the first-Pending owner hand-off
+- *(core)* hand committed owners off at their first Pending
+
+### Other
+
+- promise Send for operation futures and apply B2 review fixes
+- declare compatible evolution, openness and auto-trait promises
+- define lifecycle admission, fix ObservationRouting traits and FiberHandle wording
+
 ## [0.5.0](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.4.1...cordis-core-v0.5.0) - 2026-09-29
 
 ### Changed

@@ -16,12 +16,12 @@ For an application using the `cordis` facade:
 
 ```toml
 [dependencies]
-cordis-rs = "0.10"
-cordis-timer = "0.5"
+cordis-rs = "0.11"
+cordis-timer = "0.6"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
 ```
 
-Framework and Plugin crates may depend on `cordis-core = "0.5"` instead of
+Framework and Plugin crates may depend on `cordis-core = "0.6"` instead of
 `cordis-rs`; `TimerExt` is implemented for the same underlying `Context` type.
 
 ## Quick example
@@ -107,8 +107,8 @@ outcome types. Those semantics belong entirely to this crate.
 
 ## Compatibility and MSRV
 
-`cordis-timer` v3 began at `0.1.x`; the current `0.5.x` line depends on
-`cordis-core 0.5.x`, requires **Rust 1.88 or newer**, and uses Rust edition 2024.
+`cordis-timer` v3 began at `0.1.x`; the current `0.6.x` line depends on
+`cordis-core 0.6.x`, requires **Rust 1.88 or newer**, and uses Rust edition 2024.
 
 ## Documentation
 

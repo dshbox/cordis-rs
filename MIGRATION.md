@@ -1,7 +1,7 @@
 # Migrating to Cordis v3
 
 Cordis v3 first shipped on the `cordis-rs 0.7.x` line and currently publishes on
-`0.10.x`. It is an architectural replacement, not a source-compatible update of
+`0.11.x`. It is an architectural replacement, not a source-compatible update of
 `0.6.x`. The old implementation remains maintained on `legacy/0.6` for critical
 bug and security fixes.
 
@@ -10,20 +10,20 @@ bug and security fixes.
 Applications keep the historical package and Rust import names:
 
 ```toml
-cordis-rs = "0.10"
+cordis-rs = "0.11"
 ```
 
 ```rust
 use cordis::Context;
 ```
 
-The `cordis-rs` package is a thin facade over `cordis-core = "0.5"`. Framework
+The `cordis-rs` package is a thin facade over `cordis-core = "0.6"`. Framework
 and plugin crates should normally depend on `cordis-core` directly. Timer and
 loader capabilities are explicit optional crates rather than facade features:
 
 ```toml
-cordis-timer = "0.5"
-cordis-loader = "0.5"
+cordis-timer = "0.6"
+cordis-loader = "0.6"
 ```
 
 ## From facade 0.10.x / semantic 0.5.x to 0.11.x / 0.6.x
