@@ -1,4 +1,5 @@
-//! Fiber — the lifecycle carrier of a plugin instance (mirrors `fiber.ts`).
+//! Fiber — the era-local lifecycle carrier of one execution allocation (mirrors
+//! `fiber.ts`).
 //!
 //! - A fiber owns a set of disposables (effects) registered by its plugin.
 //! - The **SemanticTarget** combines committed apply input with the exact
@@ -1384,7 +1385,7 @@ enum RunSlot {
     Done,
 }
 
-/// Public handle of a running plugin instance (mirrors `Fiber &
+/// A consumer's control handle for one delivered Fiber (mirrors `Fiber &
 /// PromiseLike<Fiber>`; the promise mixin is JS-only — the port's
 /// public-handle/private-Fiber split).
 ///

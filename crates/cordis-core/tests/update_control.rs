@@ -450,8 +450,12 @@ async fn committed_update_serializes_era_swap_until_update_quiescence() {
     successor.dispose().await.unwrap();
 }
 
+// Admission is lifecycle-slot acquisition (ADR 0029). An update still inside
+// precommit control has not been admitted, so a later call whose control
+// finishes first is admitted first. This pins that only; the order among
+// intents already waiting for the slot is unspecified and not asserted here.
 #[tokio::test]
-async fn concurrent_updates_commit_in_postcontrol_admission_order() {
+async fn update_admission_follows_control_completion_not_call_order() {
     let ctx = Context::new();
     let seen = Arc::new(Mutex::new(Vec::new()));
     let entered = Arc::new(Notify::new());
