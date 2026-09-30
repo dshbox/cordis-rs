@@ -94,5 +94,6 @@ MIT。项目延续 Cordis lineage；版权声明见 [`LICENSE`](LICENSE)。
 
 使用 API 的十条非规范性指南见 [consumer guide（English）](docs/consumer-guide.md)，
 其中链接了现有 authority、runnable examples 与对应 evidence。
-[API freeze candidate recommendation（English）](docs/api-freeze-recommendation.md)
-记录 candidate 条件与剩余工作，本次文档不宣布 API freeze 或 1.0。
+[API freeze candidate record（English）](docs/api-freeze-recommendation.md)
+记录已宣布的 API freeze candidate（`64aa6de`，#222）与剩余工作；1.0 仍需要一次
+stabilization release。

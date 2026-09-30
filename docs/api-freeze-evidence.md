@@ -1,12 +1,14 @@
 # API freeze conformance evidence
 
 This is a non-normative contract-to-production review. Production source baseline:
-`4824196bbff6dada178ed230c344e12ad164919e`, fetched on 2026-09-29. The original
-2026-09-28 deliveries reviewed `ed07d31`; their receipts are historical, not
-validation of this later revision. The PR #210 follow-up rechecks affected claims
-after #214, #216, #217 and #218 landed, then rebases onto the coordinated
-semantic `0.4.0` / facade `0.9.0` release merged in #215. That release changes
-versions and migration documentation, not production Rust source or tests. The delivery spec is [#200](https://github.com/dshbox/cordis-rs/issues/200). Each path's completion
+the declared API freeze candidate
+`64aa6deddf8678100648927e9311c0a7618bf53f` (semantic 0.6.0 / facade 0.11.0),
+fetched on 2026-09-30. The original 2026-09-28 deliveries reviewed `ed07d31`;
+their receipts are historical, not validation of this later revision. PR #210
+rechecked affected claims at `4824196`, after #214, #216, #217 and #218 and the
+semantic `0.4.0` / facade `0.9.0` release #215. This revision rechecks the
+claims affected by #221 (ADR 0041), the #225 pre-freeze batch (#233–#237, #240,
+#241), release #239 and the test-only #242/#244. The delivery spec is [#200](https://github.com/dshbox/cordis-rs/issues/200). Each path's completion
 record identifies its fixed review point, resulting commit, two review axes and
 eight local gates. A final candidate recommendation is a separate delivery.
 
@@ -39,7 +41,13 @@ finding, preserves the discovered history and cites the added discriminators.
 | F3: ignored unknown Loader source fields, identified → accepted behavior change → implemented and reviewed in [#217](https://github.com/dshbox/cordis-rs/pull/217) | Interface/source schema and Loader changelog now explicitly require strict Deserialize; public parse/load controls distinguish typos from valid disabled/private rows | This is a deliberate pre-1.0 Deserialize compatibility change, not a demonstrated violation of the former unspecified unknown-field contract; arbitrary Plugin config remains governed by its own schema |
 | F4: wait_state deadline thread cost and spawn-refusal panic, identified → fixed → reviewed in [#218](https://github.com/dshbox/cordis-rs/pull/218) | Shared monotonic scheduler, cancellation/removal and contained wakes; public thread-count/waker tests plus isolated refusal injection | DeadlineUnavailable is a new variant on a non-exhaustive enum; private injection proves the scheduler refusal/retry seam, while production maps that refusal to the public error |
 | F5: apply placement disclosure, identified → documented in this follow-up | Plugin rustdoc, interface and guide rules 1 and 5 state non-blocking polls, no spawning-runtime affinity and possible Cordis-owned-runtime apply; ADR 0029 records current shared completion-runtime placement and sizing without freezing them | Ordinary spawn's pre-handoff drift rechecks remain caller-driven; no origin-runtime affinity, dedicated per-Fiber executor or progress guarantee while consumers block both completion workers; earlier captured resources retain their original driver and the caller's paused clock does not control completion-runtime time |
-| F6: user destructor panic contract narrowed, identified → decided → documented in [#220](https://github.com/dshbox/cordis-rs/issues/220) / [#221](https://github.com/dshbox/cordis-rs/pull/221) | [ADR 0041](adr/0041-user-destructor-panics-are-best-effort.md) (added after this baseline) and the interface's [general destructor rule](v3-public-interface.md#user-destructor-panics); ADR 0033 destructor passages amended; runtime behavior and tests unchanged. The decision index now lists thirteen architecture decisions; the D1 statement below records this baseline's index. Retained regressions are listed in the [failure-boundary addendum](failure-boundary-audit.md#addendum-user-destructor-panics-2026-09-29) | A user destructor panic has only best-effort containment and reporting, with no specified outcome. The Event destructor rows below and the Loader handoff test `abandonment_continues_after_last_input_drop_panics_between_members` remain as best-effort robustness regressions, not contract discriminators |
+| F6: user destructor panic contract narrowed, identified → decided → documented in [#220](https://github.com/dshbox/cordis-rs/issues/220) / [#221](https://github.com/dshbox/cordis-rs/pull/221) | [ADR 0041](adr/0041-user-destructor-panics-are-best-effort.md) (added after the #210 baseline) and the interface's [general destructor rule](v3-public-interface.md#user-destructor-panics); ADR 0033 destructor passages amended; runtime behavior and tests unchanged. The decision index now lists thirteen architecture decisions; the D1 statement below records the #210 baseline's index. Retained regressions are listed in the [failure-boundary addendum](failure-boundary-audit.md#addendum-user-destructor-panics-2026-09-29) | A user destructor panic has only best-effort containment and reporting, with no specified outcome. The Event destructor rows below and the Loader handoff test `abandonment_continues_after_last_input_drop_panics_between_members` remain as best-effort robustness regressions, not contract discriminators |
+| B1: committed dispose and typed removal stalled by a held but unpolled caller, identified in [#224](https://github.com/dshbox/cordis-rs/issues/224) → fixed → reviewed in [#237](https://github.com/dshbox/cordis-rs/pull/237) (ticket #232) | The committed owner is handed off at its first `Pending`, with an owner-panic relay; held-caller tests in [generation ownership](#generation-ownership-and-consumer-teardown). Creation is narrowed instead: the interface's [creation cancellation law](v3-public-interface.md#plugin-preparation-sealing-and-creation) and the Loader [handoff law](v3-public-interface.md#loader-resolver-execution-and-outcomes) | A held spawn or load future does not advance its committed creation; dropping it hands the creation to framework completion |
+| C1: `wait_state` reported `Elapsed` for a publication that preceded the deadline, identified in #224 → fixed → reviewed in [#234](https://github.com/dshbox/cordis-rs/pull/234) | The interface's `wait_state` tie rule under [lifecycle](v3-public-interface.md#fiber-identity-lifecycle-and-typed-group-removal); [wait_state_publication_tie.rs](../crates/cordis-core/tests/wait_state_publication_tie.rs) | A publication after the deadline but before the waiter resumes may be reported either way |
+| C2: downstream code could construct an `EffectFailure` through `CleanupResult::into_outcome`, identified in #224 → fixed → reviewed in [#236](https://github.com/dshbox/cordis-rs/pull/236) | `into_outcome` takes a crate-private token; the `cleanup_result_outcome_*` UI fail fixtures in [generation ownership](#generation-ownership-and-consumer-teardown) | Doc-hidden `into_outcome` is outside the supported surface ([compatibility policy](compatibility-policy.md#compatible-evolution)) |
+| A1/A2: anticipated growth of exhaustive vocabularies and literal-only Loader source rows was a source break, identified in #224 → accepted breaking change in [#235](https://github.com/dshbox/cordis-rs/pull/235) / [#233](https://github.com/dshbox/cordis-rs/pull/233) → released as semantic 0.6.0 / facade 0.11.0 (#239) | Interface [openness](v3-public-interface.md#openness) table; in-crate `vocabulary_inventory` tests in core and Loader; `constructors_equal_the_deserialized_default_rows` | Open enums need wildcard arms; `PluginEntry`/`EntryGroup` are built through `new` |
+| B2: no compatible-evolution rules, identified in #224 → documented in [#241](https://github.com/dshbox/cordis-rs/pull/241) | [ADR 0042](adr/0042-public-evolution-declares-openness-and-auto-traits.md), the policy's [compatible evolution](compatibility-policy.md#compatible-evolution) and the `ui-auto-traits` pass fixtures (see the [aggregate](#aggregate-disposition-and-assurance-limits)) | Undeclared auto traits, `Unpin` and doc-hidden members stay outside the promise |
+| B3/B4/C3: undefined admission order, `ObservationRouting` listed as `Copy`, `FiberHandle` rustdoc called it a plugin-instance handle, identified in #224 → documented in [#240](https://github.com/dshbox/cordis-rs/pull/240) | ADR 0029 and architecture define admission as lifecycle-slot acquisition; `update_admission_follows_control_completion_not_call_order`; interface lists `ObservationRouting` as `Debug + Clone + Eq`; FiberHandle rustdoc names a delivered Fiber's control handle | Order among intents already waiting for the arbiter is unspecified (no FIFO) |
 
 ## Prepare, seal and spawn
 
@@ -102,7 +110,14 @@ Rust patch and rust-src, not floating stable.
 
 Accepted boundaries: direct synchronous Plugin preparation/declaration panic
 unwinds before lifecycle admission; `from_input` establishes type association,
-not producing-object identity; handle Drop is inert. `internal-api` is unsupported
+not producing-object identity; handle Drop is inert. After the commit, creation
+up to handoff does not advance while the spawn future is held unpolled, and work
+waiting on the new Fiber (such as typed removal of its allocation) waits with
+it; dropping the future hands the creation to framework completion, which fully
+disposes and unlinks the undelivered Fiber
+(`held_spawn_future_advances_creation_only_as_it_is_polled`,
+`held_creation_is_rolled_back_once_its_future_is_dropped_while_the_origin_runtime_is_idle`;
+B1, #237). `internal-api` is unsupported
 downstream even when leaf feature unification exposes `__internal` to direct core
 users. [ADR 0040](adr/0040-published-sibling-seams-are-compatibility-obligations.md)
 still requires compatible published sibling packages to compile against that seam.
@@ -170,10 +185,11 @@ Production: [Fiber control](../crates/cordis-core/src/fiber/mod.rs),
 | --- | --- | --- |
 | Covered: current-target ready versus passive wait | [lifecycle_v3.rs](../crates/cordis-core/tests/lifecycle_v3.rs): `ready_reports_typed_current_failure_and_drives_a_new_target`, `wait_state_is_passive_for_off_runtime_drift`, `failed_is_published_only_after_rollback_finishes` | Old-target failure after drift, wait driving settlement, or Failed preceding rollback |
 | Covered with private scheduling aid: stale transient ready observation | [Fiber unit test](../crates/cordis-core/src/fiber/mod.rs): `ready_transient_state_racing_complete_restart_never_panics` | A completed public restart leaves ready matching an obsolete Loading state and panicking after its idle recheck |
+| Covered: publication preceding the deadline wins | [wait_state_publication_tie.rs](../crates/cordis-core/tests/wait_state_publication_tie.rs): `a_publication_preceding_the_deadline_wins_a_late_poll` | A publication before the deadline is reported `Elapsed` when the waiter resumes late (formerly a per-poll coin flip) |
 | Covered: shared wait deadlines and caller-waker containment | [wait_state_threads.rs](../crates/cordis-core/tests/wait_state_threads.rs): `many_pending_waits_share_one_deadline_thread`; [wait_state_waker_panic.rs](../crates/cordis-core/tests/wait_state_waker_panic.rs): `a_panicking_waker_does_not_stop_other_deadlines` | Each pending wait holds an OS thread, Duration::MAX expires, or one caller wake stops unrelated deadlines |
 | Covered at private scheduler seam: thread refusal and exact arm retirement | [deadline.rs](../crates/cordis-core/src/deadline.rs): `refused_scheduler_thread_is_reported_and_retried`, `cancelled_deadlines_leave_no_entries`, `unrepresentable_deadline_never_elapses_and_needs_no_scheduler`, `a_lost_worker_is_replaced_for_already_armed_deadlines` | Thread refusal panics or fabricates Elapsed, cancellation leaves entries, unrepresentable timeout elapses, or worker loss strands already-armed deadlines |
 | Covered: retry preserves identity and committed completion | [lifecycle_barriers.rs](../crates/cordis-core/tests/lifecycle_barriers.rs): `restart_preserves_identity_and_retries_a_same_target_failure`, `cancelled_precommit_restart_waiter_does_not_replace_the_generation`, `cancelled_postcommit_restart_waiter_does_not_stop_the_restart`, `committed_restart_survives_origin_runtime_shutdown` | Retry allocating a new Fiber, precommit cancellation mutating generation, or postcommit completion depending on waiter/origin executor |
-| Covered: provisional control, mismatch, veto and admission revalidation | [update_control.rs](../crates/cordis-core/tests/update_control.rs): `wrong_contract_is_precommit_and_typed`, `around_can_veto_without_reaching_private_tail`, `private_tail_is_provisional_until_outer_control_returns`, `unrecovered_control_error_preserves_old_generation`, `close_during_awaited_control_reports_admission_lost`, `same_fiber_update_recursion_is_refused_before_control` | Tail committing early, veto/error changing generation, wrong contract reaching control, or awaited control skipping admission/recursion checks |
+| Covered: provisional control, mismatch, veto and admission revalidation | [update_control.rs](../crates/cordis-core/tests/update_control.rs): `wrong_contract_is_precommit_and_typed`, `around_can_veto_without_reaching_private_tail`, `private_tail_is_provisional_until_outer_control_returns`, `unrecovered_control_error_preserves_old_generation`, `close_during_awaited_control_reports_admission_lost`, `same_fiber_update_recursion_is_refused_before_control`, `update_admission_follows_control_completion_not_call_order` | Tail committing early, veto/error changing generation, wrong contract reaching control, awaited control skipping admission/recursion checks, or an update still inside precommit control being admitted by call order |
 | Covered: forward-only committed candidate and Pending | update_control.rs: `accepted_update_can_commit_to_stable_pending_without_apply`, `postcommit_apply_failure_is_invisible_to_control_and_candidate_is_retained`, `postcommit_update_apply_panic_is_contained_and_keeps_the_new_input`, `mapper_panic_is_contained_precommit_and_preserves_the_old_generation` | Committed guaranteeing Active, outer policy catching postcommit failure, apply failure restoring old input, or mapper panic committing |
 | Covered: cancellation and sealed policy capabilities | update_control.rs: `cancelling_during_precommit_control_commits_nothing`, `cancelling_postcommit_waiter_does_not_cancel_update_owner`; [lifecycle UI](../crates/cordis-core/tests/lifecycle_ui.rs): fail `ui-lifecycle/fail/update_rejects_raw_any.rs`, `update_observer_is_not_update_policy.rs`, `update_responder_is_not_update_policy.rs`, `removed_internal_update_event.rs`; [configuration UI](../crates/cordis-core/tests/configuration_ui.rs): fail `ui-configuration/fail/prepared_values_are_move_only.rs` | Caller cancellation stranding commit, erased input or notification/response adapters becoming policy, or candidate reuse being allowed |
 | Covered: era source claim, death before birth and fresh identity | [era_replacement.rs](../crates/cordis-core/tests/era_replacement.rs): `replacement_breaks_identity_while_update_and_restart_do_not`, `old_terminal_cleanup_precedes_successor_apply`, `racing_replacements_claim_one_live_source_and_attempt_one_successor`, `successor_gets_sibling_scope_and_fresh_generation_resources_without_cascading_children`, `wrong_contract_refuses_before_source_claim` | Old/new overlap, two successors, identity reuse, child cascade or wrong-contract source destruction |
@@ -184,11 +200,15 @@ Candidate consumption is a move-only compile contract plus consuming production
 signatures for every refusal/result branch; runtime tests distinguish their
 commit effects, not a fictional candidate-return channel. Accepted boundaries:
 ready is quiescence, not universal Active; control cannot recover postcommit apply;
+admission is lifecycle-slot acquisition, and the order among intents already
+waiting for the arbiter is unspecified (no FIFO; B3, #240);
 era uses its immutable captured recipe, with no replacement Context parameter;
 Incomplete is forward-only. A changed-captured-mapping test is N/A because that
 mutation is not publicly expressible. These bounded tests do not prove every
 schedule. F1 and F4 were missed in the original review and are now fixed with
-the discriminators above. WaitStateError now includes Elapsed, Recursion and
+the discriminators above. C1 (#234) was also missed by the original review and
+is fixed with the publication-tie discriminator; a publication after the
+deadline but before the waiter resumes is unspecified. WaitStateError now includes Elapsed, Recursion and
 DeadlineUnavailable; existing non-exhaustive matching keeps its wildcard. The
 private refusal injection is not a public OS-refusal fixture; source review checks
 the production mapping to DeadlineUnavailable. No unresolved defect in this path
@@ -214,6 +234,7 @@ Production: [effects/completion](../crates/cordis-core/src/effect.rs),
 | --- | --- | --- |
 | Covered: all retained core families share admission/ownership law | [generation_ownership.rs](../crates/cordis-core/tests/generation_ownership.rs): `loading_active_and_permanent_root_admit_and_own_their_core_resources`, `pending_failed_closing_and_disposed_refuse_every_core_retained_family`, `every_core_family_publish_versus_close_has_only_refusal_or_owned_commit`, `cross_fiber_use_does_not_transfer_owner_restart_replaces_and_spawn_is_not_parenthood` | Service, ordinary/update listeners, observers, exporters, effects or run tasks bypass the generation gate; published-but-unowned residue; use transfers ownership; origin disposal cascades |
 | Covered: exact manual claim and cancellation boundary | [effects.rs](../crates/cordis-core/tests/effects.rs): `winning_dispose_completes_after_caller_cancellation`, `dispose_cancelled_before_the_claim_changes_nothing`, `winning_disarm_beats_an_in_flight_drain`, `stale_control_reports_false_after_the_drain_won`, `dispose_reports_returned_error_and_consumes_the_occurrence`, `dispose_reports_panic_and_consumes_the_occurrence` | Preclaim cancellation consumes cleanup, postclaim cancellation strands it, double execution, or failure restores an occurrence |
+| Covered: an opaque cleanup failure cannot be forged downstream | [effect UI](../crates/cordis-core/tests/effect_ui.rs): fail `ui-effect/fail/cleanup_result_outcome_missing_token.rs`, `cleanup_result_outcome_unit_token.rs`, `cleanup_result_outcome_default_token.rs`, `cleanup_result_outcome_token_path_is_private.rs`, `cleanup_result_is_sealed.rs` | Downstream code calls `CleanupResult::into_outcome` to construct an `EffectFailure`, or implements `CleanupResult` for another type (C2, #236) |
 | Covered: sequential reverse-order attempt-all and task join | effects.rs: `effect_sync_holds_lifo_position_against_async_effects`, `cross_resource_cleanup_holds_reverse_commit_positions`, `failing_and_panicking_cleanups_do_not_block_the_drain`, `run_drain_joins_after_the_tasks_own_effects_lifo`, `run_drain_join_contains_a_panicking_task`, `run_task_polling_and_output_destruction_stay_outside_framework_locks` | Sync bypasses LIFO, cleanup runs concurrently/stops on failure, drain skips task join or user polling/Drop holds framework locks |
 | Covered: exact attribution transfer/refusal/expiry | [settle_guard.rs](../crates/cordis-core/tests/settle_guard.rs): `attributed_spawn_from_apply_refuses_every_lifecycle_self_wait`, `manual_dispose_from_apply_keeps_settle_attribution_across_cleanup_task`, `external_manual_dispose_does_not_invent_settle_attribution`; [private settle_ctx tests](../crates/cordis-core/src/fiber/settle_ctx.rs): `transferred_attribution_expires_with_its_source_scope`, `scopes_start_clean_and_raw_tokio_spawn_does_not_inherit_attribution` | Attributed task self-wait deadlocks, detached cleanup loses live frame, external cleanup gains false refusal, expired frames remain active or raw Tokio spawn inherits attribution |
 | Covered: origin executor loss and task refusal | effects.rs: `async_cleanup_timer_outlives_origin_runtime_shutdown`, `run_off_the_runtime_refuses_and_starts_nothing`, `run_on_a_disposed_fiber_refuses_and_starts_nothing`; [lifecycle_barriers.rs](../crates/cordis-core/tests/lifecycle_barriers.rs): `committed_dispose_survives_origin_runtime_shutdown`, `dropping_context_handles_never_runs_root_cleanup_and_surviving_runtime_keeps_it_claimable` | Committed cleanup binds to lost origin executor; refused run starts work; Context Drop silently drains root |
@@ -238,8 +259,9 @@ owner off at its first `Pending`, to the multi-thread origin when available,
 otherwise the completion runtime, relaying a framework-invariant owner panic to a
 caller that still awaits it and otherwise reporting it to the Runtime logger.
 B1 (#232), an owner stalled by a held but unpolled caller, is fixed by that
-hand-off; creation is documented as advancing only while its spawn future is
-polled or after it is dropped. No unresolved defect in
+hand-off. Creation is narrowed instead: it advances only while its spawn future
+is polled, and once that future is dropped, framework completion fully disposes
+and unlinks the undelivered Fiber. No unresolved defect in
 this path is currently identified. Usage: [rules 5–6](consumer-guide.md#5-register-resources-with-their-generation-and-separate-ownership-from-attribution)
 and [worker_daemon](../examples/worker_daemon/src/main.rs).
 
@@ -267,7 +289,7 @@ Production: [dispatch](../crates/cordis-core/src/events/dispatch.rs),
 
 These destructor regressions are reachable through ordinary public dispatch,
 removal and observation APIs; the recent #196 fix is already in the production
-baseline. Since ADR 0041 (F6, added after this baseline), they are kept as
+baseline. Since ADR 0041 (F6, added after the #210 baseline), they are kept as
 best-effort robustness regressions rather than contract discriminators. Known
 documentation deviation resolved: the specialist inventory omitted exported
 `event::with_state` although its body contract described it. Accepted boundary:
@@ -291,6 +313,7 @@ Production: [observation hub/records](../crates/cordis-core/src/observation.rs),
 | --- | --- | --- |
 | Covered: detached parallel attempt-all and generation ownership | [runtime_observation_delivery.rs](../crates/cordis-core/tests/runtime_observation_delivery.rs): `blocked_observers_run_in_parallel_without_delaying_source_and_keep_attribution`, `failing_and_panicking_observers_do_not_veto_and_later_observers_are_attempted`, `missing_executor_drops_delivery_without_changing_listener_truth`, `registering_generation_close_stops_future_delivery` | Source waits/vetoes, one observer blocks later attempts, missing executor alters listener truth or closed generation receives future delivery |
 | Covered with private record capture: five committed families and outcome vocabulary | [observation unit tests](../crates/cordis-core/src/observation.rs): `loading_install_is_not_visibility_but_active_and_unlink_are_committed_records`, `exact_listener_and_primitive_completion_use_semantic_vocabulary`, `restart_preserves_residency_while_era_swap_replaces_it_and_manual_withdraw_is_exact`, `all_primitive_operations_report_semantic_outcomes` | Loading occupation narrated as visible, listener/primitive facts conflated, restart changes residency or outcome vocabulary follows representation |
+| Covered at private seam: exact inventories of the opened vocabularies | [core vocabulary inventory](../crates/cordis-core/src/vocabulary_inventory.rs): `runtime_observation_has_exactly_five_record_categories`, `event_vocabularies_keep_their_inventories` | Opening the vocabularies (A1, #235) silently adds, drops or renames a record category, dispatch operation, outcome kind, listener role or routing form |
 | Covered: current snapshot selection and delivery-gap recovery | [runtime_snapshot.rs](../crates/cordis-core/tests/runtime_snapshot.rs): `empty_runtime_snapshot_is_exactly_the_permanent_root`, `snapshot_is_flat_current_residency_with_per_record_semantics`, `loading_publication_is_current_but_invisible_then_becomes_visible`, `closed_generation_physical_service_row_is_not_current_snapshot_state`, `later_snapshot_recovers_current_state_after_an_unobserved_gap_only`; observation unit: `disposed_record_remains_visible_until_exact_residency_unlink` | Snapshot omits root/resident Disposed rows, exposes stale closed rows, conflates occupied/visible or recovers replay history rather than current state |
 | Covered: severity, channel fallback and foundation availability | [logger.rs](../crates/cordis-core/tests/logger.rs): `level_order_is_semantic_low_to_high_severity`, `min_level_routes_per_channel_name`, `log_record_accessors_are_semantic`, `logging_does_not_create_service_visibility_or_missing_edges`, `logger_remains_foundation_available_across_generation_phases` | Numeric/storage ordering drives severity, None disables, fields expose mutable storage or Logger becomes a Service prerequisite |
 | Covered: isolated reentrancy/panic and exact removal | logger.rs: `reentrant_exporter_does_not_recurse_and_later_exporter_is_attempted`, `reentrant_filter_does_not_recurse_through_logging`, `panicking_exporter_does_not_block_later_occurrence`, `exporter_registration_removes_one_exact_duplicate_occurrence`, `remove_after_snapshot_affects_only_future_records`, `exporter_removal_drops_the_exporter_outside_the_list_lock` | Recursive logging/deadlock, failure stops siblings, duplicates collapse, removal revokes retained snapshot or Drop holds list lock |
@@ -304,6 +327,11 @@ Event narration. This does not suppress ordinary application operations explicit
 performed by an observer. Accepted boundaries: delivery gaps, no replay or global
 order; snapshots are not globally linearizable or referentially closed; IDs grant
 no control; Logger assignment sequence differs from exporter receipt order.
+`RuntimeObservation`, its five record variants, `ObservationRouting`,
+`EventOperation`, `DispatchOutcomeKind` and `ListenerRole` are Open
+([ADR 0042](adr/0042-public-evolution-declares-openness-and-auto-traits.md)):
+consumers match with `_` and `..`. `ObservationRouting` is
+`Debug + Clone + Eq`, not `Copy` (B4, #240).
 Known documentation deviation resolved: [example navigation](../examples/README.md)
 used retired internal Event narration and historical exclusive-consumer descriptions;
 it now describes the current six sources. No material evidence gap or production
@@ -325,7 +353,7 @@ Production: [plan/execution](../crates/cordis-loader/src/plan.rs),
 | Status / scenario | Discriminating evidence | Nearest rival excluded |
 | --- | --- | --- |
 | Covered: atomic construction, lineage and wire form | [plan.rs](../crates/cordis-loader/tests/plan.rs): `builder_accepts_only_already_admitted_same_lineage_parents_and_freezes_ids`, `failed_add_is_atomic_and_its_id_is_not_an_admitted_parent`, `validation_rejects_missing_identity_and_duplicate_axes_but_keeps_axes_orthogonal`, `source_schema_has_explicit_stable_wire_forms_and_required_plugin_config` | Failed add admits a parent, finish renumbers, foreign IDs join lineage, axes conflict or missing config silently defaults |
-| Covered: strict source schema and valid execution controls | [source_schema_strict.rs](../crates/cordis-loader/tests/source_schema_strict.rs): `misspelled_disabled_is_rejected`, `misspelled_isolate_is_rejected`, `unsupported_plugin_entry_fields_are_rejected`, `fields_belonging_to_another_row_or_variant_are_rejected`, `disabled_row_does_not_execute`, `private_isolate_row_keeps_the_service_out_of_the_caller_realm`, `documented_rows_parse_and_round_trip` | A typo silently executes/defaults placement, fields cross schema objects or tagged variants, or strictness breaks valid disabled/private/round-trip rows |
+| Covered: strict source schema and valid execution controls | [source_schema_strict.rs](../crates/cordis-loader/tests/source_schema_strict.rs): `misspelled_disabled_is_rejected`, `misspelled_isolate_is_rejected`, `unsupported_plugin_entry_fields_are_rejected`, `fields_belonging_to_another_row_or_variant_are_rejected`, `disabled_row_does_not_execute`, `private_isolate_row_keeps_the_service_out_of_the_caller_realm`, `documented_rows_parse_and_round_trip`, `constructors_equal_the_deserialized_default_rows` | A typo silently executes/defaults placement, fields cross schema objects or tagged variants, strictness breaks valid disabled/private/round-trip rows, or `PluginEntry::new`/`EntryGroup::new` build a row that differs from the wire default (A2, #233) |
 | Covered: resolver adaptation before admission and normalization boundary | [resolver.rs](../crates/cordis-loader/tests/resolver.rs): `plugin_json_prepares_then_seals_synchronously`, `json_helpers_distinguish_deserialization_from_typed_preparation_without_panics`, `direct_json_helper_panics_remain_ordinary_pre_lifecycle_unwinds`; [resolver unit tests](../crates/cordis-loader/src/resolver.rs): `returned_error_normalizes_once_to_opaque_resolver_failure`, `resolver_panic_normalizes_once_without_crossing_lifecycle`, `configured_service_prepare_error_normalizes_before_any_admission`, `helper_panic_inside_resolver_normalizes_at_the_resolver_boundary` | Raw JSON enters lifecycle, helper erases typed errors/contains direct panic, resolver panic escapes, normalization repeats or adaptation failure admits residency |
 | Covered: execution-local exact realms and repeated plan correlation | [realm_policy.rs](../crates/cordis-loader/tests/realm_policy.rs): `realm_policy_is_execution_local_service_exact_and_independent_of_structure`, `shared_placement_collision_fails_only_that_row_and_later_rows_continue`, `cloned_plan_reuse_preserves_entry_correlation_but_refreshes_runtime_identity` | Shared labels rendezvous across executions, structure changes placement, collision globally aborts, cloned plan loses EntryId or reuses Fiber/realm/publication identity |
 | Covered: complete partial outcomes and disabled pruning | [outcome.rs](../crates/cordis-loader/tests/outcome.rs): `outcomes_are_complete_depth_first_and_pruning_names_the_disabling_plugin`, `independent_failures_do_not_prune_descendants_or_stop_later_reachable_entries`, `duplicate_resolve_keys_remain_distinct_occurrences_by_entry_order_and_fiber_handle`, `inactive_context_reports_each_reachable_plugin_and_leaves_no_runtime_residue`, `resolver_can_reenter_runtime_observation_before_lifecycle_admission` | Missing/reordered rows, ordinary failure prunes, duplicate keys collapse, inactive execution leaves residue or resolver runs under a lifecycle lock |
@@ -339,7 +367,13 @@ sibling reachability and facade exclusion. [ADR 0040](adr/0040-published-sibling
 keeps published-sibling compile obligations separate from unsupported downstream
 use. Accepted boundaries: partial load, synchronous resolver, structural sequencing
 without Fiber ownership, repeatable keys, correlation-only EntryId, is_ok not
-universal Active, and inert post-delivery Drop. F3 is an accepted pre-1.0
+universal Active, and inert post-delivery Drop. Source rows `PluginEntry` and
+`EntryGroup` are Open and built through `PluginEntry::new`/`EntryGroup::new`,
+with their fields still `pub`; `IsolateEntry` is Closed. While the load future
+is alive but unpolled, the entry being created does not advance and the
+already-delivered FiberHandles are not rolled back
+(`held_load_future_advances_its_in_progress_spawn_only_as_it_is_polled`).
+F3 is an accepted pre-1.0
 Deserialize behavior change: unknown or misplaced source-schema fields now fail
 before loading; valid wire forms and Serialize output remain unchanged. This
 updates the supported compatibility analysis rather than claiming the former
@@ -398,14 +432,31 @@ standard Rust trait contracts retain their ordinary meanings. Supported features
 and separate published-sibling obligations remain owned by the compatibility
 policy. No unsupported feature-unified __internal recipe is consumer guidance.
 
+Openness and auto traits
+([ADR 0042](adr/0042-public-evolution-declares-openness-and-auto-traits.md), B2,
+#241) are guarded across the paths. The
+[core auto-trait UI suite](../crates/cordis-core/tests/auto_traits_ui.rs) passes
+`ui-auto-traits/pass/promised_auto_traits.rs` and `operation_futures_are_send.rs`;
+the [Loader suite](../crates/cordis-loader/tests/auto_traits_ui.rs) passes
+`promised_auto_traits.rs` and `load_future_is_send.rs`; the
+[Timer suite](../crates/cordis-timer/tests/auto_traits_ui.rs) passes
+`promised_auto_traits.rs`. The rival is a lost promised `Send`/`Sync` or a lost
+conditional operation-future `Send`. The interface's
+[openness table](v3-public-interface.md#openness) is guarded by the in-crate
+`vocabulary_inventory` tests in core and Loader plus the compiler's
+`#[non_exhaustive]` checks; adapter callback bounds are part of each adapter's
+supported signature.
+
 Current findings: F1, F2 and F4 are identified and fixed with reviewed
 discriminators; F3 is an implemented, accepted pre-1.0 compatibility change; F5 is
 now disclosed; F6 is an accepted, incorporated contract narrowing of user
-destructor panics to the best-effort ADR 0041 rule. No currently unresolved
-supported-contract production defect, material missing discriminator or queued
-deliberate public break is identified.
-This conclusion is conditional on this revision's validation, not the original
-negative finding or CI. Evidence is insufficient
+destructor panics to the best-effort ADR 0041 rule. The #224 findings A1–C3
+were resolved by the #225 batch and released as semantic 0.6.0 / facade 0.11.0
+(#239). No currently unresolved supported-contract production defect, material
+missing discriminator or queued deliberate public break is identified.
+This conclusion is validated for candidate `64aa6de` by
+[main CI run 36695938925](https://github.com/dshbox/cordis-rs/actions/runs/36695938925);
+it is not the original negative finding or its CI. Evidence is insufficient
 for universal equivalence, all scheduling permutations or unbounded progress;
 the [concurrency record](lifecycle-concurrency-modeling.md) explicitly owns the
 bounded models and public-execution evidence. Optional broader exploration does
@@ -413,8 +464,8 @@ not strengthen the contract by implication. A future actual gap or defect must
 name its authority, reachable path and nearest rival and reopen candidate review.
 
 Documentation deviations D1–D3 are resolved: architecture decision navigation
-agreed at this baseline on ADRs 0028–0039 (ADR 0041 is added later by F6;
-compatibility ADR 0040 remains separate); exported
+agreed at the #210 baseline on ADRs 0028–0039 (ADR 0041 is added later by F6;
+compatibility ADRs 0040 and 0042 remain outside the architecture index); exported
 with_state appears in the canonical specialist inventory; examples describe
 current observation/snapshot paths. Integration also repairs current architecture
 navigation in the parity ledger and migration introduction. Historical migration
