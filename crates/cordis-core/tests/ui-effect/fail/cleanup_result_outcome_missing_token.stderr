@@ -1,0 +1,31 @@
+error[E0061]: this method takes 1 argument but 0 arguments were supplied
+  --> tests/ui-effect/fail/cleanup_result_outcome_missing_token.rs:20:15
+   |
+20 |     let _ = r.into_outcome();
+   |               ^^^^^^^^^^^^-- argument #1 of type `effect::sealed::OutcomeToken` is missing
+   |
+note: method defined here
+  --> src/effect.rs
+   |
+   |     fn into_outcome(self, token: sealed::OutcomeToken) -> std::result::Result<(), EffectFailure>;
+   |        ^^^^^^^^^^^^
+help: provide the argument
+   |
+20 |     let _ = r.into_outcome(/* effect::sealed::OutcomeToken */);
+   |                            ++++++++++++++++++++++++++++++++++
+
+error[E0061]: this method takes 1 argument but 0 arguments were supplied
+  --> tests/ui-effect/fail/cleanup_result_outcome_missing_token.rs:24:39
+   |
+24 |     let _ = Err::<(), Forged>(Forged).into_outcome();
+   |                                       ^^^^^^^^^^^^-- argument #1 of type `effect::sealed::OutcomeToken` is missing
+   |
+note: method defined here
+  --> src/effect.rs
+   |
+   |     fn into_outcome(self, token: sealed::OutcomeToken) -> std::result::Result<(), EffectFailure>;
+   |        ^^^^^^^^^^^^
+help: provide the argument
+   |
+24 |     let _ = Err::<(), Forged>(Forged).into_outcome(/* effect::sealed::OutcomeToken */);
+   |                                                    ++++++++++++++++++++++++++++++++++

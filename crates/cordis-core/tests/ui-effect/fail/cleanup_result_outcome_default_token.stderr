@@ -1,0 +1,11 @@
+error[E0277]: the trait bound `effect::sealed::OutcomeToken: Default` is not satisfied
+  --> tests/ui-effect/fail/cleanup_result_outcome_default_token.rs:20:28
+   |
+20 |     let _ = r.into_outcome(Default::default());
+   |                            ^^^^^^^^^^^^^^^^^^ the trait `Default` is not implemented for `effect::sealed::OutcomeToken`
+
+error[E0277]: the trait bound `effect::sealed::OutcomeToken: Default` is not satisfied
+  --> tests/ui-effect/fail/cleanup_result_outcome_default_token.rs:24:52
+   |
+24 |     let _ = Err::<(), Forged>(Forged).into_outcome(Default::default());
+   |                                                    ^^^^^^^^^^^^^^^^^^ the trait `Default` is not implemented for `effect::sealed::OutcomeToken`
