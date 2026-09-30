@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [0.6.1](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.6.0...cordis-core-v0.6.1) - 2026-09-30
+
+### Other
+
+- *(core)* tidy idle-origin runtime test header, timeouts and wait loop
+- *(core)* assert residency before dropping the abandoned creation
+
 ## [0.6.0](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.5.0...cordis-core-v0.6.0) - 2026-09-30
 
 ### Changed
