@@ -54,7 +54,9 @@ The interface guarantees, for every item in every crate:
 - **Declared openness and auto traits.** Every public enum is declared
   Open or Closed, and the promised auto traits are listed, in
   [Openness and auto traits](#openness-and-auto-traits). No other auto trait,
-  including `Unpin`, is promised.
+  including `Unpin`, is promised beyond what declared trait implementations
+  and bounds already imply (for example `BufferExporter: Exporter`, which
+  requires `Send + Sync`).
 - **The interface outranks rustdoc.** Rustdoc of supported items elaborates
   these declarations; where the two disagree, this interface wins and the
   disagreement is a defect.
@@ -1439,9 +1441,13 @@ The Timer operation types are `Send` when their inner future is `Send`: the
 future is `Send` when `F` is. They are not promised `Sync`.
 
 The future returned by each asynchronous operation is `Send` under the
-condition below. Each condition uses only the operation's existing signature
-bounds; no signature gains a `Send` or `Sync` bound, and an operation called
-outside its condition still compiles, its future only not promised `Send`.
+condition below. The promise adds no bound to any signature. Each condition is
+the operation's existing signature bounds, except where `Send` depends on a
+caller-chosen type: `LoadPlan::load` states `R: Sync` as a condition on the
+promise, not on the signature. A call outside its condition keeps compiling;
+its future is only not promised `Send`. `Context::spawn_attributed` is not an
+entry: it returns Tokio's `JoinHandle`, a foreign named type whose auto traits
+Tokio governs, not a Cordis future promise.
 
 | Operation | Its future is `Send` |
 | --- | --- |

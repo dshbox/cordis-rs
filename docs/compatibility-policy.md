@@ -93,9 +93,10 @@ The following are compatible (minor) changes:
   can make a same-named method of another extension trait in scope ambiguous;
   Cargo's guidelines class this as a possibly-breaking minor change, and
   Cordis accepts it as minor;
-- relaxing a bound on a function's or method's own generic parameters or
-  arguments, or accepting a wider argument type, when the type inference of
-  existing callers is unaffected. This includes the
+- relaxing a bound on the generic parameters or arguments of a free function,
+  an inherent method, or a method of a sealed trait, or accepting a wider
+  argument type there, when the type inference of existing callers is
+  unaffected. This includes the
   [listener adapter callback bounds](v3-public-interface.md#event-contracts-roles-and-dispatch),
   which the interface declares as part of each adapter's signature; and
 - adding an auto-trait promise to the interface for a type or operation
@@ -110,6 +111,11 @@ The following remain breaking even when they look additive:
 - adding a required trait item, any associated type (Rust has no stable
   associated type defaults), or a new supertrait to a trait that downstream
   code may implement;
+- changing the signature of a method of a trait that downstream code may
+  implement, including relaxing its bounds or widening its argument types
+  (for example `Plugin::prepare`, `Plugin::apply`,
+  `ConfigurableService::compose_config`, `PluginResolver::resolve`, or an
+  `Exporter` method): existing implementations stop matching the trait;
 - relaxing a supertrait or associated-type bound that downstream generic code
   may rely on, such as `Plugin: Send`, `Service: Send + Sync + 'static`,
   `Plugin::Input: Send + 'static`, or `Event::Args: Send + 'static`. Generic

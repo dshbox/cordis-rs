@@ -51,9 +51,11 @@ decision records why.
    operation (the six `FiberHandle` lifecycle controls, `Context::spawn`,
    `remove_plugins`, the Event dispatch operations, the `Next` and `UpdateNext`
    continuations, `EffectRegistration::dispose`, and `LoadPlan::load`) is
-   `Send` under a condition the interface states per operation. Each condition
-   uses only the operation's existing bounds; the only one that names a user
-   type is `LoadPlan::load`, whose future is `Send` when the resolver is `Sync`.
+   `Send` under a condition the interface states per operation. The promise
+   adds no bound to any signature. Each condition is the operation's existing
+   signature bounds, except `LoadPlan::load`, which adds `R: Sync` as a
+   condition on the promise, not on the signature; callers outside that
+   condition keep compiling.
    These futures are promised only `Send`, not `Sync`, `Unpin`, or `'static`:
    `Send` does not guarantee `'static`, and the lifetime of a future that
    borrows is bounded by what it borrows.
