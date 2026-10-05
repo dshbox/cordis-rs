@@ -222,13 +222,6 @@ entry when it lands. Keep this list current when a mapped mechanism changes.
   offered-but-not-accepted state is absent. Tokio evidence:
   `fiber::era::tests::unconsumed_success_offer_cleans_the_offered_successor`,
   which exercises one schedule. Model coverage: #247.
-- **`ready()` publication-sequence recheck (LC-06).** `ReadyHistoryModel` has
-  no publication-sequence equivalent, and its single holder pass publishes only
-  the final state, so the complete claim -> publish transient -> publish final
-  -> release window described above cannot be expressed. The LC-06 models
-  therefore do not distinguish a `ready()` with the recheck from one without
-  it. Tokio evidence: `ready_transient_state_racing_complete_restart_never_panics`.
-  Model coverage: #248.
 - **`ready()` `Failed`-branch failure read (LC-06).** The model has no
   `Failed` state or parked failure, so the race between the state read and a
   newer settle clearing the failure is not modeled. Tokio evidence:
@@ -311,6 +304,25 @@ linearization point.
 
 Class: safety/history property. Phase 1 should model the non-blocking decision;
 full Notify waiting belongs to Phase 2.
+
+The reduced `ReadyHistoryModel` in `loom_inertia.rs` carries the Fiber state
+together with its publication sequence and checks two LC-06 histories:
+
+- **Service mutation.** A returned pre-mutation state is accepted only when
+  the mutation's semantic publication did not precede the invocation.
+  `ready_that_treats_idle_as_quiescent_is_detected` is the negative control.
+- **Publication sequence (#248).** A complete restart-like pass (claim ->
+  publish transient -> publish stable -> release) can land between `ready()`'s
+  state observation and its idle recheck. The oracle rejects a transient
+  answer, and any answer whose publication was not current at a quiescent
+  point inside the invocation. `ready_without_sequence_recheck_is_detected`
+  removes the sequence recheck and fails on a transient answer. The real
+  Tokio counterpart is
+  `ready_transient_state_racing_complete_restart_never_panics`.
+
+In both histories the model returns no answer where production would wait or
+go around its loop, and it collapses `Unloading` and `Loading` into one
+transient publication.
 
 ### LC-07 — Conditional eventual convergence
 
@@ -398,7 +410,7 @@ four-actor scenario (4) declares `max_branches = 48` and a default
 `preemption_bound = 3`, overridable through
 `CORDIS_LOOM_INERTIA_PREEMPTION_BOUND` (the correctness-assurance lane runs 4;
 see *Deeper Inertia range*); it is bounded coverage, not an
-unbounded/exhaustive claim. The smaller LC-06 history model declares
+unbounded/exhaustive claim. The smaller LC-06 history models share
 `max_threads = 3` and `max_branches = 64` with no permutation or duration cap.
 
 Model publication, revision commit, kick, inspection, acknowledgement, release,

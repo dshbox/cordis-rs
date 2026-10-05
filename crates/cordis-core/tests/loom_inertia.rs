@@ -477,34 +477,153 @@ fn releasing_kick_that_creates_second_holder_is_detected() {
     });
 }
 
+/// Modeled Fiber states for the LC-06 ready history. `STATE_V0` and `STATE_V1`
+/// stand for stable `FiberState::Active` before and after the single modeled
+/// Service mutation. `STATE_LOADING` stands for the transient lifecycle states
+/// (`Loading` / `Unloading`) that a holder publishes only while it owns the
+/// slot.
+const STATE_V0: usize = 0;
+const STATE_V1: usize = 1;
+const STATE_LOADING: usize = 2;
+/// Radix that packs `(sequence, state)` into one state-publication word.
+const STATE_RADIX: usize = 4;
+
+/// One state publication: the published state and the total publication
+/// sequence that identifies it. A restart republishes the same stable state,
+/// so only the sequence tells two publications of `STATE_V0` apart.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct StatePublication {
+    state: usize,
+    sequence: usize,
+}
+
+impl StatePublication {
+    fn unpack(word: usize) -> Self {
+        Self {
+            state: word % STATE_RADIX,
+            sequence: word / STATE_RADIX,
+        }
+    }
+
+    fn pack(self) -> usize {
+        self.sequence * STATE_RADIX + self.state
+    }
+
+    /// Oracle-only bitset member for this publication.
+    fn bit(self) -> usize {
+        1 << self.sequence
+    }
+}
+
+/// Whether the modeled ready keeps production's publication-sequence recheck.
+/// `Omitted` exists only for the negative control.
+#[derive(Clone, Copy)]
+enum SequenceRecheck {
+    Production,
+    Omitted,
+}
+
 /// Reduced LC-06 state shared by the ready-history tests.
 ///
-/// `published_epoch` is oracle-only history: it marks the semantic publication
-/// point after the target write in the ServiceStore critical section. The
-/// production decision never reads it. All protocol decisions use only the same
-/// ingredients as production: arbitration state, committed/settled revisions,
-/// and the published Fiber state version.
+/// Production mapping (paths under `crates/cordis-core/src/fiber/`):
+///
+/// - `slot`, `committed`, `settled`: `InertiaSlot`'s arbitration word and
+///   `recheck_committed` / `recheck_settled` revisions (`inertia.rs`).
+/// - `state`: the Fiber's `StatePublication` cell (`mod.rs`; inner fields at
+///   L124-L131). Production keeps `current` and the total `sequence` under
+///   one mutex: `publish` (L160-L179) advances both in one critical section
+///   and `observe` (L186-L189) reads them as one pair. The model packs the
+///   pair into one SeqCst word, so `publish` is one read-modify-write on it and
+///   `observe` is one load. That keeps the pair atomic as the mutex does, and
+///   it adds no synchronization edge that the production lock does not
+///   already provide.
+///
+/// Oracle-only history, which no protocol decision reads:
+///
+/// - `published_epoch` marks the semantic publication point after the target
+///   write in the ServiceStore critical section.
+/// - `quiescent_states` is a bitset over state-publication sequences. See
+///   `assert_ready_answer_had_quiescent_point`.
+///
+/// All protocol decisions use only the same ingredients as production:
+/// arbitration state, committed/settled revisions, and the published Fiber
+/// state with its publication sequence.
 struct ReadyHistoryModel {
     slot: AtomicUsize,
     committed: AtomicUsize,
     settled: AtomicUsize,
-    state_version: AtomicUsize,
+    state: AtomicUsize,
     published_epoch: AtomicUsize,
+    quiescent_states: AtomicUsize,
 }
 
 impl ReadyHistoryModel {
     fn new() -> Self {
+        let initial = StatePublication {
+            state: STATE_V0,
+            sequence: 0,
+        };
         Self {
             slot: AtomicUsize::new(IDLE),
             committed: AtomicUsize::new(0),
             settled: AtomicUsize::new(0),
-            state_version: AtomicUsize::new(0),
+            state: AtomicUsize::new(initial.pack()),
             published_epoch: AtomicUsize::new(0),
+            // The Fiber starts quiescent with its initial publication current.
+            quiescent_states: AtomicUsize::new(initial.bit()),
         }
     }
 
     fn has_committed_recheck(&self) -> bool {
         self.committed.load(Ordering::SeqCst) != self.settled.load(Ordering::SeqCst)
+    }
+
+    /// `StatePublication::publish` (`mod.rs` L160-L179), reached through
+    /// `Fiber::transition` (L597). Like production, publishing the current
+    /// state is a no-op that leaves the sequence alone; this happens when a
+    /// second holder pass re-converges an already-converged target. Only the
+    /// current slot holder publishes in these models, so no second publisher
+    /// can interleave with this read-modify-write, matching the production
+    /// critical section.
+    fn publish(&self, next: usize) -> Option<StatePublication> {
+        self.state
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |word| {
+                let current = StatePublication::unpack(word);
+                (current.state != next).then(|| {
+                    StatePublication {
+                        state: next,
+                        sequence: current.sequence + 1,
+                    }
+                    .pack()
+                })
+            })
+            .ok()
+            .map(|previous| StatePublication {
+                state: next,
+                sequence: StatePublication::unpack(previous).sequence + 1,
+            })
+    }
+
+    /// `StatePublication::observe` (`mod.rs` L186-L189).
+    fn observe(&self) -> StatePublication {
+        StatePublication::unpack(self.state.load(Ordering::SeqCst))
+    }
+
+    /// `StatePublication::sequence` (`mod.rs` L191-L193).
+    fn sequence(&self) -> usize {
+        self.observe().sequence
+    }
+
+    /// Clean-probe tail of `InertiaSlot::exit_recheck` (`inertia.rs`
+    /// L296-L342): publish RELEASING (L304), acknowledge the inspected revision
+    /// (L322), then CAS RELEASING -> IDLE (L323-L328). LC-03 and LC-05 model
+    /// the drift and racing-kick arms that these finite histories never take.
+    fn release_after_clean_probe(&self, revision: usize) {
+        self.slot.store(RELEASING, Ordering::SeqCst);
+        self.settled.store(revision, Ordering::SeqCst);
+        self.slot
+            .compare_exchange(RELEASING, IDLE, Ordering::SeqCst, Ordering::SeqCst)
+            .expect("the finite LC-06 model has no second release claimant");
     }
 
     /// One already-proved Service semantic commit. LC-03 separately models the
@@ -518,14 +637,43 @@ impl ReadyHistoryModel {
 
     /// One finite successful holder pass for the single modeled mutation. LC-05
     /// separately proves release/kick authority races; here a winner publishes
-    /// state before acknowledging the revision and releasing arbitration.
+    /// state before acknowledging the revision and releasing arbitration. This
+    /// pass publishes only its final state; the restart history below carries
+    /// the transient publication.
     fn settle_claimed_mutation(&self) {
-        self.state_version.store(1, Ordering::SeqCst);
-        self.slot.store(RELEASING, Ordering::SeqCst);
-        self.settled.store(1, Ordering::SeqCst);
+        self.publish(STATE_V1);
+        self.release_after_clean_probe(1);
+    }
+
+    /// One complete restart-like holder pass for the LC-06 sequence history.
+    ///
+    /// Production: `FiberHandle::restart` (`mod.rs` L1726) enters
+    /// `InertiaSlot::restart_pass` (`inertia.rs` L596-L643), which claims the
+    /// slot (L601; `claim` CASes IDLE -> ACTIVE at L206-L225) and reads the
+    /// committed revision (L615). `restart_committed` (L649-L671) then runs
+    /// `settle_once`, which publishes `Unloading` (`mod.rs` L908), `Loading`
+    /// (L947) and, after a successful apply, `Active` (L966). A clean
+    /// `exit_recheck` releases the slot.
+    ///
+    /// The model collapses `Unloading` and `Loading` into one transient
+    /// publication. Both are published only while the slot is held, and one
+    /// transient publication already opens the window that the sequence
+    /// recheck guards. The restart re-applies the same target, so its final
+    /// state equals the state it replaced.
+    fn restart_pass(&self) {
         self.slot
-            .compare_exchange(RELEASING, IDLE, Ordering::SeqCst, Ordering::SeqCst)
-            .expect("the finite LC-06 model has no second release claimant");
+            .compare_exchange(IDLE, ACTIVE, Ordering::SeqCst, Ordering::SeqCst)
+            .expect("no other modeled actor claims the slot in the restart history");
+        let revision = self.committed.load(Ordering::SeqCst);
+        self.publish(STATE_LOADING);
+        let last = self
+            .publish(STATE_V0)
+            .expect("the restart's stable state replaces its transient state");
+        // Oracle-only: `last` becomes current at a quiescent point at the
+        // releasing CAS. Recording it before the release can only make the
+        // recorded quiescent window start earlier than the real one.
+        self.quiescent_states.fetch_or(last.bit(), Ordering::SeqCst);
+        self.release_after_clean_probe(revision);
     }
 
     /// Best-effort acceleration for the one modeled obligation. `false` means
@@ -547,10 +695,23 @@ impl ReadyHistoryModel {
         }
     }
 
-    /// Phase-1 model of production ready's non-blocking acceptance decision.
-    /// Busy/releasing schedules return `None`; full waiting and lost-wakeup
-    /// progress are intentionally deferred to Phase 2.
-    fn try_ready_acceptance(&self) -> Option<usize> {
+    /// Phase-1 model of production ready's non-blocking acceptance decision,
+    /// in the order of one `FiberHandle::ready` loop iteration (`mod.rs`
+    /// L1613-L1656):
+    ///
+    /// 1. drive an outstanding committed recheck (L1617-L1621);
+    /// 2. wait for arbitration IDLE (L1622);
+    /// 3. observe the state together with its sequence (L1625);
+    /// 4. idle / committed-recheck test (L1628-L1630);
+    /// 5. publication-sequence recheck (L1635-L1637);
+    /// 6. answer (L1638-L1655).
+    ///
+    /// Where production would wait or go around the loop (steps 1, 2, 4 and
+    /// 5), the model returns `None`; full waiting, retry and lost-wakeup
+    /// progress are intentionally deferred to Phase 2. The answer is returned
+    /// without production's `unreachable!` on a transient state (L1652-L1654),
+    /// so the test oracle judges it.
+    fn try_ready_acceptance(&self, recheck: SequenceRecheck) -> Option<StatePublication> {
         if self.has_committed_recheck() && !self.kick_once() {
             return None;
         }
@@ -558,9 +719,14 @@ impl ReadyHistoryModel {
             return None;
         }
 
-        let observed_state = self.state_version.load(Ordering::SeqCst);
-        (self.slot.load(Ordering::SeqCst) == IDLE && !self.has_committed_recheck())
-            .then_some(observed_state)
+        let observed = self.observe();
+        if self.slot.load(Ordering::SeqCst) != IDLE || self.has_committed_recheck() {
+            return None;
+        }
+        if matches!(recheck, SequenceRecheck::Production) && self.sequence() != observed.sequence {
+            return None;
+        }
+        Some(observed)
     }
 
     fn mutation_kick_once(&self) {
@@ -605,18 +771,18 @@ fn ready_return_has_a_quiescent_linearization_point() {
                 // valid version-0 quiescent point at invocation; version 1 means
                 // the mutation's semantic publication already preceded it.
                 let published_at_invocation = model.published_epoch.load(Ordering::SeqCst);
-                let Some(returned) = model.try_ready_acceptance() else {
+                let Some(returned) = model.try_ready_acceptance(SequenceRecheck::Production) else {
                     // This schedule reached a busy/releasing point. Production
                     // ready would wait/retry; Phase 2 models that progress.
                     return;
                 };
 
-                match returned {
-                    0 => assert_eq!(
+                match returned.state {
+                    STATE_V0 => assert_eq!(
                         published_at_invocation, 0,
                         "ready returned pre-mutation state although publication preceded invocation"
                     ),
-                    1 => {
+                    STATE_V1 => {
                         // `try_ready_acceptance` accepted version 1 only after its own
                         // IDLE + no-pending checks. Do not inspect current state
                         // again here: a later mutation may legally start after
@@ -665,9 +831,9 @@ fn ready_that_treats_idle_as_quiescent_is_detected() {
                 while model.slot.load(Ordering::SeqCst) != IDLE {
                     thread::yield_now();
                 }
-                let returned = model.state_version.load(Ordering::SeqCst);
+                let returned = model.observe().state;
 
-                if returned == 0 && published_at_invocation == 1 {
+                if returned == STATE_V0 && published_at_invocation == 1 {
                     panic!("stale ready return has no quiescent linearization point");
                 }
             })
@@ -676,6 +842,107 @@ fn ready_that_treats_idle_as_quiescent_is_detected() {
         mutation.join().unwrap();
         ready.join().unwrap();
     });
+}
+
+/// LC-06 oracle for the publication-sequence history.
+///
+/// A ready answer is stale unless the answered publication was current at some
+/// point inside the invocation `[I, R]` at which the Fiber was semantically
+/// quiescent (`slot == IDLE && committed == settled`). In the restart history
+/// no Service mutation commits, so quiescence begins only at model start or at
+/// a holder's releasing CAS, and ends at the next claim. Each publication is
+/// therefore current while quiescent during at most one window `[q, e)`: `q` is
+/// model start (initial publication) or the release of the pass that published
+/// it, and `e` is no later than its supersession by the next publication. A
+/// transient publication has no such window, because its holder publishes a
+/// stable state before releasing. The answer is legal exactly when its window
+/// meets the invocation: `q <= R` and `e > I`.
+///
+/// The history over-approximates the window, so the oracle may accept more
+/// than the exact window but never rejects a legal answer:
+///
+/// - `q <= R`: the restart pass records `q` in `quiescent_states` before its
+///   releasing CAS, which is no later than the real start. The ready actor
+///   reads that bitset at return.
+/// - `e > I`: supersession is exact, because the ready actor reads the current
+///   publication sequence at invocation. The answer was not yet superseded at
+///   `I` when its sequence is no lower than that one.
+///
+/// A transient answer is checked first, so it fails with its own message.
+fn assert_ready_answer_had_quiescent_point(
+    answer: StatePublication,
+    sequence_at_invocation: usize,
+    quiescent_at_return: usize,
+) {
+    assert_ne!(
+        answer.state, STATE_LOADING,
+        "stale ready answer: transient state escaped ready"
+    );
+    assert!(
+        quiescent_at_return & answer.bit() != 0 && answer.sequence >= sequence_at_invocation,
+        "stale ready answer: publication {answer:?} was not current at any quiescent point inside the invocation"
+    );
+}
+
+/// The restart history shared by the LC-06 sequence model and its negative
+/// control. One restart-like pass (claim -> publish transient -> publish
+/// stable -> release) races one ready actor. The whole pass can run between
+/// ready's state observation and its idle recheck. The idle recheck then passes,
+/// and only the publication-sequence recheck tells the stale observation from a
+/// current one.
+///
+/// Layer-C counterpart: the real Tokio regression
+/// `fiber::tests::ready_transient_state_racing_complete_restart_never_panics`
+/// (`mod.rs` L1868-L1932) drives the same five steps with probes.
+fn ready_restart_history(recheck: SequenceRecheck) {
+    let model = Arc::new(ReadyHistoryModel::new());
+
+    let restart = {
+        let model = model.clone();
+        thread::spawn(move || model.restart_pass())
+    };
+
+    let ready = {
+        let model = model.clone();
+        thread::spawn(move || {
+            // Oracle-only invocation and return history.
+            let sequence_at_invocation = model.sequence();
+            let Some(answer) = model.try_ready_acceptance(recheck) else {
+                // Busy, releasing or superseded observation. Production ready
+                // would wait/retry; Phase 2 models that progress.
+                return;
+            };
+            let quiescent_at_return = model.quiescent_states.load(Ordering::SeqCst);
+            assert_ready_answer_had_quiescent_point(
+                answer,
+                sequence_at_invocation,
+                quiescent_at_return,
+            );
+        })
+    };
+
+    restart.join().unwrap();
+    ready.join().unwrap();
+}
+
+/// LC-06 publication-sequence model (#248). With production's sequence
+/// recheck, every ready answer was current at a quiescent point inside its
+/// invocation, even when a complete restart pass lands between the state
+/// observation and the idle recheck.
+#[test]
+fn ready_answer_survives_a_complete_racing_restart_pass() {
+    lc06_model(|| ready_restart_history(SequenceRecheck::Production));
+}
+
+/// LC-06 negative control for the publication-sequence recheck. Without it,
+/// Loom finds the schedule from the real Tokio regression: ready observes an
+/// idle slot, the restart claims it and publishes the transient state, ready
+/// reads that state, the restart publishes its stable state and releases, and
+/// ready's idle recheck passes. Ready then answers the transient state.
+#[test]
+#[should_panic(expected = "stale ready answer: transient state escaped ready")]
+fn ready_without_sequence_recheck_is_detected() {
+    lc06_model(|| ready_restart_history(SequenceRecheck::Omitted));
 }
 
 /// Phase-1 scenario 1: two independent kicks compete from arbitration IDLE.
