@@ -89,6 +89,11 @@ recheck. A successful `RELEASING -> IDLE` CAS releases arbitration authority.
 A failed CAS observing `ACTIVE` means a racing kick asked the same holder to
 continue; it does not authorize a second driver.
 
+"Executor available" means the kicking caller runs inside a Tokio runtime.
+Since #164, the driver that an `IDLE` kick dispatches runs on the shared
+completion runtime rather than on the caller's runtime; the arbitration
+transitions above are unchanged.
+
 The production implementation deliberately panics on impossible arbitration
 word values. Framework invariant panics from detached convergence work are
 reported and then resumed; no synthetic `IDLE` recovery is allowed.
@@ -96,7 +101,11 @@ reported and then resumed; no synthetic `IDLE` recovery is allowed.
 ## Production transition mapping at Phase 1 start
 
 Source inspection for #99/#101 established the concrete Service mutation order
-that the model must represent. ADR 0031's semantic commit is now implemented as:
+that the model must represent. These maps were last resynced with production at
+`09607b1` (#246); mechanisms that production has and the reduced Loom models do
+not are listed under
+[Production mechanisms not represented by the Loom models](#production-mechanisms-not-represented-by-the-loom-models).
+ADR 0031's semantic commit is now implemented as:
 
 ```text
 Active late provide:
@@ -109,7 +118,8 @@ Active late provide:
 
 Visible remove:
     ServiceStore lock
-    -> validate exact occurrence / visibility
+    -> validate exact occurrence
+    -> owner's Service-mutation gate: validate generation admission / visibility
     -> discover complete affected set
     -> commit each dependent recheck revision
     -> remove the visible occurrence
@@ -135,24 +145,101 @@ complete its initial target read through the locked ServiceStore until the
 mutation is visible, so it follows the other half of ADR 0031's race law.
 
 The semantic-commit seam may nest only bookkeeping synchronization in the proved
-direction `ServiceStore -> DependencyIndex/Registry`. Fallback Registry snapshots
-retain every cloned Fiber until the ServiceStore lock is released so filtering
-cannot run a potentially last-reference Fiber/plugin/config destructor inside the
-critical section (ADR 0029). Settlement kicks remain outside all Service locks.
+direction `ServiceStore -> DependencyIndex/Registry`. Since #160, exact Service
+control (payload set and remove) also takes the owner Fiber's Service-mutation
+gate inside the ServiceStore lock; the terminal and generation-replacement
+claims take that gate without any Service lock, so exact Service control
+serializes with the synchronous generation-close claim. Fallback Registry
+snapshots retain every cloned Fiber until the ServiceStore lock is released so
+filtering cannot run a potentially last-reference Fiber/plugin/config destructor
+inside the critical section (ADR 0029). Settlement kicks remain outside all Service locks.
 
 `FiberHandle::ready()` currently maps to the observer side as:
 
 ```text
-if committed != settled:
-    kick
-wait for arbitration IDLE
-observe FiberState
-return only if IDLE && committed == settled
-otherwise retry
+loop:
+    if committed != settled:
+        kick
+    wait for arbitration IDLE
+    (state, sequence) := observe FiberState and its publication sequence
+    if slot != IDLE || committed != settled:
+        retry
+    if current publication sequence != sequence:
+        retry
+    match state:
+        Failed:                       return the parked failure;
+                                      retry if a newer settle already cleared it
+        Active | Pending | Disposed:  return state
+        Loading | Unloading:          framework invariant panic (unreachable)
 ```
+
+The publication sequence lives beside the per-state revisions in the Fiber's
+state-publication cell and advances on every state publication. The sequence
+recheck (04f95ed, #214) exists because a complete racing lifecycle pass (claim
+-> publish -> release) can fit between `ready()`'s arbitration-idle wait and its
+idle recheck, so the state read in between may describe an older transaction.
+In the real Tokio regression
+`ready_transient_state_racing_complete_restart_never_panics`, a restart claims
+the slot after `ready()` observed idle, `ready()` reads the restart's transient
+`Loading`, and the restart publishes `Active` and releases before the idle
+recheck. The idle/revision test then passes; without the sequence recheck
+`ready()` would answer from the stale transient observation. Only an
+observation that stayed current across the idle recheck may answer.
+
+The `Failed` branch reads the parked failure separately from the state
+observation. A newer settle may clear that failure after the state read, so an
+empty failure slot sends `ready()` around the loop instead of answering; the
+real Tokio regression is `ready_failed_state_racing_successful_restart_never_panics`.
 
 The model must validate the interleavings around those separate observations; the
 mapping above is not itself a claim that they form one atomic snapshot.
+
+Committed dispose and typed-removal owners leave their caller at the first
+`Pending` (f12e91a, #237). `Fiber::dispose` enters `CallerDriven` (`effect.rs`)
+immediately after the terminal claim, with no await in between; the caller polls
+the owner inline until its first `Pending`, then moves the same pinned future
+into one framework task and awaits only an outcome relay. The review guide's
+[overlap matrix row and `CallerDriven` note](lifecycle-concurrency-review-guide.md#lifecycle-overlap--cancellation-evidence-matrix)
+record the call sites, the Tokio evidence, and why no reduced Loom model covers
+this hand-off.
+
+## Production mechanisms not represented by the Loom models
+
+The reduced models in `loom_inertia.rs` and `loom_era.rs` deliberately omit
+production detail. This list names the omissions in mapped mechanisms known at
+the last resync, so that a passing model is not read as covering them. Each
+entry names the real Tokio (Layer C) evidence that covers it today and, where
+one exists, the ticket that would add model coverage; that ticket removes its
+entry when it lands. Keep this list current when a mapped mechanism changes.
+
+- **Era offer/accept window (ER-06/ER-07).** On success, production sends an
+  `EraHandoff` that still holds an armed `EraHandoffGuard` through a oneshot;
+  only the receiving caller's `EraHandoff::accept` disarms it. If the receiver
+  is dropped after a successful send but before `accept`, the guard's `Drop`
+  detaches `cleanup_undelivered_successor`. The model's
+  `HandoffOwnership::offer` CASes `WAITING -> DELIVERED` directly, so the
+  model's "delivered" corresponds to production's "accepted" and the
+  offered-but-not-accepted state is absent. Tokio evidence:
+  `fiber::era::tests::unconsumed_success_offer_cleans_the_offered_successor`,
+  which exercises one schedule. Model coverage: #247.
+- **`ready()` publication-sequence recheck (LC-06).** `ReadyHistoryModel` has
+  no publication-sequence equivalent, and its single holder pass publishes only
+  the final state, so the complete claim -> publish transient -> publish final
+  -> release window described above cannot be expressed. The LC-06 models
+  therefore do not distinguish a `ready()` with the recheck from one without
+  it. Tokio evidence: `ready_transient_state_racing_complete_restart_never_panics`.
+  Model coverage: #248.
+- **`ready()` `Failed`-branch failure read (LC-06).** The model has no
+  `Failed` state or parked failure, so the race between the state read and a
+  newer settle clearing the failure is not modeled. Tokio evidence:
+  `ready_failed_state_racing_successful_restart_never_panics`. No model ticket;
+  #248 leaves it out of scope.
+- **First-`Pending` committed-owner hand-off.** No Loom model covers
+  `CallerDriven`. Tokio evidence: `held_caller_completion.rs` and the other
+  tests listed in the review guide's overlap matrix. The review guide argues
+  that this single-owner hand-off has no interleaving for a reduced Loom model
+  to explore; the optional TLA+ pilot (#251) would model the responsibility
+  transfer instead.
 
 ## Phase 1 questions
 
@@ -306,10 +393,12 @@ Current evidence maps to all five scenarios: the two-IDLE-kicker CAS model cover
 (1); LC-05 release/kick authority covers (2); LC-06 ready history covers (3);
 the bounded two-mutator inspection/acknowledgement model covers (4); and the
 off-runtime durable-obligation finite-drain model covers (5). The larger
-four-actor scenario (4) declares `preemption_bound = 2` and `max_branches = 48`;
-it is bounded coverage, not an unbounded/exhaustive claim. The smaller LC-06
-history model declares `max_threads = 3` and `max_branches = 64` with no
-permutation or duration cap.
+four-actor scenario (4) declares `max_branches = 48` and a default
+`preemption_bound = 3`, overridable through
+`CORDIS_LOOM_INERTIA_PREEMPTION_BOUND` (the correctness-assurance lane runs 4;
+see *Deeper Inertia range*); it is bounded coverage, not an
+unbounded/exhaustive claim. The smaller LC-06 history model declares
+`max_threads = 3` and `max_branches = 64` with no permutation or duration cap.
 
 Model publication, revision commit, kick, inspection, acknowledgement, release,
 and observer reads as distinct scheduling points. Do not collapse
@@ -492,7 +581,10 @@ outside Tokio itself:
 - an undelivered successful candidate remains framework-owned through the
   `EraHandoffGuard`/oneshot boundary: cancellation-first assigns exactly one
   cleanup responsibility, while handoff-first disarms framework cleanup and a
-  later caller cancellation cannot reclaim the published successor;
+  later caller cancellation cannot reclaim the published successor (the model's
+  handoff stands for production's `accept`; the offered-but-not-accepted window
+  is listed under
+  [Production mechanisms not represented by the Loom models](#production-mechanisms-not-represented-by-the-loom-models));
 - negative controls detect both an orphaned cancellation-first cleanup and an
   illegal post-handoff reclaim.
 
@@ -846,9 +938,11 @@ Those can proceed separately after the concurrency evidence has a credible core.
   control that consumes the revision without a driver leaves stale state and is
   detected.
 - The two-mutator history uses four actors with `max_branches = 48` and
-  `preemption_bound = 2`. Any intermediate acknowledgement is permitted only
-  when the holder's inspected target covers the observed revision; after both
-  mutations stop, one explicit finite drain reaches revision/target 2. The
+  `preemption_bound = 2` (the Phase-1 closeout bound; #151 later raised the
+  default to 3, with 4 in the assurance lane). Any intermediate
+  acknowledgement is permitted only when the holder's inspected target covers
+  the observed revision; after both mutations stop, one explicit finite drain
+  reaches revision/target 2. The
   unbounded variant was intentionally rejected after its state space failed to
   complete within the local execution window.
 - Layer B was evaluated and rejected for Phase 1: sharing actual atomic
