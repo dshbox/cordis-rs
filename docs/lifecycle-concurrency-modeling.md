@@ -391,8 +391,9 @@ exploration range rather than merely exhausting a time budget.
 
 Current evidence maps to all five scenarios: the two-IDLE-kicker CAS model covers
 (1); LC-05 release/kick authority covers (2); LC-06 ready history covers (3);
-the bounded two-mutator inspection/acknowledgement model covers (4); and the
-off-runtime durable-obligation finite-drain model covers (5). The larger
+the bounded two-mutator inspection/acknowledgement model covers (4), with an
+intermediate-acknowledgement oracle and an unguarded-holder negative control;
+and the off-runtime durable-obligation finite-drain model covers (5). The larger
 four-actor scenario (4) declares `max_branches = 48` and a default
 `preemption_bound = 3`, overridable through
 `CORDIS_LOOM_INERTIA_PREEMPTION_BOUND` (the correctness-assurance lane runs 4;

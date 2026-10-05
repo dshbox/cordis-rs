@@ -837,8 +837,33 @@ fn off_runtime_commit_must_not_be_consumed_without_drive() {
 /// inspection and acknowledgement. Any acknowledgement the holder actually
 /// publishes must be covered by its inspected target version; after both
 /// mutations stop, one finite final drain reaches revision 2.
+///
+/// The holder returns each intermediate acknowledgement as an oracle event
+/// `(inspected, acknowledged_revision)` through its join handle. The protocol
+/// never reads these events, and they add no synchronization beyond the join
+/// the model already performs, so the oracle introduces no happens-before edge
+/// absent from production. The events are checked after the join and before
+/// the final drain, which overwrites `settled` but cannot erase them.
 #[test]
 fn two_mutations_preserve_revision_inspection_coverage() {
+    two_mutator_model(|inspected, observed_revision| inspected >= observed_revision);
+}
+
+/// Scenario 4 negative control. This deliberately removes the holder's
+/// covering-inspection guard: it acknowledges whatever revision it observes
+/// after its target inspection, even when a mutation committed in between.
+/// The final drain still reaches revision 2, so only the intermediate
+/// acknowledgement oracle can fail. Loom must find that interleaving within the
+/// same declared range as the positive model.
+#[test]
+#[should_panic(expected = "intermediate acknowledgement outran its target inspection")]
+fn unguarded_intermediate_acknowledgement_is_detected() {
+    two_mutator_model(|_inspected, _observed_revision| true);
+}
+
+/// Shared declared range and history for scenario 4. `acknowledgement_permitted`
+/// is the holder's decision `(inspected, observed_revision) -> acknowledge?`.
+fn two_mutator_model(acknowledgement_permitted: fn(usize, usize) -> bool) {
     let mut builder = loom::model::Builder::new();
     builder.max_threads = 4; // main + two mutators + holder
     builder.max_branches = 48;
@@ -859,7 +884,7 @@ fn two_mutations_preserve_revision_inspection_coverage() {
     eprintln!(
         "CORDIS_LOOM_RANGE actors=4 max_threads=4 max_branches=48 preemption_bound={preemption_bound} max_permutations=none max_duration=none"
     );
-    builder.check(|| {
+    builder.check(move || {
         let committed = Arc::new(AtomicUsize::new(0));
         let settled = Arc::new(AtomicUsize::new(0));
         let target_version = Arc::new(Mutex::new(0usize));
@@ -882,21 +907,41 @@ fn two_mutations_preserve_revision_inspection_coverage() {
             let settled = settled.clone();
             let target_version = target_version.clone();
             thread::spawn(move || {
+                // Oracle-only record, local to the holder until join.
+                let mut acknowledgements = Vec::new();
                 let inspected = *target_version.lock().unwrap();
                 thread::yield_now();
                 let observed_revision = committed.load(Ordering::SeqCst);
 
                 // If a newer commit landed after the target inspection, the
                 // production holder must re-inspect rather than acknowledge it.
-                if inspected >= observed_revision {
+                if acknowledgement_permitted(inspected, observed_revision) {
                     settled.store(observed_revision, Ordering::SeqCst);
+                    acknowledgements.push((inspected, observed_revision));
                 }
+                acknowledgements
             })
         };
 
         a.join().unwrap();
         b.join().unwrap();
-        holder.join().unwrap();
+        let acknowledgements = holder.join().unwrap();
+
+        // Intermediate acknowledgement oracle, checked before the final drain
+        // overwrites `settled`.
+        for &(inspected, acknowledged_revision) in &acknowledgements {
+            assert!(
+                acknowledged_revision <= inspected,
+                "intermediate acknowledgement outran its target inspection: revision {acknowledged_revision}, target version {inspected}"
+            );
+        }
+        assert_eq!(
+            settled.load(Ordering::SeqCst),
+            acknowledgements
+                .last()
+                .map_or(0, |&(_, acknowledged_revision)| acknowledged_revision),
+            "oracle events diverged from the holder's published acknowledgement"
+        );
 
         // Explicit progress assumption for LC-07's finite drain: mutations have
         // stopped and a legitimate holder gets one final covering inspection.
