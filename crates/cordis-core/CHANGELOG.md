@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+## [0.6.2](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.6.1...cordis-core-v0.6.2) - 2026-10-05
+
+### Other
+
+- *(core)* model Era handoff slot with a loom mutex instead of unsafe
+- *(core)* split the Era handoff Loom model into offer / accept / cancel
+- *(core)* model ready() publication sequence in LC-06 history ([#248](https://github.com/dshbox/cordis-rs/pull/248))
+- *(core)* add intermediate-ack oracle to the two-mutator Loom model
+
 ## [0.6.1](https://github.com/dshbox/cordis-rs/compare/cordis-core-v0.6.0...cordis-core-v0.6.1) - 2026-09-30
 
 ### Other
