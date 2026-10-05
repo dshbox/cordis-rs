@@ -358,178 +358,358 @@ fn postclaim_closed_recheck_that_abandons_the_captured_recipe_is_detected() {
     });
 }
 
-const HANDOFF_WAITING: usize = 0;
-const HANDOFF_CANCELLED: usize = 1;
-const HANDOFF_DELIVERED: usize = 2;
+// ER-07 handoff: offer / accept / cancel.
+//
+// Production (`FiberHandle::era_swap` in `src/fiber/era.rs`) splits a
+// successful handoff into two stages. The committed replacement task builds
+// `EraHandoff { fiber_handle, guard }` around an armed `EraHandoffGuard` and
+// offers it with `let _ = send.send(Ok(offer));`. A successful send transfers no
+// ownership: the armed guard travels inside the offered message. Only the
+// caller's `handoff.accept()` after `receive.await` disarms it. Dropping the
+// offered message unaccepted, whether the sender gets it back from a closed
+// receiver or a dropped receiver releases it, runs `Drop for EraHandoffGuard`,
+// which detaches `cleanup_undelivered_successor`.
+//
+// The model keeps the real message ownership: the guard is a value with a
+// `Drop`, and it moves through a reduced oneshot slot. The slot's loom `Mutex`
+// stands in for the oneshot's send-to-receive synchronization. The oneshot's
+// own internals are trusted Tokio behavior and are not modeled here; this model
+// is about guard ownership across offer, accept and cancellation.
 
-/// Reduced ownership model for the `EraHandoffGuard`/oneshot seam. A prepared
-/// successor starts framework-owned. The caller and framework race only over who
-/// crosses the handoff boundary first; after either linearization, ownership is
-/// no longer shared.
-struct HandoffOwnership {
-    state: AtomicUsize,
-    cleanup_claims: AtomicUsize,
-    resident: AtomicBool,
+/// Oracle-only facts about the one prepared successor. The protocol never reads
+/// them. They use `Relaxed` accesses, which create no happens-before edge, and
+/// the main thread reads them only after both joins.
+struct SuccessorFacts {
+    cleanups: AtomicUsize,
 }
 
-impl HandoffOwnership {
+impl SuccessorFacts {
     fn new() -> Self {
         Self {
-            state: AtomicUsize::new(HANDOFF_WAITING),
-            cleanup_claims: AtomicUsize::new(0),
-            resident: AtomicBool::new(true),
+            cleanups: AtomicUsize::new(0),
         }
     }
 
-    /// Framework completes the offer. If the receiver already disappeared, the
-    /// guard owns exactly one terminal cleanup; otherwise the successor is
-    /// handed off and the guard is disarmed synchronously.
-    fn offer(&self) {
-        match self.state.compare_exchange(
-            HANDOFF_WAITING,
-            HANDOFF_DELIVERED,
-            Ordering::SeqCst,
-            Ordering::SeqCst,
-        ) {
-            Ok(_) => {}
-            Err(HANDOFF_CANCELLED) => {
-                self.cleanup_claims.fetch_add(1, Ordering::SeqCst);
-                self.resident.store(false, Ordering::SeqCst);
-            }
-            Err(other) => panic!("invalid handoff state {other}"),
+    /// One detached `cleanup_undelivered_successor`: the successor is disposed
+    /// and is no longer resident.
+    fn clean(&self) {
+        self.cleanups.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+/// `EraHandoffGuard`. Production's `successor: Option<Arc<Fiber>>` is reduced
+/// to the successor's oracle facts. `Some` means armed.
+struct HandoffGuard {
+    successor: Option<Arc<SuccessorFacts>>,
+}
+
+impl HandoffGuard {
+    /// `EraHandoffGuard::new`: the guard is armed when it is built.
+    fn armed(successor: Arc<SuccessorFacts>) -> Self {
+        Self {
+            successor: Some(successor),
         }
     }
 
-    /// Caller cancellation before delivery closes only the receive side. If
-    /// delivery already committed, the successor has escaped framework cleanup
-    /// ownership and cannot be reclaimed by cancellation.
-    fn cancel(&self) {
-        match self.state.compare_exchange(
-            HANDOFF_WAITING,
-            HANDOFF_CANCELLED,
-            Ordering::SeqCst,
-            Ordering::SeqCst,
-        ) {
-            Ok(_) | Err(HANDOFF_DELIVERED) => {}
-            Err(other) => panic!("invalid handoff state {other}"),
-        }
+    /// `EraHandoffGuard::disarm`: `self.successor.take()`.
+    fn disarm(mut self) {
+        self.successor.take();
     }
+}
 
-    /// Negative variant: receiver cancellation wins, but the framework drops
-    /// its cleanup responsibility instead of running the handoff guard.
-    fn offer_without_cancelled_cleanup(&self) {
-        let _ = self.state.compare_exchange(
-            HANDOFF_WAITING,
-            HANDOFF_DELIVERED,
-            Ordering::SeqCst,
-            Ordering::SeqCst,
-        );
-    }
-
-    /// Negative variant: cancellation after committed delivery incorrectly
-    /// reclaims a successor that already belongs to the caller.
-    fn cancel_and_reclaim_delivered(&self) {
-        if self.state.load(Ordering::SeqCst) == HANDOFF_DELIVERED {
-            self.cleanup_claims.fetch_add(1, Ordering::SeqCst);
-            self.resident.store(false, Ordering::SeqCst);
-        } else {
-            self.cancel();
+impl Drop for HandoffGuard {
+    /// `impl Drop for EraHandoffGuard`: an armed guard detaches
+    /// `cleanup_undelivered_successor` for its successor; a disarmed guard does
+    /// nothing. The `Option::take` makes the cleanup claim single-use.
+    fn drop(&mut self) {
+        if let Some(successor) = self.successor.take() {
+            successor.clean();
         }
     }
 }
 
-fn assert_resolved_handoff(handoff: &HandoffOwnership) {
-    match handoff.state.load(Ordering::SeqCst) {
-        HANDOFF_DELIVERED => {
-            assert_eq!(
-                handoff.cleanup_claims.load(Ordering::SeqCst),
-                0,
-                "delivered successor cannot retain framework cleanup ownership"
-            );
-            assert!(
-                handoff.resident.load(Ordering::SeqCst),
-                "delivered successor was reclaimed after handoff"
-            );
-        }
-        HANDOFF_CANCELLED => {
-            assert_eq!(
-                handoff.cleanup_claims.load(Ordering::SeqCst),
-                1,
-                "cancelled handoff must assign exactly one cleanup owner"
-            );
-            assert!(
-                !handoff.resident.load(Ordering::SeqCst),
-                "cancelled handoff left an undelivered successor resident"
-            );
-        }
-        other => panic!("handoff stayed unresolved in state {other}"),
+/// `EraHandoff { fiber_handle, guard }`, the offered message. The handle itself
+/// carries no cleanup authority, so the model keeps only the guard.
+struct EraOffer {
+    guard: HandoffGuard,
+}
+
+impl EraOffer {
+    /// `EraHandoff::accept`: `self.guard.disarm()` and return the handle. After
+    /// this the caller owns the successor and no framework cleanup remains.
+    fn accept(self) {
+        self.guard.disarm();
     }
 }
 
-/// ER-07: caller cancellation and framework handoff race to one linearized
-/// ownership result. Cancellation-first leaves exactly one cleanup obligation;
-/// handoff-first leaves the successor resident and no framework cleanup claim.
+/// Contents of the reduced oneshot slot.
+struct OfferSlot {
+    /// The offer stored by a successful send and not yet received.
+    offered: Option<EraOffer>,
+    /// The `Receiver` was dropped.
+    receiver_dropped: bool,
+}
+
+/// Reduced `tokio::sync::oneshot` carrying one `EraOffer`. The mutex stands in
+/// for the channel's send-to-receive synchronization; waker registration is
+/// omitted because the model's caller polls once instead of parking.
+struct OfferChannel {
+    slot: Mutex<OfferSlot>,
+}
+
+impl OfferChannel {
+    fn new() -> Self {
+        Self {
+            slot: Mutex::new(OfferSlot {
+                offered: None,
+                receiver_dropped: false,
+            }),
+        }
+    }
+
+    /// `Sender::send`: store the offer, or, if the receiver was already
+    /// dropped, refuse it and hand it back to the sender as `Err`.
+    fn send(&self, offer: EraOffer) -> Result<(), EraOffer> {
+        let mut slot = self.slot.lock().unwrap();
+        if slot.receiver_dropped {
+            return Err(offer);
+        }
+        slot.offered = Some(offer);
+        Ok(())
+    }
+
+    /// One poll of `receive.await`: take the offer if it was sent. Production's
+    /// `.await` consumes the receiver on `Ready`, so its later drop releases
+    /// nothing.
+    fn try_recv(&self) -> Option<EraOffer> {
+        self.slot.lock().unwrap().offered.take()
+    }
+
+    /// `Drop for Receiver`: mark the channel closed and drop any offer that was
+    /// already sent. Returns whether an offered message was released this way.
+    fn close(&self) -> bool {
+        let released = {
+            let mut slot = self.slot.lock().unwrap();
+            slot.receiver_dropped = true;
+            slot.offered.take()
+        };
+        let had_offer = released.is_some();
+        drop(released);
+        had_offer
+    }
+}
+
+/// Terminal ownership outcome, classified by the caller's own action.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HandoffOutcome {
+    /// The caller received the offer and called `accept`.
+    Accepted,
+    /// The receiver was dropped before the send; the sender gets the offer back.
+    CancelledBeforeOffer,
+    /// The receiver was dropped after the send and released the unaccepted offer.
+    CancelledAfterOffer,
+}
+
+impl HandoffOutcome {
+    const ALL: usize = 0b111;
+
+    fn bit(self) -> usize {
+        match self {
+            Self::Accepted => 0b001,
+            Self::CancelledBeforeOffer => 0b010,
+            Self::CancelledAfterOffer => 0b100,
+        }
+    }
+}
+
+/// Framework side, production success arm of the committed replacement task:
+/// `EraHandoffGuard::new(..)`, `EraHandoff { fiber_handle, guard }`, then
+/// `let _ = send.send(Ok(offer));`. A refused offer is dropped with its guard
+/// still armed. Returns whether the send succeeded, which is not acceptance.
+fn offer(channel: &OfferChannel, successor: &Arc<SuccessorFacts>) -> bool {
+    let offer = EraOffer {
+        guard: HandoffGuard::armed(successor.clone()),
+    };
+    channel.send(offer).is_ok()
+}
+
+/// Caller side: one poll of `receive.await` that, on `Ready`, runs
+/// `handoff.accept()` in the same poll, as production does. Otherwise the
+/// caller cancels: dropping the `era_swap` future drops the receiver. The
+/// close may land before the offer or after it.
+fn accept_or_cancel(channel: &OfferChannel, _successor: &Arc<SuccessorFacts>) -> HandoffOutcome {
+    if let Some(offer) = channel.try_recv() {
+        offer.accept();
+        return HandoffOutcome::Accepted;
+    }
+    if channel.close() {
+        HandoffOutcome::CancelledAfterOffer
+    } else {
+        HandoffOutcome::CancelledBeforeOffer
+    }
+}
+
+/// Negative variant: when the receiver already closed, the framework disarms
+/// the refused offer instead of letting its guard clean the successor.
+fn offer_disarming_a_refused_offer(
+    channel: &OfferChannel,
+    successor: &Arc<SuccessorFacts>,
+) -> bool {
+    let offer = EraOffer {
+        guard: HandoffGuard::armed(successor.clone()),
+    };
+    match channel.send(offer) {
+        Ok(()) => true,
+        Err(refused) => {
+            refused.guard.disarm();
+            false
+        }
+    }
+}
+
+/// Negative variant: treat a successful send as delivery, which is the earlier
+/// one-step model. The offer leaves with a disarmed guard and the framework
+/// cleans only a refused send, so a receiver dropped after the offer but before
+/// `accept` releases the offered message without cleanup.
+fn offer_treating_send_as_delivery(
+    channel: &OfferChannel,
+    successor: &Arc<SuccessorFacts>,
+) -> bool {
+    let offer = EraOffer {
+        guard: HandoffGuard { successor: None },
+    };
+    match channel.send(offer) {
+        Ok(()) => true,
+        Err(_refused) => {
+            successor.clean();
+            false
+        }
+    }
+}
+
+/// Negative variant: after `accept`, the caller's later cancellation still holds
+/// cleanup authority and reclaims the successor it now owns.
+fn accept_then_reclaim_on_cancel(
+    channel: &OfferChannel,
+    successor: &Arc<SuccessorFacts>,
+) -> HandoffOutcome {
+    let outcome = accept_or_cancel(channel, successor);
+    if outcome == HandoffOutcome::Accepted {
+        successor.clean();
+    }
+    outcome
+}
+
+/// Check one terminal state: exactly one owner, either the accepting caller
+/// (resident, no framework cleanup) or exactly one framework cleanup.
+fn assert_resolved_handoff(outcome: HandoffOutcome, offered: bool, successor: &SuccessorFacts) {
+    assert_eq!(
+        offered,
+        outcome != HandoffOutcome::CancelledBeforeOffer,
+        "the caller outcome disagrees with the send result"
+    );
+    let cleanups = successor.cleanups.load(Ordering::Relaxed);
+    match outcome {
+        HandoffOutcome::Accepted => assert_eq!(
+            cleanups, 0,
+            "accepted successor cannot retain framework cleanup ownership"
+        ),
+        HandoffOutcome::CancelledBeforeOffer => assert_eq!(
+            cleanups, 1,
+            "cancelled handoff must assign exactly one cleanup owner"
+        ),
+        HandoffOutcome::CancelledAfterOffer => assert_eq!(
+            cleanups, 1,
+            "offered but unaccepted successor must be cleaned exactly once by its armed guard"
+        ),
+    }
+    assert_eq!(
+        usize::from(outcome == HandoffOutcome::Accepted) + cleanups,
+        1,
+        "terminal handoff must have exactly one successor owner"
+    );
+}
+
+/// Shared ER-07 handoff range: main plus the framework offer and the caller,
+/// under `era_model`'s bounds. Returns the set of terminal outcomes reached
+/// across all explored schedules, as `HandoffOutcome::bit` flags.
+fn handoff_model(
+    framework: fn(&OfferChannel, &Arc<SuccessorFacts>) -> bool,
+    caller: fn(&OfferChannel, &Arc<SuccessorFacts>) -> HandoffOutcome,
+) -> usize {
+    // Plain `std` atomic outside the model: it records outcomes across
+    // executions and is never visible to the modeled threads.
+    let reached = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let recorded = reached.clone();
+    era_model(move || {
+        let successor = Arc::new(SuccessorFacts::new());
+        let channel = Arc::new(OfferChannel::new());
+        let offering = {
+            let channel = channel.clone();
+            let successor = successor.clone();
+            thread::spawn(move || framework(&channel, &successor))
+        };
+        let receiving = {
+            let channel = channel.clone();
+            let successor = successor.clone();
+            thread::spawn(move || caller(&channel, &successor))
+        };
+
+        let offered = offering.join().unwrap();
+        let outcome = receiving.join().unwrap();
+        assert_resolved_handoff(outcome, offered, &successor);
+        recorded.fetch_or(outcome.bit(), std::sync::atomic::Ordering::Relaxed);
+    });
+    reached.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// ER-07: framework offer, caller accept and caller cancellation race. Every
+/// terminal state has exactly one successor owner. Accept leaves the successor
+/// resident with no framework cleanup. Cancellation before the offer, and
+/// cancellation after the offer but before `accept`, each leave exactly one
+/// guard cleanup. The model must reach all three outcomes, so the
+/// offered-but-not-accepted state is explored, not assumed.
+///
+/// Real Tokio (Layer C) counterpart for the offered-but-not-accepted schedule:
+/// `fiber::era::tests::unconsumed_success_offer_cleans_the_offered_successor`.
 #[test]
 fn caller_cancellation_and_handoff_assign_one_successor_owner() {
-    era_model(|| {
-        let handoff = Arc::new(HandoffOwnership::new());
-        let offering = {
-            let handoff = handoff.clone();
-            thread::spawn(move || handoff.offer())
-        };
-        let cancelling = {
-            let handoff = handoff.clone();
-            thread::spawn(move || handoff.cancel())
-        };
-
-        offering.join().unwrap();
-        cancelling.join().unwrap();
-        assert_resolved_handoff(&handoff);
-    });
+    let reached = handoff_model(offer, accept_or_cancel);
+    assert_eq!(
+        reached,
+        HandoffOutcome::ALL,
+        "handoff model did not reach every terminal outcome"
+    );
 }
 
-/// ER-07 negative control: cancellation-first without guard cleanup leaves an
-/// undelivered successor resident and loses the committed cleanup obligation.
-/// Loom must find the schedule where cancellation wins before the bad offer.
+/// ER-07 negative control: cancellation before the offer, with the framework
+/// disarming the refused offer instead of cleaning, leaves an undelivered
+/// successor resident. Loom must find the schedule where the receiver closes
+/// before the send.
 #[test]
 #[should_panic(expected = "cancelled handoff must assign exactly one cleanup owner")]
 fn cancelled_handoff_without_framework_cleanup_is_detected() {
-    era_model(|| {
-        let handoff = Arc::new(HandoffOwnership::new());
-        let offering = {
-            let handoff = handoff.clone();
-            thread::spawn(move || handoff.offer_without_cancelled_cleanup())
-        };
-        let cancelling = {
-            let handoff = handoff.clone();
-            thread::spawn(move || handoff.cancel())
-        };
-
-        offering.join().unwrap();
-        cancelling.join().unwrap();
-        assert_resolved_handoff(&handoff);
-    });
+    handoff_model(offer_disarming_a_refused_offer, accept_or_cancel);
 }
 
-/// ER-07 negative control: once delivery commits, caller cancellation cannot
-/// regain cleanup authority over the published successor. Loom must find the
-/// schedule where delivery wins before the bad cancellation path.
+/// ER-07 negative control: once the caller accepts, a later caller
+/// cancellation cannot regain cleanup authority over the accepted successor.
+/// Loom must find the schedule where the offer lands before the caller's poll.
 #[test]
-#[should_panic(expected = "delivered successor cannot retain framework cleanup ownership")]
+#[should_panic(expected = "accepted successor cannot retain framework cleanup ownership")]
 fn cancellation_reclaiming_an_already_handed_off_successor_is_detected() {
-    era_model(|| {
-        let handoff = Arc::new(HandoffOwnership::new());
-        let offering = {
-            let handoff = handoff.clone();
-            thread::spawn(move || handoff.offer())
-        };
-        let cancelling = {
-            let handoff = handoff.clone();
-            thread::spawn(move || handoff.cancel_and_reclaim_delivered())
-        };
+    handoff_model(offer, accept_then_reclaim_on_cancel);
+}
 
-        offering.join().unwrap();
-        cancelling.join().unwrap();
-        assert_resolved_handoff(&handoff);
-    });
+/// ER-07 negative control for the offered-but-not-accepted state: a successful
+/// send is treated as delivery, so the offered message carries no armed guard.
+/// Loom must find the schedule where the caller's poll misses the offer, the
+/// send succeeds, and the receiver is then dropped, releasing the offer without
+/// cleanup.
+#[test]
+#[should_panic(
+    expected = "offered but unaccepted successor must be cleaned exactly once by its armed guard"
+)]
+fn offered_but_unaccepted_handoff_without_guard_cleanup_is_detected() {
+    handoff_model(offer_treating_send_as_delivery, accept_or_cancel);
 }

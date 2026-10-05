@@ -212,16 +212,6 @@ entry names the real Tokio (Layer C) evidence that covers it today and, where
 one exists, the ticket that would add model coverage; that ticket removes its
 entry when it lands. Keep this list current when a mapped mechanism changes.
 
-- **Era offer/accept window (ER-06/ER-07).** On success, production sends an
-  `EraHandoff` that still holds an armed `EraHandoffGuard` through a oneshot;
-  only the receiving caller's `EraHandoff::accept` disarms it. If the receiver
-  is dropped after a successful send but before `accept`, the guard's `Drop`
-  detaches `cleanup_undelivered_successor`. The model's
-  `HandoffOwnership::offer` CASes `WAITING -> DELIVERED` directly, so the
-  model's "delivered" corresponds to production's "accepted" and the
-  offered-but-not-accepted state is absent. Tokio evidence:
-  `fiber::era::tests::unconsumed_success_offer_cleans_the_offered_successor`,
-  which exercises one schedule. Model coverage: #247.
 - **`ready()` `Failed`-branch failure read (LC-06).** The model has no
   `Failed` state or parked failure, so the race between the state read and a
   newer settle clearing the failure is not modeled. Tokio evidence:
@@ -592,14 +582,20 @@ outside Tokio itself:
   reason to invalidate the recipe captured before admission; a negative control
   reproduces that self-refusal bug;
 - an undelivered successful candidate remains framework-owned through the
-  `EraHandoffGuard`/oneshot boundary: cancellation-first assigns exactly one
-  cleanup responsibility, while handoff-first disarms framework cleanup and a
-  later caller cancellation cannot reclaim the published successor (the model's
-  handoff stands for production's `accept`; the offered-but-not-accepted window
-  is listed under
-  [Production mechanisms not represented by the Loom models](#production-mechanisms-not-represented-by-the-loom-models));
-- negative controls detect both an orphaned cancellation-first cleanup and an
-  illegal post-handoff reclaim.
+  `EraHandoffGuard`/oneshot boundary. The model separates the framework's
+  offer (`send` succeeds; the guard is still armed inside the message), the
+  caller's `EraHandoff::accept` (disarms the guard), and caller cancellation
+  (the receiver is dropped), which may land before or after the offer. The
+  guard is a value with a `Drop`, carried by a reduced oneshot slot whose
+  mutex stands in for the oneshot's send-to-receive synchronization; Tokio's
+  oneshot internals are trusted rather than modeled. Accept leaves the
+  successor resident with no framework cleanup; cancellation before the offer,
+  and cancellation after the offer but before `accept`, each leave exactly one
+  guard cleanup; and accepted successors stay out of reach of a later caller
+  cancellation. The positive model checks that all three outcomes are reached;
+- negative controls detect an orphaned cancellation-before-offer cleanup, an
+  offered-but-unaccepted message dropped without guard cleanup (a successful
+  send treated as delivery), and an illegal reclaim after `accept`.
 
 Real Tokio coverage anchors ER-05 to the concrete implementation:
 `closed_source_refuses_without_respawn`,
@@ -627,10 +623,10 @@ Those tests establish that preclaim cancellation is no-effect and every
 postclaim await belongs to framework-owned completion rather than caller
 liveness.
 
-All twelve Era Loom tests use `max_threads = 3` and `max_branches = 64`, with no
-permutation or duration cap, so the declared finite range completes rather than
-ending on a search budget. Tokio notification and actual cleanup execution remain
-real-runtime evidence.
+All thirteen Era Loom tests use `max_threads = 3` and `max_branches = 64`, with
+no permutation or duration cap, so the declared finite range completes rather
+than ending on a search budget. Tokio notification and actual cleanup execution
+remain real-runtime evidence.
 
 ### Phase 3 convergence findings
 
