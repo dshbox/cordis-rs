@@ -6,7 +6,6 @@
 //! signaling; this layer models the Era-specific terminal claim and successor
 //! responsibility that run while/after that slot is owned.
 
-use loom::cell::UnsafeCell;
 use loom::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use loom::sync::{Arc, Mutex};
 use loom::thread;
@@ -371,16 +370,11 @@ fn postclaim_closed_recheck_that_abandons_the_captured_recipe_is_detected() {
 // receiver or a dropped receiver releases it, runs `Drop for EraHandoffGuard`,
 // which detaches `cleanup_undelivered_successor`.
 //
-// The model therefore keeps the real message ownership: the guard is a value
-// with a `Drop`, and it moves through a reduced oneshot. The oneshot keeps Tokio
-// 1.53's `VALUE_SENT`/`CLOSED` state-word protocol and memory orderings, so the
-// send/receive edge is the one production relies on. No mutex or `SeqCst`
-// oracle access is added on that path.
-
-/// Reduced `tokio::sync::oneshot::State` bit: `Sender::send` stored the offer.
-const VALUE_SENT: usize = 0b01;
-/// Reduced `tokio::sync::oneshot::State` bit: the `Receiver` was dropped.
-const CLOSED: usize = 0b10;
+// The model keeps the real message ownership: the guard is a value with a
+// `Drop`, and it moves through a reduced oneshot slot. The slot's loom `Mutex`
+// stands in for the oneshot's send-to-receive synchronization. The oneshot's
+// own internals are trusted Tokio behavior and are not modeled here; this model
+// is about guard ownership across offer, accept and cancellation.
 
 /// Oracle-only facts about the one prepared successor. The protocol never reads
 /// them. They use `Relaxed` accesses, which create no happens-before edge, and
@@ -448,80 +442,60 @@ impl EraOffer {
     }
 }
 
-/// Reduced `tokio::sync::oneshot` carrying one `EraOffer`. Waker bits are
-/// omitted: the model's caller polls once instead of parking.
-struct OfferChannel {
-    state: AtomicUsize,
-    value: UnsafeCell<Option<EraOffer>>,
+/// Contents of the reduced oneshot slot.
+struct OfferSlot {
+    /// The offer stored by a successful send and not yet received.
+    offered: Option<EraOffer>,
+    /// The `Receiver` was dropped.
+    receiver_dropped: bool,
 }
 
-// SAFETY: as in Tokio's oneshot, `value` is written only by the sender before
-// it publishes `VALUE_SENT`, taken back by the sender only after its CAS saw
-// `CLOSED` (so `VALUE_SENT` is never set), and otherwise taken only by the
-// receiver after it acquires `VALUE_SENT`. Loom's `UnsafeCell` checks these
-// accesses for causality in every explored schedule.
-unsafe impl Sync for OfferChannel {}
+/// Reduced `tokio::sync::oneshot` carrying one `EraOffer`. The mutex stands in
+/// for the channel's send-to-receive synchronization; waker registration is
+/// omitted because the model's caller polls once instead of parking.
+struct OfferChannel {
+    slot: Mutex<OfferSlot>,
+}
 
 impl OfferChannel {
     fn new() -> Self {
         Self {
-            state: AtomicUsize::new(0),
-            value: UnsafeCell::new(None),
+            slot: Mutex::new(OfferSlot {
+                offered: None,
+                receiver_dropped: false,
+            }),
         }
     }
 
-    /// `Sender::send`: store the offer, then `Inner::complete`'s
-    /// `State::set_complete` CAS (`AcqRel`/`Acquire`). If the receiver already
-    /// closed, the sender takes the offer back and returns it as `Err`.
+    /// `Sender::send`: store the offer, or, if the receiver was already
+    /// dropped, refuse it and hand it back to the sender as `Err`.
     fn send(&self, offer: EraOffer) -> Result<(), EraOffer> {
-        // SAFETY: `VALUE_SENT` is not set yet, so the receiver does not touch
-        // the cell.
-        self.value.with_mut(|slot| unsafe { *slot = Some(offer) });
-        let mut state = self.state.load(Ordering::Relaxed);
-        loop {
-            if state & CLOSED != 0 {
-                // SAFETY: the CAS never set `VALUE_SENT`, so the receiver will
-                // never access the cell.
-                let refused = self.value.with_mut(|slot| unsafe { (*slot).take() });
-                return Err(refused.expect("the sender stored its offer"));
-            }
-            match self.state.compare_exchange(
-                state,
-                state | VALUE_SENT,
-                Ordering::AcqRel,
-                Ordering::Acquire,
-            ) {
-                Ok(_) => return Ok(()),
-                Err(actual) => state = actual,
-            }
+        let mut slot = self.slot.lock().unwrap();
+        if slot.receiver_dropped {
+            return Err(offer);
         }
+        slot.offered = Some(offer);
+        Ok(())
     }
 
-    /// One poll of `receive.await` (`Inner::poll_recv`): an `Acquire` load and,
-    /// if the offer was sent, consuming it. Production's `.await` consumes the
-    /// receiver on `Ready`, so its later drop releases nothing.
+    /// One poll of `receive.await`: take the offer if it was sent. Production's
+    /// `.await` consumes the receiver on `Ready`, so its later drop releases
+    /// nothing.
     fn try_recv(&self) -> Option<EraOffer> {
-        if self.state.load(Ordering::Acquire) & VALUE_SENT == 0 {
-            return None;
-        }
-        // SAFETY: `VALUE_SENT` was acquired, so the sender no longer accesses
-        // the cell.
-        self.value.with_mut(|slot| unsafe { (*slot).take() })
+        self.slot.lock().unwrap().offered.take()
     }
 
-    /// `Drop for Receiver`: `Inner::close` (`fetch_or(CLOSED, Acquire)`), then
-    /// drop any offer that was already sent. Returns whether an offered message
-    /// was released this way.
+    /// `Drop for Receiver`: mark the channel closed and drop any offer that was
+    /// already sent. Returns whether an offered message was released this way.
     fn close(&self) -> bool {
-        let previous = self.state.fetch_or(CLOSED, Ordering::Acquire);
-        if previous & VALUE_SENT == 0 {
-            return false;
-        }
-        // SAFETY: `VALUE_SENT` was acquired, so the sender no longer accesses
-        // the cell.
-        let offered = self.value.with_mut(|slot| unsafe { (*slot).take() });
-        drop(offered);
-        true
+        let released = {
+            let mut slot = self.slot.lock().unwrap();
+            slot.receiver_dropped = true;
+            slot.offered.take()
+        };
+        let had_offer = released.is_some();
+        drop(released);
+        had_offer
     }
 }
 
@@ -530,9 +504,9 @@ impl OfferChannel {
 enum HandoffOutcome {
     /// The caller received the offer and called `accept`.
     Accepted,
-    /// The receiver closed before `VALUE_SENT`; the sender gets the offer back.
+    /// The receiver was dropped before the send; the sender gets the offer back.
     CancelledBeforeOffer,
-    /// The receiver closed after `VALUE_SENT` and released the unaccepted offer.
+    /// The receiver was dropped after the send and released the unaccepted offer.
     CancelledAfterOffer,
 }
 

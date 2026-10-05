@@ -586,13 +586,13 @@ outside Tokio itself:
   offer (`send` succeeds; the guard is still armed inside the message), the
   caller's `EraHandoff::accept` (disarms the guard), and caller cancellation
   (the receiver is dropped), which may land before or after the offer. The
-  guard is a value with a `Drop`, carried by a reduced oneshot that keeps
-  Tokio's `VALUE_SENT`/`CLOSED` state-word orderings, so the model adds no
-  synchronization beyond the oneshot edge. Accept leaves the successor resident
-  with no framework cleanup; cancellation before the offer, and cancellation
-  after the offer but before `accept`, each leave exactly one guard cleanup;
-  and accepted successors stay out of reach of a later caller cancellation.
-  The positive model checks that all three outcomes are reached;
+  guard is a value with a `Drop`, carried by a reduced oneshot slot whose
+  mutex stands in for the oneshot's send-to-receive synchronization; Tokio's
+  oneshot internals are trusted rather than modeled. Accept leaves the
+  successor resident with no framework cleanup; cancellation before the offer,
+  and cancellation after the offer but before `accept`, each leave exactly one
+  guard cleanup; and accepted successors stay out of reach of a later caller
+  cancellation. The positive model checks that all three outcomes are reached;
 - negative controls detect an orphaned cancellation-before-offer cleanup, an
   offered-but-unaccepted message dropped without guard cleanup (a successful
   send treated as delivery), and an illegal reclaim after `accept`.
