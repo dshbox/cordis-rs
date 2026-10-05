@@ -393,10 +393,12 @@ Current evidence maps to all five scenarios: the two-IDLE-kicker CAS model cover
 (1); LC-05 release/kick authority covers (2); LC-06 ready history covers (3);
 the bounded two-mutator inspection/acknowledgement model covers (4); and the
 off-runtime durable-obligation finite-drain model covers (5). The larger
-four-actor scenario (4) declares `preemption_bound = 2` and `max_branches = 48`;
-it is bounded coverage, not an unbounded/exhaustive claim. The smaller LC-06
-history model declares `max_threads = 3` and `max_branches = 64` with no
-permutation or duration cap.
+four-actor scenario (4) declares `max_branches = 48` and a default
+`preemption_bound = 3`, overridable through
+`CORDIS_LOOM_INERTIA_PREEMPTION_BOUND` (the correctness-assurance lane runs 4;
+see *Deeper Inertia range*); it is bounded coverage, not an
+unbounded/exhaustive claim. The smaller LC-06 history model declares
+`max_threads = 3` and `max_branches = 64` with no permutation or duration cap.
 
 Model publication, revision commit, kick, inspection, acknowledgement, release,
 and observer reads as distinct scheduling points. Do not collapse
@@ -936,9 +938,11 @@ Those can proceed separately after the concurrency evidence has a credible core.
   control that consumes the revision without a driver leaves stale state and is
   detected.
 - The two-mutator history uses four actors with `max_branches = 48` and
-  `preemption_bound = 2`. Any intermediate acknowledgement is permitted only
-  when the holder's inspected target covers the observed revision; after both
-  mutations stop, one explicit finite drain reaches revision/target 2. The
+  `preemption_bound = 2` (the Phase-1 closeout bound; #151 later raised the
+  default to 3, with 4 in the assurance lane). Any intermediate
+  acknowledgement is permitted only when the holder's inspected target covers
+  the observed revision; after both mutations stop, one explicit finite drain
+  reaches revision/target 2. The
   unbounded variant was intentionally rejected after its state space failed to
   complete within the local execution window.
 - Layer B was evaluated and rejected for Phase 1: sharing actual atomic
