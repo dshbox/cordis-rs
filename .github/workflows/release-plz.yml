@@ -33,7 +33,7 @@ jobs:
         uses: ./.github/actions/setup-rust
 
       - name: Create or update the release PR
-        uses: release-plz/action@b8d6b54b02889ff2ae2bb82e8b57c3a8fc1683a5 # v0.5
+        uses: release-plz/action@f393a7b38aca9d9b4c58447b291dbac963901df6 # v0.5
         with:
           command: release-pr
         env:
@@ -57,7 +57,7 @@ jobs:
         uses: ./.github/actions/setup-rust
 
       - name: Publish, tag, and create the GitHub release
-        uses: release-plz/action@b8d6b54b02889ff2ae2bb82e8b57c3a8fc1683a5 # v0.5
+        uses: release-plz/action@f393a7b38aca9d9b4c58447b291dbac963901df6 # v0.5
         with:
           command: release
         env:
