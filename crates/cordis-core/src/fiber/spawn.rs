@@ -169,9 +169,10 @@ pub(crate) fn clone_owned(failure: &PluginFailure) -> PluginFailure {
 #[non_exhaustive]
 pub enum SpawnError {
     /// The spawning Context's fiber generation is closed to new
-    /// registrations (stably Pending or Failed, draining, or disposed).
+    /// registrations (stably Pending or Failed, draining, or disposed), or
+    /// the Runtime has been terminally closed by Context::close_plugins.
     /// Pre-commit: nothing was allocated.
-    #[error("the spawning context's fiber generation is closed to new fibers")]
+    #[error("the spawning context or runtime is closed to new fibers")]
     InactiveContext,
     /// The first apply returned an error or panicked. The failed
     /// generation's complete LIFO rollback ran, and the attempted Fiber
@@ -285,7 +286,9 @@ async fn spawn_prepared_inner(
     // either disposes this fiber or leaves it visible, never detached.
     // This is the commit point: from here the creation guard owns the
     // fiber's cleanup if the caller abandons the spawn.
-    root.registry.attach_fiber(plugin_key, fiber.clone());
+    if !root.registry.attach_fiber(plugin_key, fiber.clone()) {
+        return Err(SpawnError::InactiveContext);
+    }
     let mut guard = CreationGuard::armed(fiber.clone());
 
     // resolve declared injects against this scope now — later audits and
