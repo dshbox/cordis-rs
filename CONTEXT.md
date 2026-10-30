@@ -80,6 +80,13 @@ Residency does not imply lifecycle ownership, and dropping every FiberHandle
 changes neither residency nor lifecycle.
 _Avoid_: ownership, reachability through a FiberHandle
 
+**terminal plugin admission**
+An explicit `Context::close_plugins` operation closes new Fiber admission
+and joins the exact cleanup/unlink barriers of every resident non-root Fiber,
+including detached allocations. It is not a Fiber parenthood relation, a Roster,
+or durable external-effect reconciliation. The permanent root Fiber remains;
+pending caller-owned creations must be completed or dropped before the barrier.
+
 **spawn origin**
 The Context — and therefore the originating Fiber and view — from which a
 spawn was initiated. It records provenance and supplies the spawning
