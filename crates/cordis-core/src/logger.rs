@@ -173,6 +173,7 @@ impl Logger {
             service: self.service.clone(),
         }
     }
+    #[cfg(feature = "internal-api")]
     pub(crate) fn for_fiber(&self, fiber_name: &str) -> Logger {
         self.service.logger_for_fiber(fiber_name)
     }
