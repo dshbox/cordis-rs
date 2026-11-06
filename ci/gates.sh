@@ -70,7 +70,7 @@ gate_toolchain() { ci/toolchain-contract.sh; }
 
 gate_fmt()    { cargo fmt --all --check; }
 
-gate_clippy() { cargo clippy --locked --workspace --all-targets -- -D warnings; }
+gate_clippy() { ci/clippy.sh; }
 
 gate_vocab()  { ci/harness-vocab-scan.sh; }
 

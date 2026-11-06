@@ -108,7 +108,7 @@ jobs:
       - run: ci/toolchain-contract.sh
       - run: ci/readme-version-contract.sh
       - run: cargo fmt --all --check
-      - run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      - run: ci/clippy.sh
       - run: ci/harness-vocab-scan.sh
       - run: cargo doc --locked --workspace --no-deps
         env:
