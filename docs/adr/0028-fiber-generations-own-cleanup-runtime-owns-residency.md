@@ -1,6 +1,7 @@
 # Fiber generations own cleanup; Runtime owns residency
 
-Status: accepted
+Status: amended in the Shenko fork by the explicit terminal-admission capability below.
+The original upstream ownership decision remains recorded here.
 
 Within a Fiber, each apply generation owns every cleanup obligation that
 commits while its gate is open. Every retained resource family — Service
@@ -72,7 +73,23 @@ against demonstrated need:
   Cascade-shaped teardown is consumer policy — reverse spawn-order
   Roster disposal — not a core relation.
 
-## Falsifier
+## Fork amendment: explicit terminal admission
+
+Shenko demonstrates the former falsifier: a terminal consumer must join native
+compositions and already-detached residents, including admitted creations whose
+handles have not been delivered. A delivered-handle Roster cannot cover these
+Fibers, and typed current-allocation removal permits late attach to a fresh group.
+
+`Context::close_plugins` therefore explicitly closes Registry admission and
+freezes flat residents under the same attach lock, then joins each ordinary
+per-Fiber cleanup/unlink barrier. This narrowly amends the no-collective-control
+part of this ADR; it creates no structured owner, parent cascade, stable seat,
+second cleanup journal, implicit Drop teardown, or durable effect guarantee.
+Root generation and registrations remain permanent, and the removed
+`Context::shutdown` API stays absent. Held creation futures must still complete
+or be dropped; collective control does not guess that their effects are undone.
+
+## Original upstream falsifier (now demonstrated)
 
 This decision falls if core must collectively drain an admitted child
 before its FiberHandle has been delivered: such a drain would require a core

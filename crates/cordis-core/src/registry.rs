@@ -5,7 +5,8 @@ use parking_lot::Mutex;
 use std::any::TypeId;
 use std::collections::HashMap;
 #[cfg(test)]
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Weak};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -48,6 +49,8 @@ struct RegistryState {
     /// Flat strong residency authority. Current-allocation detach does not
     /// remove a Fiber; only its exact terminal residency release does.
     residents: Mutex<Vec<Arc<Fiber>>>,
+    /// Serialized with attach by the allocations lock; terminal, never reopened.
+    closed: AtomicBool,
     #[cfg(test)]
     admissions: AtomicUsize,
 }
@@ -62,6 +65,7 @@ impl Registry {
             state: Arc::new(RegistryState {
                 allocations: Mutex::new(HashMap::new()),
                 residents: Mutex::new(Vec::new()),
+                closed: AtomicBool::new(false),
                 #[cfg(test)]
                 admissions: AtomicUsize::new(0),
             }),
@@ -87,8 +91,11 @@ impl Registry {
     /// before membership becomes visible to detach. A remover therefore cannot
     /// freeze this Fiber until its ordinary terminal barrier can release the
     /// exact allocation occurrence. The claim itself is weak to avoid a cycle.
-    pub(crate) fn attach_fiber(&self, key: PluginKey, fiber: Arc<Fiber>) {
+    pub(crate) fn attach_fiber(&self, key: PluginKey, fiber: Arc<Fiber>) -> bool {
         let mut allocations = self.state.allocations.lock();
+        if self.state.closed.load(Ordering::SeqCst) {
+            return false;
+        }
         let allocation = allocations
             .entry(key)
             .or_insert_with(|| PluginGroup::new(key))
@@ -107,7 +114,18 @@ impl Registry {
         self.state.residents.lock().push(fiber);
         #[cfg(test)]
         self.state.admissions.fetch_add(1, Ordering::SeqCst);
+        true
     }
+    /// Close admission and freeze all residents at the same linearization point
+    /// as attach, including Fibers detached by earlier typed removals.
+    fn close(&self) -> Result<Vec<Arc<Fiber>>, LifecycleRecursion> {
+        let _allocations = self.state.allocations.lock();
+        let residents = self.state.residents.lock();
+        crate::fiber::refuse_group_removal_recursion(&residents)?;
+        self.state.closed.store(true, Ordering::SeqCst);
+        Ok(residents.clone())
+    }
+
     /// Atomically detach one current allocation and freeze its completion set.
     ///
     /// Attach uses the same Registry → allocation lock order, so a Fiber is
@@ -163,6 +181,42 @@ impl DetachedGroup {
 }
 
 impl crate::Context {
+    /// Terminally close this Runtime to new Fibers and await every resident
+    /// Fiber's cleanup and exact unlink, including Fibers already detached by
+    /// typed removal. The permanent root Fiber and its registrations remain.
+    ///
+    /// Admission closes under the same lock as residency attach: a racing spawn
+    /// is either included in the barrier or refused with InactiveContext before
+    /// commit. Typed removal and handle Drop cannot hide a resident from it.
+    /// Completion remains owned by Cordis if this caller abandons the wait.
+    ///
+    /// A call from a resident Fiber's settle context is refused before closing
+    /// admission, rather than waiting on itself. A pending creation still owned
+    /// by a live spawn future must be completed or dropped by its caller; this
+    /// operation never reports success before that Fiber reaches its barrier.
+    pub async fn close_plugins(&self) -> Result<(), LifecycleRecursion> {
+        let residents = self.root.registry.close()?;
+        let report = crate::framework_task::PanicReport {
+            logger: self.logger(),
+            operation: "terminal plugin removal",
+            context: "all resident Fibers".to_owned(),
+        };
+        let root = self.root.clone();
+        crate::effect::CallerDriven::new(Some(report), async move {
+            futures::future::join_all(residents.iter().map(|fiber| fiber.dispose())).await;
+            for fiber in residents {
+                let logger = root.logger.logger_for_fiber(&fiber.name);
+                crate::contained::contain(
+                    "terminal removal member destruction",
+                    Some(&logger),
+                    || drop(fiber),
+                );
+            }
+        })
+        .await;
+        Ok(())
+    }
+
     /// Remove the current allocation for typed Plugin `P`.
     ///
     /// Detach is the irreversible commit: members already attached are frozen
@@ -292,6 +346,27 @@ mod tests {
 
     fn attach(registry: &Registry, key: PluginKey, fiber: &Arc<Fiber>) {
         registry.attach_fiber(key, fiber.clone());
+    }
+
+    #[test]
+    fn terminal_close_freezes_detached_residents_and_refuses_late_attach() {
+        let registry = Registry::new();
+        let key = PluginKey::Typed(TypeId::of::<u32>());
+        let existing = Fiber::new("attached before close");
+        assert!(registry.attach_fiber(key, existing.clone()));
+        let detached = registry.detach_for_removal(key).unwrap().unwrap();
+        let frozen = registry.close().unwrap();
+        assert_eq!(frozen.len(), 1);
+        assert!(Arc::ptr_eq(&frozen[0], &existing));
+        // Models an owner paused before native attach after an earlier external
+        // cancellation poll returned Pending: close wins the same Registry gate.
+        let late = Fiber::new("late attach after close");
+        assert!(!registry.attach_fiber(key, late.clone()));
+        assert!(late.residency.lock().is_none());
+        assert_eq!(registry.admission_count(), 1);
+        existing.release_residency();
+        assert_eq!(detached.allocation.fiber_count(), 0);
+        assert!(registry.close().unwrap().is_empty());
     }
 
     #[test]
