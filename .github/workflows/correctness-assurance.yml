@@ -62,7 +62,7 @@ jobs:
           # library source, so coverage must use the same snapshot authority
           # as the canonical test lane.
           components: rust-src
-      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2
+      - uses: taiki-e/install-action@75a7c0f87bd666af3cdb75c5b9e9d03ab6044e6f # v2
         with:
           tool: cargo-llvm-cov@0.9.1
           fallback: none
